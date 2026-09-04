@@ -637,6 +637,8 @@ function renderHome(){
       ${moduleRow('users','Familias','Contacto de padres y tutores', 'familias')}
       ${moduleRow('chart','Resumen del alumno','Faltas, apercibimientos y certificados', 'resumen')}
       ${moduleRow('users','Profesores','Altas y bajas de cuentas de profesor', 'profesores')}
+      ${moduleRow('file','Valoraciones pedagógicas','Bimestral, por materia', 'valoraciones')}
+      ${moduleRow('chart','Notas','Cuatrimestral, escala 1 a 10', 'notas')}
     </div>
     <p style="text-align:center;margin-top:18px;">
       <a href="#" id="cambiarUsuarioLink" style="font-size:12px;color:var(--ink-soft);text-decoration:underline;">Cambiar usuario</a>
@@ -1212,6 +1214,7 @@ function render(){
   else if(currentRoute === 'detalleAsistenciaHoy') renderDetalleAsistenciaHoy();
   else if(currentRoute === 'detalleAlertas') renderDetalleAlertas();
   else if(currentRoute === 'profesores') renderProfesores();
+  else if(currentRoute === 'profesorEditar') renderProfesorEditar();
   else if(currentRoute === 'teacherHome') renderTeacherHome();
   else if(currentRoute === 'valoraciones') renderValoracionesLista();
   else if(currentRoute === 'valoracionAlumno') renderValoracionAlumno();
@@ -1615,7 +1618,7 @@ async function crearProfesor(){
   const nombre = document.getElementById('nuevoProfNombre').value.trim();
   const email = document.getElementById('nuevoProfEmail').value.trim();
   const pass = document.getElementById('nuevoProfPass').value;
-  const materia = document.getElementById('nuevoProfMateria').value.trim();
+  const materiasSeleccionadas = Array.from(document.querySelectorAll('.materia-check:checked')).map(c => c.value);
   const cursosSeleccionados = Array.from(document.querySelectorAll('.curso-check:checked')).map(c => c.value);
   const errEl = document.getElementById('nuevoProfError');
   errEl.textContent = '';
@@ -1635,7 +1638,7 @@ async function crearProfesor(){
     const cred = await createUserWithEmailAndPassword(authSecundaria, email, pass);
     const uid = cred.user.uid;
     await setDoc(doc(db,'teachers',uid), {
-      nombre, email, materias: materia ? [materia] : [], cursos: cursosSeleccionados, activo: true, creadoPor: getUsuario()
+      nombre, email, materias: materiasSeleccionadas, cursos: cursosSeleccionados, activo: true, creadoPor: getUsuario()
     });
     await signOut(authSecundaria);
     showToast('Profesor/a creado');
@@ -1652,8 +1655,44 @@ function toggleActivoProfesor(uid, activo){
   setDoc(doc(db,'teachers',uid), { activo: !activo }, { merge: true }).catch(err=>console.error(err));
 }
 
+function guardarEdicionProfesor(uid){
+  const materias = Array.from(document.querySelectorAll('.materia-check-edit:checked')).map(c => c.value);
+  const cursos = Array.from(document.querySelectorAll('.curso-check-edit:checked')).map(c => c.value);
+  if(cursos.length===0){ alert('Elegí al menos un curso.'); return; }
+  setDoc(doc(db,'teachers',uid), { materias, cursos }, { merge: true }).catch(err=>console.error(err));
+  showToast('Datos actualizados');
+  navigate('profesores');
+}
+
+function renderProfesorEditar(){
+  const t = cache.teachers[selectedProfesorUid];
+  if(!t){ navigate('profesores'); return; }
+  const materias = materiasDisponibles();
+  $app.innerHTML = `
+    <div class="appbar" style="padding:0 0 10px;">
+      <button class="back-btn" id="backBtn">${icon('back')}</button>
+      <h1>${t.nombre}</h1>
+    </div>
+    <p class="section-label">Materias</p>
+    <div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:16px;">
+      ${materias.map(m => `<label class="curso-check-label"><input type="checkbox" class="materia-check-edit" value="${m}" ${(t.materias||[]).includes(m)?'checked':''}> ${m}</label>`).join('')}
+    </div>
+    <p class="section-label">Cursos a cargo</p>
+    <div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:18px;">
+      ${CURSOS.map(c => `<label class="curso-check-label"><input type="checkbox" class="curso-check-edit" value="${c}" ${(t.cursos||[]).includes(c)?'checked':''}> ${c}° A</label>`).join('')}
+    </div>
+    <button class="btn-primary" id="guardarEdicionBtn">Guardar cambios</button>
+  `;
+  document.getElementById('backBtn').addEventListener('click', () => navigate('profesores'));
+  document.getElementById('guardarEdicionBtn').addEventListener('click', () => guardarEdicionProfesor(selectedProfesorUid));
+}
+
+let selectedProfesorUid = null;
+
 function renderProfesores(){
   const teachers = Object.values(cache.teachers).sort((a,b)=> (a.nombre||'').localeCompare(b.nombre||''));
+  const conocidos = profesoresConocidos();
+  const materias = materiasDisponibles();
 
   const rows = teachers.map(t => `
     <div class="sancion-item">
@@ -1662,7 +1701,10 @@ function renderProfesores(){
           <p class="folio">${t.nombre} ${t.activo===false ? '· inactivo' : ''}</p>
           <p class="motivo">${t.email} · ${(t.materias||[]).join(', ') || 'sin materia'} · ${(t.cursos||[]).map(c=>c+'°A').join(', ')}</p>
         </div>
-        <button class="btn-secondary" style="flex-shrink:0;padding:6px 10px;font-size:11.5px;" data-toggle="${t.uid}" data-activo="${t.activo!==false}">${t.activo===false ? 'Reactivar' : 'Dar de baja'}</button>
+        <div style="display:flex;flex-direction:column;gap:6px;flex-shrink:0;">
+          <button class="btn-secondary" style="padding:6px 10px;font-size:11.5px;" data-editar="${t.uid}">Editar</button>
+          <button class="btn-secondary" style="padding:6px 10px;font-size:11.5px;" data-toggle="${t.uid}" data-activo="${t.activo!==false}">${t.activo===false ? 'Reactivar' : 'Dar de baja'}</button>
+        </div>
       </div>
     </div>
   `).join('');
@@ -1677,14 +1719,25 @@ function renderProfesores(){
     ${teachers.length ? `<div class="sancion-list" style="margin-bottom:18px;">${rows}</div>` : `<p style="font-size:13px;color:var(--ink-soft);margin-bottom:18px;">Todavía no hay profesores cargados.</p>`}
 
     <p class="section-label">Nueva cuenta</p>
+    <div class="field-row">
+      <label>Profesor/a</label>
+      <select id="profesorConocidoSelect">
+        <option value="">-- Elegir de la lista o cargar abajo --</option>
+        ${Object.keys(conocidos).sort().map(n => `<option value="${n}">${n}</option>`).join('')}
+      </select>
+    </div>
     <div class="field-row"><label>Nombre</label><input id="nuevoProfNombre" type="text"></div>
     <div class="field-row"><label>Mail</label><input id="nuevoProfEmail" type="email"></div>
     <div class="field-row"><label>Contraseña</label><input id="nuevoProfPass" type="text" placeholder="mínimo 6 caracteres"></div>
-    <div class="field-row"><label>Materia</label><input id="nuevoProfMateria" type="text" placeholder="ej: Matemática"></div>
+    <p style="font-size:12.5px;color:var(--ink-soft);margin:10px 0 6px;">Materias</p>
+    <div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:14px;">
+      ${materias.map(m => `<label class="curso-check-label"><input type="checkbox" class="materia-check" value="${m}"> ${m}</label>`).join('')}
+    </div>
     <p style="font-size:12.5px;color:var(--ink-soft);margin:10px 0 6px;">Cursos a cargo</p>
     <div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:14px;">
       ${CURSOS.map(c => `<label class="curso-check-label"><input type="checkbox" class="curso-check" value="${c}"> ${c}° A</label>`).join('')}
     </div>
+    <p style="font-size:11.5px;color:var(--ink-soft);margin:-8px 0 12px;">Si elegís un/a profesor/a de la lista, las materias y cursos se marcan solos según el horario — revisalos y ajustá si hace falta.</p>
     <p id="nuevoProfError" style="font-size:12px;color:var(--stamp);min-height:16px;margin:0 0 8px;"></p>
     <button class="btn-primary" id="crearProfBtn">Crear cuenta</button>
   `;
@@ -1692,6 +1745,17 @@ function renderProfesores(){
   document.getElementById('crearProfBtn').addEventListener('click', crearProfesor);
   document.querySelectorAll('[data-toggle]').forEach(b => {
     b.addEventListener('click', () => toggleActivoProfesor(b.dataset.toggle, b.dataset.activo === 'true'));
+  });
+  document.querySelectorAll('[data-editar]').forEach(b => {
+    b.addEventListener('click', () => { selectedProfesorUid = b.dataset.editar; navigate('profesorEditar'); });
+  });
+  document.getElementById('profesorConocidoSelect').addEventListener('change', (e) => {
+    const nombre = e.target.value;
+    if(!nombre) return;
+    document.getElementById('nuevoProfNombre').value = nombre;
+    const datos = conocidos[nombre];
+    document.querySelectorAll('.materia-check').forEach(c => { c.checked = datos.materias.includes(c.value); });
+    document.querySelectorAll('.curso-check').forEach(c => { c.checked = datos.cursos.includes(c.value); });
   });
 }
 
@@ -1752,13 +1816,51 @@ const OPCIONES_VALORACION = {
   ]
 };
 
+function materiasDisponibles(){
+  if(userRole === 'teacher') return currentTeacher.materias || [];
+  const set = new Set();
+  Object.values(SEED_SCHEDULE).forEach(days => {
+    Object.values(days).forEach(entries => entries.forEach(e => set.add(e.subject)));
+  });
+  return [...set].sort();
+}
+
+function profesoresConocidos(){
+  const map = {};
+  Object.entries(SEED_SCHEDULE).forEach(([curso, days]) => {
+    Object.values(days).forEach(entries => {
+      entries.forEach(e => {
+        (e.teachers||[]).forEach(nombre => {
+          const key = nombre.trim();
+          if(!map[key]) map[key] = { materias: new Set(), cursos: new Set() };
+          map[key].materias.add(e.subject);
+          map[key].cursos.add(curso);
+        });
+      });
+    });
+  });
+  const out = {};
+  Object.entries(map).forEach(([nombre, v]) => {
+    out[nombre] = { materias: [...v.materias].sort(), cursos: [...v.cursos].sort() };
+  });
+  return out;
+}
+function materiaActual(){
+  if(userRole === 'teacher') return (currentTeacher.materias||[])[0] || '';
+  window.__materiaAdmin = window.__materiaAdmin || materiasDisponibles()[0] || '';
+  return window.__materiaAdmin;
+}
+
 function renderValoracionesLista(){
   const cursos = cursosDisponibles();
   if(!cursos.includes(selectedCurso)) selectedCurso = cursos[0];
   const bimActual = (bimestreActual().n===1 || bimestreActual().n===3) ? bimestreActual().n : 1;
   window.__valBim = window.__valBim || bimActual;
   const students = getStudents().filter(s => s.curso === selectedCurso).sort((a,b)=> a.apellido.localeCompare(b.apellido));
-  const materia = (currentTeacher.materias||[])[0] || '';
+  const materia = materiaActual();
+  const materiaPicker = userRole === 'admin'
+    ? `<select id="materiaSelect">${materiasDisponibles().map(m => `<option value="${m}" ${m===materia?'selected':''}>${m}</option>`).join('')}</select>`
+    : '';
 
   const rows = students.map(s => {
     const key = docId(`${s.id}_${window.__valBim}_${slugify(materia)}`);
@@ -1775,8 +1877,9 @@ function renderValoracionesLista(){
   $app.innerHTML = `
     <div class="appbar" style="padding:0 0 10px;">
       <button class="back-btn" id="backBtn">${icon('back')}</button>
-      <h1>Valoraciones — ${materia}</h1>
+      <h1>Valoraciones${materia ? ' — '+materia : ''}</h1>
     </div>
+    ${materiaPicker ? `<div class="course-picker">${materiaPicker}</div>` : ''}
     <div class="course-picker">
       <select id="cursoSelect">${cursos.map(c => `<option value="${c}" ${c===selectedCurso?'selected':''}>${c}° A</option>`).join('')}</select>
       <select id="bimSelectVal">
@@ -1786,16 +1889,19 @@ function renderValoracionesLista(){
     </div>
     <div class="module-list">${rows}</div>
   `;
-  document.getElementById('backBtn').addEventListener('click', () => navigate('teacherHome'));
+  document.getElementById('backBtn').addEventListener('click', () => navigate(homeRoute()));
   document.getElementById('cursoSelect').addEventListener('change', (e) => { selectedCurso = e.target.value; render(); });
   document.getElementById('bimSelectVal').addEventListener('change', (e) => { window.__valBim = Number(e.target.value); render(); });
+  if(document.getElementById('materiaSelect')){
+    document.getElementById('materiaSelect').addEventListener('change', (e) => { window.__materiaAdmin = e.target.value; render(); });
+  }
   document.querySelectorAll('[data-student]').forEach(el => {
     el.addEventListener('click', () => { selectedStudentId = el.dataset.student; navigate('valoracionAlumno'); });
   });
 }
 
 function guardarValoracion(){
-  const materia = (currentTeacher.materias||[])[0] || '';
+  const materia = materiaActual();
   const bim = window.__valBim;
   const student = getStudents().find(s => s.id === selectedStudentId);
   const data = {
@@ -1807,7 +1913,7 @@ function guardarValoracion(){
     objetivos: document.getElementById('valObjetivos').value,
     proyeccion: document.getElementById('valProyeccion').value,
     observaciones: document.getElementById('valObservaciones').value.trim(),
-    autor: currentTeacher.nombre, updatedAt: Date.now()
+    autor: userRole==='teacher' ? currentTeacher.nombre : getUsuario(), updatedAt: Date.now()
   };
   const key = docId(`${selectedStudentId}_${bim}_${slugify(materia)}`);
   setDoc(doc(db,'valoraciones',key), data).catch(err=>console.error(err));
@@ -1817,7 +1923,7 @@ function guardarValoracion(){
 
 function renderValoracionAlumno(){
   const student = getStudents().find(s => s.id === selectedStudentId);
-  const materia = (currentTeacher.materias||[])[0] || '';
+  const materia = materiaActual();
   const bim = window.__valBim;
   const key = docId(`${selectedStudentId}_${bim}_${slugify(materia)}`);
   const existente = cache.valoraciones[key] || {};
@@ -1869,7 +1975,10 @@ function renderNotasLista(){
   if(!cursos.includes(selectedCurso)) selectedCurso = cursos[0];
   window.__notaCuatri = window.__notaCuatri || 1;
   const students = getStudents().filter(s => s.curso === selectedCurso).sort((a,b)=> a.apellido.localeCompare(b.apellido));
-  const materia = (currentTeacher.materias||[])[0] || '';
+  const materia = materiaActual();
+  const materiaPicker = userRole === 'admin'
+    ? `<select id="materiaSelect">${materiasDisponibles().map(m => `<option value="${m}" ${m===materia?'selected':''}>${m}</option>`).join('')}</select>`
+    : '';
 
   const rows = students.map(s => {
     const key = docId(`${s.id}_${window.__notaCuatri}_${slugify(materia)}`);
@@ -1885,8 +1994,9 @@ function renderNotasLista(){
   $app.innerHTML = `
     <div class="appbar" style="padding:0 0 10px;">
       <button class="back-btn" id="backBtn">${icon('back')}</button>
-      <h1>Notas — ${materia}</h1>
+      <h1>Notas${materia ? ' — '+materia : ''}</h1>
     </div>
+    ${materiaPicker ? `<div class="course-picker">${materiaPicker}</div>` : ''}
     <div class="course-picker">
       <select id="cursoSelect">${cursos.map(c => `<option value="${c}" ${c===selectedCurso?'selected':''}>${c}° A</option>`).join('')}</select>
       <select id="cuatriSelect">
@@ -1897,9 +2007,12 @@ function renderNotasLista(){
     ${rows}
     <p class="info-note">${icon('info')}Se guarda solo al salir del campo (tocá afuera después de escribir la nota).</p>
   `;
-  document.getElementById('backBtn').addEventListener('click', () => navigate('teacherHome'));
+  document.getElementById('backBtn').addEventListener('click', () => navigate(homeRoute()));
   document.getElementById('cursoSelect').addEventListener('change', (e) => { selectedCurso = e.target.value; render(); });
   document.getElementById('cuatriSelect').addEventListener('change', (e) => { window.__notaCuatri = Number(e.target.value); render(); });
+  if(document.getElementById('materiaSelect')){
+    document.getElementById('materiaSelect').addEventListener('change', (e) => { window.__materiaAdmin = e.target.value; render(); });
+  }
   document.querySelectorAll('[data-nota]').forEach(inp => {
     inp.addEventListener('change', (e) => {
       const sid = e.target.dataset.nota;
@@ -1907,7 +2020,7 @@ function renderNotasLista(){
       if(isNaN(val) || val < 1 || val > 10){ alert('La nota debe estar entre 1 y 10.'); return; }
       const student = getStudents().find(s => s.id === sid);
       const key = docId(`${sid}_${window.__notaCuatri}_${slugify(materia)}`);
-      setDoc(doc(db,'notas',key), { studentId: sid, curso: student.curso, materia, cuatrimestre: window.__notaCuatri, nota: val, autor: currentTeacher.nombre, updatedAt: Date.now() })
+      setDoc(doc(db,'notas',key), { studentId: sid, curso: student.curso, materia, cuatrimestre: window.__notaCuatri, nota: val, autor: userRole==='teacher' ? currentTeacher.nombre : getUsuario(), updatedAt: Date.now() })
         .then(() => showToast('Nota guardada'))
         .catch(err=>console.error(err));
     });
