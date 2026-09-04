@@ -1227,6 +1227,7 @@ function render(){
   else if(currentRoute === 'detalleAsistenciaHoy') renderDetalleAsistenciaHoy();
   else if(currentRoute === 'detalleAlertas') renderDetalleAlertas();
   else if(currentRoute === 'profesores') renderProfesores();
+  else if(currentRoute === 'profesorNuevo') renderProfesorNuevo();
   else if(currentRoute === 'profesorEditar') renderProfesorEditar();
   else if(currentRoute === 'teacherHome') renderTeacherHome();
   else if(currentRoute === 'valoraciones') renderValoracionesLista();
@@ -1737,12 +1738,17 @@ function renderProfesorEditar(){
 
 let selectedProfesorUid = null;
 
+function borrarProfesor(uid, nombre){
+  if(!confirm(`¿Borrar la cuenta de ${nombre}? No se puede deshacer. El mail y contraseña quedan sin efecto (no van a poder entrar más), pero si querés reusar ese mail para otra cuenta después, avisame.`)) return;
+  deleteDoc(doc(db,'teachers',uid)).then(() => showToast('Profesor/a borrado')).catch(err=>console.error(err));
+}
+
 function renderProfesores(){
   const teachers = Object.values(cache.teachers).sort((a,b)=> (a.nombre||'').localeCompare(b.nombre||''));
-  const conocidos = profesoresConocidos();
-  const materias = materiasDisponibles();
+  const filtro = (window.__profesorFiltro||'').toLowerCase();
+  const visibles = filtro ? teachers.filter(t => (t.nombre||'').toLowerCase().includes(filtro)) : teachers;
 
-  const rows = teachers.map(t => `
+  const rows = visibles.map(t => `
     <div class="sancion-item">
       <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;">
         <div>
@@ -1752,6 +1758,7 @@ function renderProfesores(){
         <div style="display:flex;flex-direction:column;gap:6px;flex-shrink:0;">
           <button class="btn-secondary" style="padding:6px 10px;font-size:11.5px;" data-editar="${t.uid}">Editar</button>
           <button class="btn-secondary" style="padding:6px 10px;font-size:11.5px;" data-toggle="${t.uid}" data-activo="${t.activo!==false}">${t.activo===false ? 'Reactivar' : 'Dar de baja'}</button>
+          <button class="btn-secondary" style="padding:6px 10px;font-size:11.5px;color:var(--stamp);border-color:var(--border-danger,var(--stamp));" data-borrar="${t.uid}" data-nombre="${t.nombre}">Borrar</button>
         </div>
       </div>
     </div>
@@ -1763,10 +1770,35 @@ function renderProfesores(){
       <h1>Profesores</h1>
     </div>
 
-    <p class="section-label">Cuentas existentes</p>
-    ${teachers.length ? `<div class="sancion-list" style="margin-bottom:18px;">${rows}</div>` : `<p style="font-size:13px;color:var(--ink-soft);margin-bottom:18px;">Todavía no hay profesores cargados.</p>`}
+    <button class="btn-primary" id="irNuevoBtn" style="margin-bottom:16px;">+ Agregar profesor</button>
 
-    <p class="section-label">Nueva cuenta</p>
+    <input type="text" id="filtroProfesor" placeholder="Buscar por nombre..." style="margin-bottom:12px;" value="${window.__profesorFiltro||''}">
+
+    <p class="section-label">Cuentas existentes (${visibles.length})</p>
+    ${visibles.length ? `<div class="sancion-list">${rows}</div>` : `<p style="font-size:13px;color:var(--ink-soft);">${teachers.length ? 'Nadie coincide con esa búsqueda.' : 'Todavía no hay profesores cargados.'}</p>`}
+  `;
+  document.getElementById('backBtn').addEventListener('click', () => navigate('home'));
+  document.getElementById('irNuevoBtn').addEventListener('click', () => navigate('profesorNuevo'));
+  document.getElementById('filtroProfesor').addEventListener('input', (e) => { window.__profesorFiltro = e.target.value; render(); });
+  document.querySelectorAll('[data-toggle]').forEach(b => {
+    b.addEventListener('click', () => toggleActivoProfesor(b.dataset.toggle, b.dataset.activo === 'true'));
+  });
+  document.querySelectorAll('[data-editar]').forEach(b => {
+    b.addEventListener('click', () => { selectedProfesorUid = b.dataset.editar; navigate('profesorEditar'); });
+  });
+  document.querySelectorAll('[data-borrar]').forEach(b => {
+    b.addEventListener('click', () => borrarProfesor(b.dataset.borrar, b.dataset.nombre));
+  });
+}
+
+function renderProfesorNuevo(){
+  const conocidos = profesoresConocidos();
+  const materias = materiasDisponibles();
+  $app.innerHTML = `
+    <div class="appbar" style="padding:0 0 10px;">
+      <button class="back-btn" id="backBtn">${icon('back')}</button>
+      <h1>Nuevo profesor</h1>
+    </div>
     <div class="field-row">
       <label>Profesor/a</label>
       <select id="profesorConocidoSelect">
@@ -1789,14 +1821,8 @@ function renderProfesores(){
     <p id="nuevoProfError" style="font-size:12px;color:var(--stamp);min-height:16px;margin:0 0 8px;"></p>
     <button class="btn-primary" id="crearProfBtn">Crear cuenta</button>
   `;
-  document.getElementById('backBtn').addEventListener('click', () => navigate('home'));
+  document.getElementById('backBtn').addEventListener('click', () => navigate('profesores'));
   document.getElementById('crearProfBtn').addEventListener('click', crearProfesor);
-  document.querySelectorAll('[data-toggle]').forEach(b => {
-    b.addEventListener('click', () => toggleActivoProfesor(b.dataset.toggle, b.dataset.activo === 'true'));
-  });
-  document.querySelectorAll('[data-editar]').forEach(b => {
-    b.addEventListener('click', () => { selectedProfesorUid = b.dataset.editar; navigate('profesorEditar'); });
-  });
   document.getElementById('profesorConocidoSelect').addEventListener('change', (e) => {
     const nombre = e.target.value;
     if(!nombre) return;
