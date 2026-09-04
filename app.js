@@ -1234,6 +1234,7 @@ function render(){
   else if(currentRoute === 'valoracionAlumno') renderValoracionAlumno();
   else if(currentRoute === 'notas') renderNotasLista();
   renderTabbar();
+  void $app.offsetHeight; // fuerza un repintado inmediato (evita restos visuales en Safari/iOS)
 }
 
 // ---------- Familias ----------
