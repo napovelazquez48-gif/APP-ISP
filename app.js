@@ -2280,3 +2280,13 @@ if('serviceWorker' in navigator){
     }).catch(()=>{});
   });
 }
+
+// Fuerza un repintado cuando terminan de cargar las tipografías (evita texto "pegado"
+// en Safari/iOS cuando la fuente llega después del primer dibujado de la pantalla).
+if(document.fonts && document.fonts.ready){
+  document.fonts.ready.then(() => {
+    $app.style.display = 'none';
+    void $app.offsetHeight;
+    $app.style.display = '';
+  });
+}
