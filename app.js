@@ -1845,10 +1845,22 @@ function profesoresConocidos(){
   });
   return out;
 }
-function materiaActual(){
-  if(userRole === 'teacher') return (currentTeacher.materias||[])[0] || '';
-  window.__materiaAdmin = window.__materiaAdmin || materiasDisponibles()[0] || '';
-  return window.__materiaAdmin;
+function materiaActual(curso){
+  const opciones = materiasParaSeleccion(curso);
+  if(!window.__materiaSel || !opciones.includes(window.__materiaSel)){
+    window.__materiaSel = opciones[0] || '';
+  }
+  return window.__materiaSel;
+}
+function materiasDeCurso(curso){
+  const set = new Set();
+  const days = SEED_SCHEDULE[curso] || {};
+  Object.values(days).forEach(entries => entries.forEach(e => set.add(e.subject)));
+  return [...set].sort();
+}
+function materiasParaSeleccion(curso){
+  if(userRole === 'teacher') return currentTeacher.materias || [];
+  return materiasDeCurso(curso);
 }
 
 function renderValoracionesLista(){
@@ -1857,9 +1869,10 @@ function renderValoracionesLista(){
   const bimActual = (bimestreActual().n===1 || bimestreActual().n===3) ? bimestreActual().n : 1;
   window.__valBim = window.__valBim || bimActual;
   const students = getStudents().filter(s => s.curso === selectedCurso).sort((a,b)=> a.apellido.localeCompare(b.apellido));
-  const materia = materiaActual();
-  const materiaPicker = userRole === 'admin'
-    ? `<select id="materiaSelect">${materiasDisponibles().map(m => `<option value="${m}" ${m===materia?'selected':''}>${m}</option>`).join('')}</select>`
+  const opcionesMateria = materiasParaSeleccion(selectedCurso);
+  const materia = materiaActual(selectedCurso);
+  const materiaPicker = opcionesMateria.length > 1
+    ? `<select id="materiaSelect">${opcionesMateria.map(m => `<option value="${m}" ${m===materia?'selected':''}>${m}</option>`).join('')}</select>`
     : '';
 
   const rows = students.map(s => {
@@ -1893,7 +1906,7 @@ function renderValoracionesLista(){
   document.getElementById('cursoSelect').addEventListener('change', (e) => { selectedCurso = e.target.value; render(); });
   document.getElementById('bimSelectVal').addEventListener('change', (e) => { window.__valBim = Number(e.target.value); render(); });
   if(document.getElementById('materiaSelect')){
-    document.getElementById('materiaSelect').addEventListener('change', (e) => { window.__materiaAdmin = e.target.value; render(); });
+    document.getElementById('materiaSelect').addEventListener('change', (e) => { window.__materiaSel = e.target.value; render(); });
   }
   document.querySelectorAll('[data-student]').forEach(el => {
     el.addEventListener('click', () => { selectedStudentId = el.dataset.student; navigate('valoracionAlumno'); });
@@ -1901,7 +1914,7 @@ function renderValoracionesLista(){
 }
 
 function guardarValoracion(){
-  const materia = materiaActual();
+  const materia = materiaActual(selectedCurso);
   const bim = window.__valBim;
   const student = getStudents().find(s => s.id === selectedStudentId);
   const data = {
@@ -1923,7 +1936,7 @@ function guardarValoracion(){
 
 function renderValoracionAlumno(){
   const student = getStudents().find(s => s.id === selectedStudentId);
-  const materia = materiaActual();
+  const materia = materiaActual(selectedCurso);
   const bim = window.__valBim;
   const key = docId(`${selectedStudentId}_${bim}_${slugify(materia)}`);
   const existente = cache.valoraciones[key] || {};
@@ -1975,9 +1988,10 @@ function renderNotasLista(){
   if(!cursos.includes(selectedCurso)) selectedCurso = cursos[0];
   window.__notaCuatri = window.__notaCuatri || 1;
   const students = getStudents().filter(s => s.curso === selectedCurso).sort((a,b)=> a.apellido.localeCompare(b.apellido));
-  const materia = materiaActual();
-  const materiaPicker = userRole === 'admin'
-    ? `<select id="materiaSelect">${materiasDisponibles().map(m => `<option value="${m}" ${m===materia?'selected':''}>${m}</option>`).join('')}</select>`
+  const opcionesMateria = materiasParaSeleccion(selectedCurso);
+  const materia = materiaActual(selectedCurso);
+  const materiaPicker = opcionesMateria.length > 1
+    ? `<select id="materiaSelect">${opcionesMateria.map(m => `<option value="${m}" ${m===materia?'selected':''}>${m}</option>`).join('')}</select>`
     : '';
 
   const rows = students.map(s => {
@@ -2011,7 +2025,7 @@ function renderNotasLista(){
   document.getElementById('cursoSelect').addEventListener('change', (e) => { selectedCurso = e.target.value; render(); });
   document.getElementById('cuatriSelect').addEventListener('change', (e) => { window.__notaCuatri = Number(e.target.value); render(); });
   if(document.getElementById('materiaSelect')){
-    document.getElementById('materiaSelect').addEventListener('change', (e) => { window.__materiaAdmin = e.target.value; render(); });
+    document.getElementById('materiaSelect').addEventListener('change', (e) => { window.__materiaSel = e.target.value; render(); });
   }
   document.querySelectorAll('[data-nota]').forEach(inp => {
     inp.addEventListener('change', (e) => {
@@ -2060,10 +2074,8 @@ function slugify(s){ return String(s).toLowerCase().normalize('NFD').replace(/[\
 
 function renderPin(){
   $app.innerHTML = `
-    <div style="padding-top:60px;text-align:center;">
-      <div class="stamp" style="margin:0 auto 20px;width:64px;height:64px;">
-        <div class="dom" style="font-size:20px;">ISP</div>
-      </div>
+    <div style="padding-top:40px;text-align:center;">
+      <img src="icon-192.png" alt="ISP" style="width:88px;height:88px;object-fit:contain;margin:0 auto 16px;display:block;">
       <h1 style="font-size:18px;margin:0 0 6px;">Preceptoría</h1>
       <p style="font-size:13px;color:var(--ink-soft);margin:0 0 20px;">Ingresá el PIN para entrar</p>
       <input id="pinInput" type="tel" inputmode="numeric" maxlength="4" placeholder="••••"

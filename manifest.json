@@ -1,6 +1,6 @@
 {
-  "name": "Preceptoría ISP",
-  "short_name": "Preceptoría",
+  "name": "Instituto Superior Porteño",
+  "short_name": "ISP",
   "description": "App de tareas diarias de preceptoría — Instituto Superior Porteño",
   "start_url": "./index.html",
   "scope": "./",
