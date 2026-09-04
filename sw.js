@@ -1,4 +1,4 @@
-const CACHE_NAME = 'preceptoria-isp-v3';
+const CACHE_NAME = 'preceptoria-isp-v4';
 const LOCAL_ASSETS = [
   './',
   './index.html',
