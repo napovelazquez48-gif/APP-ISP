@@ -1691,15 +1691,32 @@ function guardarEdicionProfesor(uid){
   navigate('profesores');
 }
 
+function recalcularDesdeHorario(uid){
+  const t = cache.teachers[uid];
+  const conocido = profesoresConocidos()[t.nombre];
+  if(!conocido){ alert('Este nombre no aparece tal cual en el horario, no lo puedo recalcular solo.'); return; }
+  setDoc(doc(db,'teachers',uid), { materias: conocido.materias, cursos: conocido.cursos, asignaciones: conocido.asignaciones }, { merge: true })
+    .catch(err=>console.error(err));
+  showToast('Recalculado desde el horario');
+  navigate('profesores');
+}
+
 function renderProfesorEditar(){
   const t = cache.teachers[selectedProfesorUid];
   if(!t){ navigate('profesores'); return; }
   const materias = materiasDisponibles();
+  const conocido = profesoresConocidos()[t.nombre];
   $app.innerHTML = `
     <div class="appbar" style="padding:0 0 10px;">
       <button class="back-btn" id="backBtn">${icon('back')}</button>
       <h1>${t.nombre}</h1>
     </div>
+    ${conocido ? `
+      <div class="config-card" style="margin-bottom:16px;">
+        <p class="v" style="font-size:13px;margin-bottom:8px;">Este nombre coincide con el horario cargado — se puede recalcular la asignación exacta (qué materia da en qué curso) con un toque.</p>
+        <button class="btn-secondary" id="recalcularBtn" style="width:100%;">Recalcular desde el horario</button>
+      </div>
+    ` : ''}
     <p class="section-label">Materias</p>
     <div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:16px;">
       ${materias.map(m => `<label class="curso-check-label"><input type="checkbox" class="materia-check-edit" value="${m}" ${(t.materias||[]).includes(m)?'checked':''}> ${m}</label>`).join('')}
@@ -1708,10 +1725,14 @@ function renderProfesorEditar(){
     <div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:18px;">
       ${CURSOS.map(c => `<label class="curso-check-label"><input type="checkbox" class="curso-check-edit" value="${c}" ${(t.cursos||[]).includes(c)?'checked':''}> ${c}° A</label>`).join('')}
     </div>
+    <p class="info-note" style="margin-top:0;margin-bottom:10px;">${icon('info')}Guardar cambios acá asume que todas las materias tildadas aplican a todos los cursos tildados. Si da distintas materias en distintos cursos, usá "Recalcular desde el horario" en vez de esto.</p>
     <button class="btn-primary" id="guardarEdicionBtn">Guardar cambios</button>
   `;
   document.getElementById('backBtn').addEventListener('click', () => navigate('profesores'));
   document.getElementById('guardarEdicionBtn').addEventListener('click', () => guardarEdicionProfesor(selectedProfesorUid));
+  if(document.getElementById('recalcularBtn')){
+    document.getElementById('recalcularBtn').addEventListener('click', () => recalcularDesdeHorario(selectedProfesorUid));
+  }
 }
 
 let selectedProfesorUid = null;
