@@ -922,6 +922,19 @@ function ordinal(n){
 function cursosDisponibles(){
   return userRole === 'teacher' ? (currentTeacher.cursos||[]) : CURSOS;
 }
+function resolverMateriaYCursos(){
+  let cursosOpciones, materia;
+  if(userRole === 'teacher'){
+    materia = materiaActual(selectedCurso);
+    cursosOpciones = cursosParaMateria(materia);
+    if(!cursosOpciones.includes(selectedCurso)) selectedCurso = cursosOpciones[0];
+  } else {
+    cursosOpciones = CURSOS;
+    if(!cursosOpciones.includes(selectedCurso)) selectedCurso = cursosOpciones[0];
+    materia = materiaActual(selectedCurso);
+  }
+  return { materia, cursosOpciones };
+}
 function homeRoute(){
   return userRole === 'teacher' ? 'teacherHome' : 'home';
 }
@@ -1631,6 +1644,19 @@ async function crearProfesor(){
     errEl.textContent = 'La contraseña debe tener al menos 6 caracteres.';
     return;
   }
+
+  // Si vino de elegir un profesor conocido y los checkboxes no se tocaron después, usamos el cruce preciso materia-curso del horario.
+  // Si no, asumimos que cada materia tildada aplica a todos los cursos tildados.
+  let asignaciones;
+  const precisa = window.__asignacionesConocidas;
+  const coincideMaterias = precisa && precisa.materias.length===materiasSeleccionadas.length && precisa.materias.every(m=>materiasSeleccionadas.includes(m));
+  const coincideCursos = precisa && precisa.cursos.length===cursosSeleccionados.length && precisa.cursos.every(c=>cursosSeleccionados.includes(c));
+  if(precisa && coincideMaterias && coincideCursos){
+    asignaciones = precisa.asignaciones;
+  } else {
+    asignaciones = materiasSeleccionadas.map(m => ({ materia: m, cursos: cursosSeleccionados }));
+  }
+
   const btn = document.getElementById('crearProfBtn');
   btn.textContent = 'Creando…';
   btn.disabled = true;
@@ -1638,7 +1664,7 @@ async function crearProfesor(){
     const cred = await createUserWithEmailAndPassword(authSecundaria, email, pass);
     const uid = cred.user.uid;
     await setDoc(doc(db,'teachers',uid), {
-      nombre, email, materias: materiasSeleccionadas, cursos: cursosSeleccionados, activo: true, creadoPor: getUsuario()
+      nombre, email, materias: materiasSeleccionadas, cursos: cursosSeleccionados, asignaciones, activo: true, creadoPor: getUsuario()
     });
     await signOut(authSecundaria);
     showToast('Profesor/a creado');
@@ -1659,7 +1685,8 @@ function guardarEdicionProfesor(uid){
   const materias = Array.from(document.querySelectorAll('.materia-check-edit:checked')).map(c => c.value);
   const cursos = Array.from(document.querySelectorAll('.curso-check-edit:checked')).map(c => c.value);
   if(cursos.length===0){ alert('Elegí al menos un curso.'); return; }
-  setDoc(doc(db,'teachers',uid), { materias, cursos }, { merge: true }).catch(err=>console.error(err));
+  const asignaciones = materias.map(m => ({ materia: m, cursos }));
+  setDoc(doc(db,'teachers',uid), { materias, cursos, asignaciones }, { merge: true }).catch(err=>console.error(err));
   showToast('Datos actualizados');
   navigate('profesores');
 }
@@ -1754,6 +1781,7 @@ function renderProfesores(){
     if(!nombre) return;
     document.getElementById('nuevoProfNombre').value = nombre;
     const datos = conocidos[nombre];
+    window.__asignacionesConocidas = datos;
     document.querySelectorAll('.materia-check').forEach(c => { c.checked = datos.materias.includes(c.value); });
     document.querySelectorAll('.curso-check').forEach(c => { c.checked = datos.cursos.includes(c.value); });
   });
@@ -1832,18 +1860,27 @@ function profesoresConocidos(){
       entries.forEach(e => {
         (e.teachers||[]).forEach(nombre => {
           const key = nombre.trim();
-          if(!map[key]) map[key] = { materias: new Set(), cursos: new Set() };
-          map[key].materias.add(e.subject);
-          map[key].cursos.add(curso);
+          if(!map[key]) map[key] = {};
+          if(!map[key][e.subject]) map[key][e.subject] = new Set();
+          map[key][e.subject].add(curso);
         });
       });
     });
   });
   const out = {};
-  Object.entries(map).forEach(([nombre, v]) => {
-    out[nombre] = { materias: [...v.materias].sort(), cursos: [...v.cursos].sort() };
+  Object.entries(map).forEach(([nombre, porMateria]) => {
+    const asignaciones = Object.entries(porMateria).map(([materia, cursosSet]) => ({ materia, cursos: [...cursosSet].sort() }));
+    asignaciones.sort((a,b)=> a.materia.localeCompare(b.materia));
+    const materias = asignaciones.map(a => a.materia);
+    const cursosUnion = [...new Set(asignaciones.flatMap(a => a.cursos))].sort();
+    out[nombre] = { asignaciones, materias, cursos: cursosUnion };
   });
   return out;
+}
+function cursosParaMateria(materia){
+  if(userRole !== 'teacher') return CURSOS;
+  const asig = (currentTeacher.asignaciones||[]).find(a => a.materia === materia);
+  return asig ? asig.cursos : (currentTeacher.cursos||[]);
 }
 function materiaActual(curso){
   const opciones = materiasParaSeleccion(curso);
@@ -1864,13 +1901,11 @@ function materiasParaSeleccion(curso){
 }
 
 function renderValoracionesLista(){
-  const cursos = cursosDisponibles();
-  if(!cursos.includes(selectedCurso)) selectedCurso = cursos[0];
+  const { materia, cursosOpciones: cursos } = resolverMateriaYCursos();
   const bimActual = (bimestreActual().n===1 || bimestreActual().n===3) ? bimestreActual().n : 1;
   window.__valBim = window.__valBim || bimActual;
   const students = getStudents().filter(s => s.curso === selectedCurso).sort((a,b)=> a.apellido.localeCompare(b.apellido));
   const opcionesMateria = materiasParaSeleccion(selectedCurso);
-  const materia = materiaActual(selectedCurso);
   const materiaPicker = opcionesMateria.length > 1
     ? `<select id="materiaSelect">${opcionesMateria.map(m => `<option value="${m}" ${m===materia?'selected':''}>${m}</option>`).join('')}</select>`
     : '';
@@ -1984,12 +2019,10 @@ function renderValoracionAlumno(){
 
 // ---------- Notas cuatrimestrales ----------
 function renderNotasLista(){
-  const cursos = cursosDisponibles();
-  if(!cursos.includes(selectedCurso)) selectedCurso = cursos[0];
+  const { materia, cursosOpciones: cursos } = resolverMateriaYCursos();
   window.__notaCuatri = window.__notaCuatri || 1;
   const students = getStudents().filter(s => s.curso === selectedCurso).sort((a,b)=> a.apellido.localeCompare(b.apellido));
   const opcionesMateria = materiasParaSeleccion(selectedCurso);
-  const materia = materiaActual(selectedCurso);
   const materiaPicker = opcionesMateria.length > 1
     ? `<select id="materiaSelect">${opcionesMateria.map(m => `<option value="${m}" ${m===materia?'selected':''}>${m}</option>`).join('')}</select>`
     : '';
