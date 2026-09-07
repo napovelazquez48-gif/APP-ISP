@@ -41,10 +41,17 @@ h1,h2,h3,.serif{font-family:'Source Serif 4', serif;}
 .status-spacer{
   position:fixed;
   top:0; left:0; right:0;
-  height:calc(env(safe-area-inset-top) + 14px);
+  height:calc(env(safe-area-inset-top) + 40px);
   background:var(--ink);
   z-index:200;
+  display:flex;
+  align-items:flex-end;
+  justify-content:center;
+  gap:8px;
+  padding-bottom:9px;
 }
+.status-spacer img{width:20px;height:20px;object-fit:contain;}
+.status-spacer span{font-family:'Source Serif 4',serif;font-size:13px;font-weight:600;color:var(--paper);letter-spacing:0.2px;}
 
 #app{
   max-width:480px;
@@ -52,7 +59,7 @@ h1,h2,h3,.serif{font-family:'Source Serif 4', serif;}
   min-height:100vh;
   display:flex;
   flex-direction:column;
-  padding-top:calc(env(safe-area-inset-top) + 14px);
+  padding-top:calc(env(safe-area-inset-top) + 40px);
   padding-bottom:76px;
 }
 
