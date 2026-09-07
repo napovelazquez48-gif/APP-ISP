@@ -1232,6 +1232,8 @@ function render(){
   else if(currentRoute === 'resumen') renderResumenLista();
   else if(currentRoute === 'resumenAlumno') renderResumenAlumno();
   else if(currentRoute === 'detalleFaltasAlumno') renderDetalleFaltasAlumno();
+  else if(currentRoute === 'resumenValoraciones') renderResumenValoraciones();
+  else if(currentRoute === 'resumenNotas') renderResumenNotas();
   else if(currentRoute === 'importar') renderImportar();
   else if(currentRoute === 'detalleAsistenciaHoy') renderDetalleAsistenciaHoy();
   else if(currentRoute === 'detalleAlertas') renderDetalleAlertas();
@@ -1608,11 +1610,89 @@ function renderResumenAlumno(){
       return `<p style="font-size:13px;color:var(--ink-soft);">Sin autorización activa.</p>`;
     })()}
     <button class="btn-secondary" id="authBtn" style="width:100%;margin-top:8px;">${(getAutorizaciones()[selectedStudentId]||{}).activa ? 'Cerrar autorización' : 'Agregar autorización'}</button>
+
+    <p class="section-label" style="margin-top:16px;">Docencia</p>
+    <div class="module-list">
+      <div class="module-row" id="verValoracionesBtn">
+        <div class="txt"><p class="title">Valoraciones pedagógicas</p><p class="desc">1er y 3er bimestre, por materia</p></div>
+        <span class="chevron">${icon('chevron')}</span>
+      </div>
+      <div class="module-row" id="verNotasBtn">
+        <div class="txt"><p class="title">Notas</p><p class="desc">1er y 2do cuatrimestre</p></div>
+        <span class="chevron">${icon('chevron')}</span>
+      </div>
+    </div>
   `;
   document.getElementById('backBtn').addEventListener('click', () => { selectedBimestreN = null; navigate('resumen'); });
   document.getElementById('bimSelect').addEventListener('change', (e) => { selectedBimestreN = Number(e.target.value); render(); });
   document.getElementById('cardFaltasBim').addEventListener('click', () => navigate('detalleFaltasAlumno'));
   document.getElementById('authBtn').addEventListener('click', () => gestionarAutorizacion(selectedStudentId));
+  document.getElementById('verValoracionesBtn').addEventListener('click', () => navigate('resumenValoraciones'));
+  document.getElementById('verNotasBtn').addEventListener('click', () => navigate('resumenNotas'));
+}
+
+function renderResumenValoraciones(){
+  const student = getStudents().find(s => s.id === selectedStudentId);
+  window.__resumenValBim = window.__resumenValBim || 1;
+  const bim = window.__resumenValBim;
+
+  const propias = Object.values(cache.valoraciones).filter(v => v.studentId === selectedStudentId && v.bimestre === bim)
+    .sort((a,b)=> a.materia.localeCompare(b.materia));
+
+  const rows = propias.map(v => `
+    <div class="sancion-item">
+      <p class="folio">${v.materia}</p>
+      <p class="motivo">Participa: ${v.participa||'—'} · Tareas: ${v.cumpleTareas||'—'} · Calidad: ${v.calidad||'—'} · Comportamiento: ${v.comportamiento||'—'} · Objetivos: ${v.objetivos||'—'}</p>
+      ${v.proyeccion ? `<p class="motivo" style="margin-top:4px;font-style:italic;">"${v.proyeccion}"</p>` : ''}
+      ${v.observaciones ? `<p class="motivo" style="margin-top:4px;">${v.observaciones}</p>` : ''}
+    </div>
+  `).join('');
+
+  $app.innerHTML = `
+    <div class="appbar" style="padding:0 0 10px;">
+      <button class="back-btn" id="backBtn">${icon('back')}</button>
+      <h1>${student.apellido}, ${student.nombre}</h1>
+    </div>
+    <div class="course-picker">
+      <select id="bimSelectResVal">
+        <option value="1" ${bim===1?'selected':''}>1° bimestre</option>
+        <option value="3" ${bim===3?'selected':''}>3° bimestre</option>
+      </select>
+    </div>
+    ${rows ? `<div class="sancion-list">${rows}</div>` : `<p style="font-size:13px;color:var(--ink-soft);">Sin valoraciones cargadas para este bimestre.</p>`}
+  `;
+  document.getElementById('backBtn').addEventListener('click', () => navigate('resumenAlumno'));
+  document.getElementById('bimSelectResVal').addEventListener('change', (e) => { window.__resumenValBim = Number(e.target.value); render(); });
+}
+
+function renderResumenNotas(){
+  const student = getStudents().find(s => s.id === selectedStudentId);
+  const propias = Object.values(cache.notas).filter(n => n.studentId === selectedStudentId);
+  const materias = [...new Set(propias.map(n => n.materia))].sort();
+
+  const rows = materias.map(m => {
+    const n1 = propias.find(n => n.materia===m && n.cuatrimestre===1);
+    const n2 = propias.find(n => n.materia===m && n.cuatrimestre===2);
+    return `<div class="materia-row">
+      <span class="materia-name">${m}</span>
+      <span class="materia-detail">${n1 ? n1.nota : '—'}</span>
+      <span class="materia-pct">${n2 ? n2.nota : '—'}</span>
+    </div>`;
+  }).join('');
+
+  $app.innerHTML = `
+    <div class="appbar" style="padding:0 0 10px;">
+      <button class="back-btn" id="backBtn">${icon('back')}</button>
+      <h1>${student.apellido}, ${student.nombre}</h1>
+    </div>
+    <div class="materia-row" style="font-weight:600;color:var(--ink-soft);font-size:11.5px;border-bottom:1px solid var(--border);">
+      <span class="materia-name">Materia</span>
+      <span class="materia-detail">1° cuatri.</span>
+      <span class="materia-pct">2° cuatri.</span>
+    </div>
+    ${materias.length ? `<div class="sancion-list">${rows}</div>` : `<p style="font-size:13px;color:var(--ink-soft);margin-top:10px;">Sin notas cargadas todavía.</p>`}
+  `;
+  document.getElementById('backBtn').addEventListener('click', () => navigate('resumenAlumno'));
 }
 
 // ---------- Educación Física ----------
