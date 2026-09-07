@@ -38,20 +38,25 @@ body{
 
 h1,h2,h3,.serif{font-family:'Source Serif 4', serif;}
 
+.status-spacer{
+  position:fixed;
+  top:0; left:0; right:0;
+  height:calc(env(safe-area-inset-top) + 14px);
+  background:var(--ink);
+  z-index:200;
+}
+
 #app{
   max-width:480px;
   margin:0 auto;
   min-height:100vh;
   display:flex;
   flex-direction:column;
+  padding-top:calc(env(safe-area-inset-top) + 14px);
   padding-bottom:76px;
 }
 
-main{
-  -webkit-transform:translateZ(0);
-  transform:translateZ(0);
-  will-change:transform;
-}
+main{}
 
 .appbar{
   display:flex;

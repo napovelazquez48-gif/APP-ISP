@@ -1234,7 +1234,6 @@ function render(){
   else if(currentRoute === 'valoracionAlumno') renderValoracionAlumno();
   else if(currentRoute === 'notas') renderNotasLista();
   renderTabbar();
-  void $app.offsetHeight; // fuerza un repintado inmediato (evita restos visuales en Safari/iOS)
 }
 
 // ---------- Familias ----------
@@ -2278,15 +2277,5 @@ if('serviceWorker' in navigator){
     navigator.serviceWorker.register('./sw.js', { updateViaCache: 'none' }).then(reg => {
       reg.update();
     }).catch(()=>{});
-  });
-}
-
-// Fuerza un repintado cuando terminan de cargar las tipografías (evita texto "pegado"
-// en Safari/iOS cuando la fuente llega después del primer dibujado de la pantalla).
-if(document.fonts && document.fonts.ready){
-  document.fonts.ready.then(() => {
-    $app.style.display = 'none';
-    void $app.offsetHeight;
-    $app.style.display = '';
   });
 }
