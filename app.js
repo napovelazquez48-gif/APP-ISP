@@ -737,6 +737,15 @@ async function ejecutarImportacion(data){
     const createdAt = new Date(s.fecha+'T12:00:00').getTime() + idx;
     ops.push({ type:'set', ref: doc(collection(db,'sanciones')), data: { studentId: s.studentId, fecha: s.fecha, motivo: s.motivo, createdAt, autor: 'Importación histórica' } });
   });
+  (data.valoraciones||[]).forEach(v => {
+    const key = docId(`${v.studentId}_${v.bimestre}_${slugify(v.materia)}`);
+    ops.push({ type:'set', ref: doc(db,'valoraciones', key), data: {
+      studentId: v.studentId, curso: v.curso, materia: v.materia, bimestre: v.bimestre,
+      participa: v.participa||'', cumpleTareas: v.cumpleTareas||'', calidad: v.calidad||'',
+      comportamiento: v.comportamiento||'', objetivos: v.objetivos||'', proyeccion: v.proyeccion||'',
+      observaciones: v.observaciones||'', autor: 'Importación histórica', updatedAt: Date.now()
+    }});
+  });
   (data.deletes||[]).forEach(del => {
     ops.push({ type:'delete', ref: doc(db, del.collection, docId(del.key)) });
   });
@@ -772,7 +781,7 @@ function renderImportar(){
       try{
         pendingData = JSON.parse(reader.result);
         document.getElementById('importPreview').innerHTML =
-          `<p style="font-size:13px;">Se van a cargar <b>${(pendingData.attendance||[]).length}</b> registros de asistencia, <b>${(pendingData.ef||[]).length}</b> de Educación Física, <b>${(pendingData.autorizaciones||[]).length}</b> autorizaciones de tardanza, <b>${(pendingData.sanciones||[]).length}</b> apercibimientos, y se van a borrar <b>${(pendingData.deletes||[]).length}</b> registros viejos incorrectos.</p>`;
+          `<p style="font-size:13px;">Se van a cargar <b>${(pendingData.attendance||[]).length}</b> registros de asistencia, <b>${(pendingData.ef||[]).length}</b> de Educación Física, <b>${(pendingData.autorizaciones||[]).length}</b> autorizaciones de tardanza, <b>${(pendingData.sanciones||[]).length}</b> apercibimientos, <b>${(pendingData.valoraciones||[]).length}</b> valoraciones pedagógicas, y se van a borrar <b>${(pendingData.deletes||[]).length}</b> registros viejos incorrectos.</p>`;
         document.getElementById('importBtn').style.display = 'block';
       }catch(err){
         document.getElementById('importPreview').innerHTML = `<p style="font-size:13px;color:var(--stamp);">Archivo inválido.</p>`;
