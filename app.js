@@ -71,6 +71,7 @@ let cache = {
   teachers: {},
   valoraciones: {},
   notas: {},
+  entradasEspeciales: {},
   config: { entrada:'07:45', toleranciaMin:15, corteFaltaCompleta:'09:00' }
 };
 
@@ -154,6 +155,13 @@ function startListeners(){
     const next = {};
     snap.forEach(d => { next[d.id] = d.data(); });
     cache.notas = next;
+    render();
+  });
+
+  onSnapshot(collection(db,'entradasEspeciales'), snap => {
+    const next = {};
+    snap.forEach(d => { next[d.id] = d.data(); });
+    cache.entradasEspeciales = next;
     render();
   });
 
@@ -339,7 +347,28 @@ function minutesOf(hhmm){
 
 function getAutorizaciones(){ return cache.autorizaciones || {}; }
 
-function estadoParaHora(hora, cfg, studentId){
+function getEntradaEspecial(fecha, curso){
+  return cache.entradasEspeciales[docId(`${fecha}_${curso}`)] || null;
+}
+function definirEntradaEspecial(fecha, curso){
+  const actual = getEntradaEspecial(fecha, curso);
+  const horaTope = prompt(`Entrada especial para ${curso}° A el ${fecha}.\n\nHasta qué hora entran sin que cuente tarde/ausente (HH:MM):`, actual ? actual.horaTope : '09:20');
+  if(!horaTope) return;
+  if(!/^\d{2}:\d{2}$/.test(horaTope)){ alert('Formato inválido. Usá HH:MM.'); return; }
+  const motivo = prompt('Motivo (para tu registro, opcional):', actual ? actual.motivo : '');
+  setDoc(doc(db,'entradasEspeciales', docId(`${fecha}_${curso}`)), { fecha, curso, horaTope, motivo: motivo||'', autor: getUsuario() })
+    .catch(err=>console.error(err));
+}
+function borrarEntradaEspecial(fecha, curso){
+  if(!confirm('¿Sacar la entrada especial de este curso para este día?')) return;
+  deleteDoc(doc(db,'entradasEspeciales', docId(`${fecha}_${curso}`))).catch(err=>console.error(err));
+}
+
+function estadoParaHora(hora, cfg, studentId, curso, fecha){
+  const especial = (curso && fecha) ? getEntradaEspecial(fecha, curso) : null;
+  if(especial && minutesOf(hora) <= minutesOf(especial.horaTope)){
+    return { estado: 'P', hora };
+  }
   const auth = getAutorizaciones()[studentId];
   if(auth && auth.activa && minutesOf(hora) <= minutesOf(auth.horaTope)){
     return { estado: 'TJ', hora };
@@ -359,7 +388,7 @@ function writeAttendance(key, data){
   setDoc(doc(db,'attendance',docId(key)), Object.assign({ autor: getUsuario() }, data)).catch(err=>console.error(err));
 }
 
-function markPresente(studentId, fecha){
+function markPresente(studentId, fecha, curso){
   fecha = fecha || selectedFecha;
   const key = `${fecha}|${studentId}`;
   const rec = cache.attendance[key];
@@ -369,7 +398,7 @@ function markPresente(studentId, fecha){
   }
   const cfg = getConfig();
   if(fecha === todayISO()){
-    writeAttendance(key, estadoParaHora(nowHHMM(), cfg, studentId));
+    writeAttendance(key, estadoParaHora(nowHHMM(), cfg, studentId, curso, fecha));
   } else {
     writeAttendance(key, { estado: 'P', hora: null });
   }
@@ -397,7 +426,7 @@ function marcarExencion(studentId, fecha){
   else delete nuevo.exencion;
   writeAttendance(key, nuevo);
 }
-function editHora(studentId, fecha){
+function editHora(studentId, fecha, curso){
   fecha = fecha || selectedFecha;
   const cfg = getConfig();
   const key = `${fecha}|${studentId}`;
@@ -405,7 +434,7 @@ function editHora(studentId, fecha){
   const nueva = prompt('Hora de llegada (HH:MM):', current);
   if(!nueva) return;
   if(!/^\d{2}:\d{2}$/.test(nueva)){ alert('Formato inválido. Usá HH:MM.'); return; }
-  writeAttendance(key, estadoParaHora(nueva, cfg, studentId));
+  writeAttendance(key, estadoParaHora(nueva, cfg, studentId, curso, fecha));
 }
 
 function toggleEF(studentId, fecha){
@@ -478,6 +507,16 @@ function toggleSuplencia(subKey, teacherName){
   const suplente = prompt(`${teacherName} — marcar ausente.\n\nNombre del suplente (dejar vacío si no hay):`, '');
   if(suplente === null) return;
   setDoc(ref, { subKey, teacher: teacherName, suplente: suplente.trim(), autor: getUsuario() }).catch(err=>console.error(err));
+
+  // Si es la primera hora del día y no hay suplente, ofrece entrada especial para ese curso
+  const [fecha, curso, , startHourStr] = subKey.split('|');
+  if(Number(startHourStr) === 1 && !suplente.trim()){
+    const horaTope = prompt(`Como falta el/la profesor/a de la primera hora, ¿los alumnos de ${curso}° A pueden entrar más tarde hoy? Hasta qué hora (HH:MM), o dejar vacío si no corresponde:`, '');
+    if(horaTope && /^\d{2}:\d{2}$/.test(horaTope)){
+      setDoc(doc(db,'entradasEspeciales', docId(`${fecha}_${curso}`)), { fecha, curso, horaTope, motivo: `Ausencia de ${teacherName}`, autor: getUsuario() })
+        .catch(err=>console.error(err));
+    }
+  }
 }
 
 function renderHorarios(){
@@ -902,6 +941,19 @@ function renderAsistencia(){
       <input type="date" id="fechaSelect" value="${selectedFecha}" max="${maxFechaSeleccionable()}">
     </div>
     <p class="date-label">${fmtDateLong(selectedFecha)} · entrada ${cfg.entrada}, tolerancia ${cfg.toleranciaMin} min</p>
+    ${(() => {
+      const especial = getEntradaEspecial(selectedFecha, selectedCurso);
+      if(especial){
+        return `<div class="alert-banner" style="background:var(--sage-bg);margin-bottom:14px;">
+          <p class="alert-text" style="color:var(--sage);">Entrada especial hoy: hasta las ${especial.horaTope}${especial.motivo?' · '+especial.motivo:''}</p>
+          <div style="display:flex;gap:8px;margin-top:8px;">
+            <button class="btn-secondary" id="editarEspecialBtn" style="flex:1;font-size:12px;padding:6px;">Editar</button>
+            <button class="btn-secondary" id="borrarEspecialBtn" style="flex:1;font-size:12px;padding:6px;color:var(--stamp);">Sacar</button>
+          </div>
+        </div>`;
+      }
+      return `<p style="text-align:right;margin:-8px 0 14px;"><a href="#" id="entradaEspecialLink" style="font-size:12px;color:var(--ink-soft);text-decoration:underline;">+ Entrada especial para este curso hoy</a></p>`;
+    })()}
     ${students.length ? rows : `<div class="empty-state"><h2>Sin alumnos</h2><p>Este curso no tiene alumnos cargados.</p></div>`}
     <div style="height:16px"></div>
   `;
@@ -909,11 +961,20 @@ function renderAsistencia(){
   document.getElementById('backBtn').addEventListener('click', () => navigate('home'));
   document.getElementById('cursoSelect').addEventListener('change', (e) => { selectedCurso = e.target.value; render(); });
   document.getElementById('fechaSelect').addEventListener('change', (e) => { selectedFecha = e.target.value; render(); });
-  document.querySelectorAll('[data-p]').forEach(b => b.addEventListener('click', (e) => markPresente(e.target.dataset.p, selectedFecha)));
+  document.querySelectorAll('[data-p]').forEach(b => b.addEventListener('click', (e) => markPresente(e.target.dataset.p, selectedFecha, selectedCurso)));
   document.querySelectorAll('[data-a]').forEach(b => b.addEventListener('click', (e) => markAusente(e.target.dataset.a, selectedFecha)));
-  document.querySelectorAll('[data-edit]').forEach(b => b.addEventListener('click', (e) => editHora(e.currentTarget.dataset.edit, selectedFecha)));
+  document.querySelectorAll('[data-edit]').forEach(b => b.addEventListener('click', (e) => editHora(e.currentTarget.dataset.edit, selectedFecha, selectedCurso)));
   document.querySelectorAll('[data-exent]').forEach(b => b.addEventListener('click', (e) => marcarExencion(e.currentTarget.dataset.exent, selectedFecha)));
   document.querySelectorAll('[data-ef]').forEach(b => b.addEventListener('click', (e) => toggleEF(e.currentTarget.dataset.ef, selectedFecha)));
+  if(document.getElementById('entradaEspecialLink')){
+    document.getElementById('entradaEspecialLink').addEventListener('click', (e) => { e.preventDefault(); definirEntradaEspecial(selectedFecha, selectedCurso); });
+  }
+  if(document.getElementById('editarEspecialBtn')){
+    document.getElementById('editarEspecialBtn').addEventListener('click', () => definirEntradaEspecial(selectedFecha, selectedCurso));
+  }
+  if(document.getElementById('borrarEspecialBtn')){
+    document.getElementById('borrarEspecialBtn').addEventListener('click', () => borrarEntradaEspecial(selectedFecha, selectedCurso));
+  }
 }
 
 // ---------- Sanciones e incidentes ----------
