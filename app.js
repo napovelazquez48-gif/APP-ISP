@@ -82,6 +82,7 @@ let cache = {
   valoraciones: {},
   notas: {},
   viewers: {},
+  driveMapping: {},
   entradasEspeciales: {},
   config: { entrada:'07:45', toleranciaMin:15, corteFaltaCompleta:'09:00' }
 };
@@ -180,6 +181,13 @@ function startListeners(){
     const next = {};
     snap.forEach(d => { next[d.id] = Object.assign({ uid: d.id }, d.data()); });
     cache.viewers = next;
+    render();
+  });
+
+  onSnapshot(collection(db,'driveMapping'), snap => {
+    const next = {};
+    snap.forEach(d => { next[d.id] = d.data(); });
+    cache.driveMapping = next;
     render();
   });
 
@@ -404,6 +412,8 @@ let selectedFecha = todayISO();
 
 function writeAttendance(key, data){
   setDoc(doc(db,'attendance',docId(key)), Object.assign({ autor: getUsuario() }, data)).catch(err=>console.error(err));
+  const [fechaK, studentIdK] = key.split('|');
+  sincronizarAsistenciaADrive(studentIdK, fechaK, data);
 }
 
 function markPresente(studentId, fecha, curso){
@@ -462,6 +472,7 @@ function toggleEF(studentId, fecha){
   const ref = doc(db,'ef', docId(`${fecha}_${studentId}`));
   if(current === null){
     setDoc(ref, { date: fecha, studentId, tipo: 'falta', autor: getUsuario() }).catch(err=>console.error(err));
+    sincronizarEFaDrive(studentId, fecha, 'falta');
   } else if(current === 'falta'){
     const b = bimestreDe(fecha) || bimestreActual();
     const used = countSAFenBimestre(studentId, b);
@@ -470,6 +481,7 @@ function toggleEF(studentId, fecha){
       return;
     }
     setDoc(ref, { date: fecha, studentId, tipo: 'saf', autor: getUsuario() }).catch(err=>console.error(err));
+    sincronizarEFaDrive(studentId, fecha, 'saf');
   } else {
     deleteDoc(ref).catch(err=>console.error(err));
   }
@@ -2041,10 +2053,13 @@ function cursoDesdeNombreCarpeta(nombre){
   return null;
 }
 
+const CORRECCIONES_APELLIDO = { 'choquehuaca': 'choquehuanca' };
+
 function emparejarAlumno(nombreArchivo, curso){
   const nn = normalizeNombre(nombreArchivo.replace(/\.xlsx$/i,''));
   const partes = nn.split(',');
-  const ap = (partes[0]||'').trim();
+  let ap = (partes[0]||'').trim();
+  ap = CORRECCIONES_APELLIDO[ap] || ap;
   const nom = (partes[1]||'').trim();
   const nomPrimero = nom.split(' ')[0] || '';
   const candidatos = getStudents().filter(s => s.curso === curso && normalizeNombre(s.apellido).split(' ')[0] === ap.split(' ')[0]);
@@ -2100,7 +2115,78 @@ function guardarMapeoDrive(){
   Promise.all(ops).then(() => showToast('Emparejamiento guardado')).catch(err=>console.error(err));
 }
 
+async function probarEscrituraSheet(studentId){
+  const estadoEl = document.getElementById('pruebaEstado');
+  const info = cache.driveMapping[studentId];
+  if(!info){ if(estadoEl) estadoEl.textContent = 'Este alumno no tiene planilla emparejada.'; return; }
+  if(estadoEl) estadoEl.textContent = 'Escribiendo...';
+  try{
+    const fechaTexto = fmtDateShort(todayISO());
+    await gapi.client.sheets.spreadsheets.values.append({
+      spreadsheetId: info.spreadsheetId,
+      range: "'2026'!B:D",
+      valueInputOption: 'USER_ENTERED',
+      insertDataOption: 'INSERT_ROWS',
+      resource: { values: [[fechaTexto, 'PRUEBA — se puede borrar esta fila', '']] }
+    });
+    if(estadoEl) estadoEl.innerHTML = '✓ Escrita. Andá a revisar la planilla de ese alumno en Drive: buscá una fila con "PRUEBA — se puede borrar esta fila" y confirmá que no rompió ninguna fórmula. Después borrala a mano.';
+  }catch(err){
+    console.error(err);
+    if(estadoEl) estadoEl.textContent = 'Error al escribir: ' + (err.result ? err.result.error.message : err.message);
+  }
+}
+
+// Traduce el estado interno de la app al vocabulario que ya usás en tus planillas
+function filaParaSheet(rec, tipoManual){
+  if(tipoManual) return { tipo: tipoManual, peso: '' };
+  if(rec.exencion) return { tipo: rec.exencion, peso: '' };
+  if(rec.estado === 'A') return { tipo: 'Clase', peso: 1 };
+  if(rec.estado === 'J') return { tipo: 'Clase (Justificado)', peso: 1 };
+  if(rec.estado === 'T') return { tipo: 'Tarde', peso: 0.5 };
+  if(rec.estado === 'TJ') return { tipo: 'Tarde (Justificado)', peso: '' };
+  return null; // Presente no se escribe (igual que en tu Excel: solo figuran los ausentes)
+}
+
+async function sincronizarAsistenciaADrive(studentId, fechaISO, rec){
+  if(!(window.__driveSyncActivo && driveConectado)) return;
+  const info = cache.driveMapping[studentId];
+  if(!info) return;
+  const fila = filaParaSheet(rec);
+  if(!fila) return;
+  try{
+    await gapi.client.sheets.spreadsheets.values.append({
+      spreadsheetId: info.spreadsheetId,
+      range: "'2026'!B:D",
+      valueInputOption: 'USER_ENTERED',
+      insertDataOption: 'INSERT_ROWS',
+      resource: { values: [[fmtDateShort(fechaISO), fila.tipo, fila.peso]] }
+    });
+  }catch(err){
+    console.error('Error sincronizando a Drive:', err);
+  }
+}
+
+async function sincronizarEFaDrive(studentId, fechaISO, tipo){
+  if(!(window.__driveSyncActivo && driveConectado)) return;
+  const info = cache.driveMapping[studentId];
+  if(!info) return;
+  const etiqueta = tipo === 'saf' ? 'SAF' : 'Ed. fisica';
+  const peso = tipo === 'saf' ? '' : 0.5;
+  try{
+    await gapi.client.sheets.spreadsheets.values.append({
+      spreadsheetId: info.spreadsheetId,
+      range: "'2026'!B:D",
+      valueInputOption: 'USER_ENTERED',
+      insertDataOption: 'INSERT_ROWS',
+      resource: { values: [[fmtDateShort(fechaISO), etiqueta, peso]] }
+    });
+  }catch(err){
+    console.error('Error sincronizando EF a Drive:', err);
+  }
+}
+
 function renderConexionDrive(){
+  const mapeados = Object.entries(cache.driveMapping || {});
   $app.innerHTML = `
     <div class="appbar" style="padding:0 0 10px;">
       <button class="back-btn" id="backBtn">${icon('back')}</button>
@@ -2111,6 +2197,25 @@ function renderConexionDrive(){
     ${driveConectado ? `<button class="btn-secondary" id="escanearBtn" style="width:100%;margin-bottom:12px;">Buscar y emparejar archivos</button>` : ''}
     <p id="driveEstado" style="font-size:12.5px;color:var(--ink-soft);line-height:1.5;"></p>
     <button class="btn-primary" id="guardarMapeoBtn" style="display:none;margin-top:10px;">Guardar emparejamiento</button>
+
+    ${mapeados.length && driveConectado ? `
+      <p class="section-label" style="margin-top:20px;">Etapa 2: prueba con un alumno</p>
+      <p style="font-size:12.5px;color:var(--ink-soft);margin-bottom:10px;">Escribe una fila de prueba bien marcada (no una falta real) en la planilla de un solo alumno, para que revises que no rompe nada antes de activarlo para todos.</p>
+      <select id="alumnoPruebaSelect" style="margin-bottom:10px;">
+        ${getStudents().filter(s => cache.driveMapping[s.id]).sort((a,b)=>a.apellido.localeCompare(b.apellido)).map(s => `<option value="${s.id}">${s.apellido}, ${s.nombre}</option>`).join('')}
+      </select>
+      <button class="btn-secondary" id="probarEscrituraBtn" style="width:100%;">Escribir fila de prueba</button>
+      <p id="pruebaEstado" style="font-size:12.5px;color:var(--ink-soft);margin-top:8px;"></p>
+    ` : ''}
+
+    ${window.__driveSyncActivo ? `
+      <p class="section-label" style="margin-top:20px;">Etapa 3: sincronización real</p>
+      <p style="font-size:12.5px;color:var(--sage);">✓ Activada — cada vez que cargues asistencia se refleja sola en Drive (mientras esta pestaña esté conectada).</p>
+    ` : (mapeados.length && driveConectado ? `
+      <p class="section-label" style="margin-top:20px;">Etapa 3: sincronización real</p>
+      <p style="font-size:12.5px;color:var(--ink-soft);margin-bottom:10px;">Una vez que confirmes que la fila de prueba se ve bien en Drive (y la hayas borrado), activá esto.</p>
+      <button class="btn-primary" id="activarSyncBtn" style="width:100%;">Activar sincronización real</button>
+    ` : '')}
   `;
   document.getElementById('backBtn').addEventListener('click', () => navigate('home'));
   document.getElementById('conectarDriveBtn').addEventListener('click', conectarDrive);
@@ -2118,6 +2223,19 @@ function renderConexionDrive(){
     document.getElementById('escanearBtn').addEventListener('click', escanearCarpetaDrive);
   }
   document.getElementById('guardarMapeoBtn').addEventListener('click', guardarMapeoDrive);
+  if(document.getElementById('probarEscrituraBtn')){
+    document.getElementById('probarEscrituraBtn').addEventListener('click', () => {
+      const sid = document.getElementById('alumnoPruebaSelect').value;
+      probarEscrituraSheet(sid);
+    });
+  }
+  if(document.getElementById('activarSyncBtn')){
+    document.getElementById('activarSyncBtn').addEventListener('click', () => {
+      window.__driveSyncActivo = true;
+      showToast('Sincronización activada para esta sesión');
+      render();
+    });
+  }
 }
 
 function renderProfesorNuevo(){
