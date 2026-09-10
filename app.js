@@ -2115,6 +2115,28 @@ function guardarMapeoDrive(){
   Promise.all(ops).then(() => showToast('Emparejamiento guardado')).catch(err=>console.error(err));
 }
 
+// Busca la próxima fila vacía mirando SOLO la columna B (fecha), para no confundirse
+// con fórmulas de otras columnas (como la de faltas acumuladas) que bajan mucho más.
+async function proximaFilaLibre(spreadsheetId){
+  const res = await gapi.client.sheets.spreadsheets.values.get({
+    spreadsheetId, range: "'2026'!B:B"
+  });
+  const valores = res.result.values || [];
+  let ultima = 0;
+  valores.forEach((fila, idx) => { if(fila[0] !== undefined && fila[0] !== '') ultima = idx + 1; });
+  return ultima + 1; // fila 1-indexed siguiente a la última con fecha
+}
+
+async function escribirFilaSheet(spreadsheetId, fechaTexto, tipo, peso){
+  const fila = await proximaFilaLibre(spreadsheetId);
+  await gapi.client.sheets.spreadsheets.values.update({
+    spreadsheetId,
+    range: `'2026'!B${fila}:D${fila}`,
+    valueInputOption: 'USER_ENTERED',
+    resource: { values: [[fechaTexto, tipo, peso===undefined?'':peso]] }
+  });
+}
+
 async function probarEscrituraSheet(studentId){
   const estadoEl = document.getElementById('pruebaEstado');
   const info = cache.driveMapping[studentId];
@@ -2122,14 +2144,8 @@ async function probarEscrituraSheet(studentId){
   if(estadoEl) estadoEl.textContent = 'Escribiendo...';
   try{
     const fechaTexto = fmtDateShort(todayISO());
-    await gapi.client.sheets.spreadsheets.values.append({
-      spreadsheetId: info.spreadsheetId,
-      range: "'2026'!B:D",
-      valueInputOption: 'USER_ENTERED',
-      insertDataOption: 'INSERT_ROWS',
-      resource: { values: [[fechaTexto, 'PRUEBA — se puede borrar esta fila', '']] }
-    });
-    if(estadoEl) estadoEl.innerHTML = '✓ Escrita. Andá a revisar la planilla de ese alumno en Drive: buscá una fila con "PRUEBA — se puede borrar esta fila" y confirmá que no rompió ninguna fórmula. Después borrala a mano.';
+    await escribirFilaSheet(info.spreadsheetId, fechaTexto, 'PRUEBA — se puede borrar esta fila', '');
+    if(estadoEl) estadoEl.innerHTML = '✓ Escrita justo debajo de la última fecha cargada. Andá a revisar la planilla de ese alumno en Drive y confirmá que quedó en el lugar correcto. Después borrala a mano.';
   }catch(err){
     console.error(err);
     if(estadoEl) estadoEl.textContent = 'Error al escribir: ' + (err.result ? err.result.error.message : err.message);
@@ -2154,13 +2170,7 @@ async function sincronizarAsistenciaADrive(studentId, fechaISO, rec){
   const fila = filaParaSheet(rec);
   if(!fila) return;
   try{
-    await gapi.client.sheets.spreadsheets.values.append({
-      spreadsheetId: info.spreadsheetId,
-      range: "'2026'!B:D",
-      valueInputOption: 'USER_ENTERED',
-      insertDataOption: 'INSERT_ROWS',
-      resource: { values: [[fmtDateShort(fechaISO), fila.tipo, fila.peso]] }
-    });
+    await escribirFilaSheet(info.spreadsheetId, fmtDateShort(fechaISO), fila.tipo, fila.peso);
   }catch(err){
     console.error('Error sincronizando a Drive:', err);
   }
@@ -2173,13 +2183,7 @@ async function sincronizarEFaDrive(studentId, fechaISO, tipo){
   const etiqueta = tipo === 'saf' ? 'SAF' : 'Ed. fisica';
   const peso = tipo === 'saf' ? '' : 0.5;
   try{
-    await gapi.client.sheets.spreadsheets.values.append({
-      spreadsheetId: info.spreadsheetId,
-      range: "'2026'!B:D",
-      valueInputOption: 'USER_ENTERED',
-      insertDataOption: 'INSERT_ROWS',
-      resource: { values: [[fmtDateShort(fechaISO), etiqueta, peso]] }
-    });
+    await escribirFilaSheet(info.spreadsheetId, fmtDateShort(fechaISO), etiqueta, peso);
   }catch(err){
     console.error('Error sincronizando EF a Drive:', err);
   }
