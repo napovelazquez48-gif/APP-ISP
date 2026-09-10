@@ -1318,6 +1318,8 @@ function render(){
   else if(currentRoute === 'lectura') renderLectura();
   else if(currentRoute === 'vistaCurso') renderVistaCurso();
   else if(currentRoute === 'vistaCursoMateria') renderVistaCursoMateria();
+  else if(currentRoute === 'vistaCursoAlerta') renderVistaCursoAlerta();
+  else if(currentRoute === 'vistaCursoSCP') renderVistaCursoSCP();
   else if(currentRoute === 'valoraciones') renderValoracionesLista();
   else if(currentRoute === 'valoracionAlumno') renderValoracionAlumno();
   else if(currentRoute === 'notas') renderNotasLista();
@@ -2403,24 +2405,30 @@ function computeVistaCurso(curso){
   const weights = computeAbsenceWeights();
   const anioCompleto = { from: BIMESTRES[0].from, to: BIMESTRES[BIMESTRES.length-1].to };
 
-  let enAlerta = 0;
-  const porMateria = {}; // materia -> { enRiesgo: [ {id,nombre,pct} ] }
-  const alumnosConSCP = new Set();
+  const alertaList = [];
+  const porMateria = {}; // materia -> [ {id,nombre,pct} ]
+  const scpMap = {}; // studentId -> [ {materia,pct} ]
 
   students.forEach(s => {
-    if((weights[s.id]||0) >= 5) enAlerta++;
+    const w = weights[s.id] || 0;
+    if(w >= 5) alertaList.push({ id: s.id, nombre: `${s.apellido}, ${s.nombre}`, valor: w });
     const stats = computeMateriaStats(s.id, anioCompleto);
     Object.entries(stats).forEach(([materia, st]) => {
       const pct = st.total>0 ? (1 - st.faltas/st.total) : 1;
       if(pct < 0.85){
+        const pctR = Math.round(pct*1000)/10;
         if(!porMateria[materia]) porMateria[materia] = [];
-        porMateria[materia].push({ id: s.id, nombre: `${s.apellido}, ${s.nombre}`, pct: Math.round(pct*1000)/10 });
-        alumnosConSCP.add(s.id);
+        porMateria[materia].push({ id: s.id, nombre: `${s.apellido}, ${s.nombre}`, pct: pctR });
+        if(!scpMap[s.id]) scpMap[s.id] = { id: s.id, nombre: `${s.apellido}, ${s.nombre}`, materias: [] };
+        scpMap[s.id].materias.push({ materia, pct: pctR });
       }
     });
   });
 
-  return { total: students.length, enAlerta, conSCP: alumnosConSCP.size, porMateria };
+  alertaList.sort((a,b)=> b.valor - a.valor);
+  const scpList = Object.values(scpMap).sort((a,b)=> a.nombre.localeCompare(b.nombre));
+
+  return { total: students.length, enAlerta: alertaList.length, conSCP: scpList.length, alertaList, scpList, porMateria };
 }
 
 function renderVistaCurso(){
@@ -2448,11 +2456,11 @@ function renderVistaCurso(){
     </div>
 
     <div class="stat-grid">
-      <div class="stat-card ${v.enAlerta>0?'alert':''}">
+      <div class="stat-card ${v.enAlerta>0?'alert':''}" id="cardAlertaCurso" style="cursor:pointer;">
         <p class="label">En alerta (bimestre)</p>
         <p class="value">${v.enAlerta}<span class="sub"> / ${v.total}</span></p>
       </div>
-      <div class="stat-card ${v.conSCP>0?'alert':''}">
+      <div class="stat-card ${v.conSCP>0?'alert':''}" id="cardSCPCurso" style="cursor:pointer;">
         <p class="label">Con riesgo de SCP</p>
         <p class="value">${v.conSCP}<span class="sub"> / ${v.total}</span></p>
       </div>
@@ -2463,6 +2471,8 @@ function renderVistaCurso(){
   `;
   document.getElementById('backBtn').addEventListener('click', () => navigate(homeRoute()));
   document.getElementById('cursoSelect').addEventListener('change', (e) => { selectedCurso = e.target.value; render(); });
+  document.getElementById('cardAlertaCurso').addEventListener('click', () => navigate('vistaCursoAlerta'));
+  document.getElementById('cardSCPCurso').addEventListener('click', () => navigate('vistaCursoSCP'));
   document.querySelectorAll('[data-materia]').forEach(el => {
     el.addEventListener('click', () => { selectedMateriaRiesgo = el.dataset.materia; navigate('vistaCursoMateria'); });
   });
@@ -2487,6 +2497,56 @@ function renderVistaCursoMateria(){
     </div>
     <p class="date-label">${selectedCurso}° A · debajo del 85% anual</p>
     <div class="module-list">${rows}</div>
+  `;
+  document.getElementById('backBtn').addEventListener('click', () => navigate('vistaCurso'));
+  document.querySelectorAll('[data-student]').forEach(el => {
+    el.addEventListener('click', () => { selectedStudentId = el.dataset.student; navigate('resumenAlumno'); });
+  });
+}
+
+function renderVistaCursoAlerta(){
+  const v = computeVistaCurso(selectedCurso);
+  const rows = v.alertaList.map(a => `
+    <div class="module-row" data-student="${a.id}">
+      <div class="txt"><p class="title">${a.nombre}</p></div>
+      <span class="badge-soon" style="background:var(--stamp-bg);color:var(--stamp);">${a.valor}</span>
+      <span class="chevron">${icon('chevron')}</span>
+    </div>
+  `).join('');
+
+  $app.innerHTML = `
+    <div class="appbar" style="padding:0 0 10px;">
+      <button class="back-btn" id="backBtn">${icon('back')}</button>
+      <h1>En alerta</h1>
+    </div>
+    <p class="date-label">${selectedCurso}° A · 5 o más faltas este bimestre</p>
+    ${rows ? `<div class="module-list">${rows}</div>` : `<p style="font-size:13px;color:var(--ink-soft);">Nadie en alerta en este curso.</p>`}
+  `;
+  document.getElementById('backBtn').addEventListener('click', () => navigate('vistaCurso'));
+  document.querySelectorAll('[data-student]').forEach(el => {
+    el.addEventListener('click', () => { selectedStudentId = el.dataset.student; navigate('resumenAlumno'); });
+  });
+}
+
+function renderVistaCursoSCP(){
+  const v = computeVistaCurso(selectedCurso);
+  const rows = v.scpList.map(a => `
+    <div class="module-row" data-student="${a.id}">
+      <div class="txt">
+        <p class="title">${a.nombre}</p>
+        <p class="desc">${a.materias.map(m=>`${m.materia} (${m.pct}%)`).join(', ')}</p>
+      </div>
+      <span class="chevron">${icon('chevron')}</span>
+    </div>
+  `).join('');
+
+  $app.innerHTML = `
+    <div class="appbar" style="padding:0 0 10px;">
+      <button class="back-btn" id="backBtn">${icon('back')}</button>
+      <h1>Riesgo de SCP</h1>
+    </div>
+    <p class="date-label">${selectedCurso}° A · debajo del 85% anual en al menos una materia</p>
+    ${rows ? `<div class="module-list">${rows}</div>` : `<p style="font-size:13px;color:var(--ink-soft);">Nadie en riesgo en este curso.</p>`}
   `;
   document.getElementById('backBtn').addEventListener('click', () => navigate('vistaCurso'));
   document.querySelectorAll('[data-student]').forEach(el => {
