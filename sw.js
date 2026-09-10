@@ -11,7 +11,9 @@ const LOCAL_ASSETS = [
 const CDN_ASSETS = [
   'https://www.gstatic.com/firebasejs/10.13.0/firebase-app.js',
   'https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js',
-  'https://www.gstatic.com/firebasejs/10.13.0/firebase-auth.js'
+  'https://www.gstatic.com/firebasejs/10.13.0/firebase-auth.js',
+  'https://accounts.google.com/gsi/client',
+  'https://apis.google.com/js/api.js'
 ];
 
 self.addEventListener('install', (event) => {

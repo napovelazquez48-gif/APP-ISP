@@ -31,6 +31,16 @@ const firebaseConfig = {
 };
 const APP_PIN = "1936";
 
+// ---------- Google Drive / Sheets (sincronización de faltas a los Excel del colegio) ----------
+const GOOGLE_CLIENT_ID = "847063469157-7o02cri2bhusekpo2qicqtini48u0vbr.apps.googleusercontent.com";
+const GOOGLE_SCOPES = "https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/spreadsheets";
+const DRIVE_ROOT_FOLDER_ID = "1RdXfK8BOS_Tj4RTT-DCcCGMwHSsqBZGt";
+
+let gapiListo = false;
+let gisListo = false;
+let googleTokenClient = null;
+let driveConectado = false;
+
 const fbApp = initializeApp(firebaseConfig);
 const auth = getAuth(fbApp);
 // App secundaria: se usa SOLO para crear cuentas de profesor sin cerrar la sesión del admin
@@ -688,6 +698,7 @@ function renderHome(){
       ${moduleRow('chart','Vista por curso','Alertas y riesgo de SCP de un vistazo', 'vistaCurso')}
       ${moduleRow('file','Valoraciones pedagógicas','Bimestral, por materia', 'valoraciones')}
       ${moduleRow('chart','Notas','Cuatrimestral, escala 1 a 10', 'notas')}
+      ${moduleRow('calendar','Conexión con Drive','Emparejar y sincronizar faltas con Excel', 'conexionDrive')}
     </div>
     <p style="text-align:center;margin-top:18px;">
       <a href="#" id="cambiarUsuarioLink" style="font-size:12px;color:var(--ink-soft);text-decoration:underline;">Cambiar usuario</a>
@@ -1320,6 +1331,7 @@ function render(){
   else if(currentRoute === 'vistaCursoMateria') renderVistaCursoMateria();
   else if(currentRoute === 'vistaCursoAlerta') renderVistaCursoAlerta();
   else if(currentRoute === 'vistaCursoSCP') renderVistaCursoSCP();
+  else if(currentRoute === 'conexionDrive') renderConexionDrive();
   else if(currentRoute === 'valoraciones') renderValoracionesLista();
   else if(currentRoute === 'valoracionAlumno') renderValoracionAlumno();
   else if(currentRoute === 'notas') renderNotasLista();
@@ -1959,6 +1971,153 @@ function renderProfesores(){
   document.querySelectorAll('[data-borrar]').forEach(b => {
     b.addEventListener('click', () => borrarProfesor(b.dataset.borrar, b.dataset.nombre));
   });
+}
+
+// ---------- Conexión con Google ----------
+function normalizeNombre(s){
+  return String(s).trim().toLowerCase()
+    .normalize('NFD').replace(/[\u0300-\u036f]/g,'')
+    .replace(/[^a-z ,]/g,' ').replace(/\s+/g,' ').trim();
+}
+
+window.onGapiLoad = function(){
+  gapi.load('client', async () => {
+    await gapi.client.init({});
+    await gapi.client.load('https://sheets.googleapis.com/$discovery/rest?version=v4');
+    await gapi.client.load('https://www.googleapis.com/discovery/v1/apis/drive/v3/rest');
+    gapiListo = true;
+  });
+};
+if(window.gapi) window.onGapiLoad();
+else window.addEventListener('load', () => { if(window.gapi) window.onGapiLoad(); });
+
+function initGoogleTokenClient(){
+  if(gisListo || !window.google || !google.accounts) return;
+  googleTokenClient = google.accounts.oauth2.initTokenClient({
+    client_id: GOOGLE_CLIENT_ID,
+    scope: GOOGLE_SCOPES,
+    callback: (resp) => {
+      if(resp.error){ alert('No se pudo conectar con Google: ' + resp.error); return; }
+      gapi.client.setToken({ access_token: resp.access_token });
+      driveConectado = true;
+      showToast('Conectado con Google Drive');
+      render();
+    },
+  });
+  gisListo = true;
+}
+
+function conectarDrive(){
+  initGoogleTokenClient();
+  if(!gapiListo || !googleTokenClient){
+    alert('Todavía está cargando Google, esperá unos segundos y volvé a tocar el botón.');
+    return;
+  }
+  googleTokenClient.requestAccessToken({ prompt: driveConectado ? '' : 'consent' });
+}
+
+async function listarSubcarpetas(parentId){
+  const res = await gapi.client.drive.files.list({
+    q: `'${parentId}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false`,
+    fields: 'files(id,name)', pageSize: 100
+  });
+  return res.result.files || [];
+}
+async function listarPlanillas(folderId){
+  const res = await gapi.client.drive.files.list({
+    q: `'${folderId}' in parents and mimeType='application/vnd.google-apps.spreadsheet' and trashed=false`,
+    fields: 'files(id,name)', pageSize: 200
+  });
+  return res.result.files || [];
+}
+
+function cursoDesdeNombreCarpeta(nombre){
+  const n = nombre.toLowerCase();
+  if(n.includes('1er') || n.includes('1ro') || n.includes('1°')) return '1';
+  if(n.includes('2do') || n.includes('2°')) return '2';
+  if(n.includes('3er') || n.includes('3ro') || n.includes('3°')) return '3';
+  if(n.includes('4to') || n.includes('4°')) return '4';
+  if(n.includes('5to') || n.includes('5°')) return '5';
+  return null;
+}
+
+function emparejarAlumno(nombreArchivo, curso){
+  const nn = normalizeNombre(nombreArchivo.replace(/\.xlsx$/i,''));
+  const partes = nn.split(',');
+  const ap = (partes[0]||'').trim();
+  const nom = (partes[1]||'').trim();
+  const nomPrimero = nom.split(' ')[0] || '';
+  const candidatos = getStudents().filter(s => s.curso === curso && normalizeNombre(s.apellido).split(' ')[0] === ap.split(' ')[0]);
+  if(candidatos.length === 0) return null;
+  const conNombre = candidatos.filter(s => nomPrimero && normalizeNombre(s.nombre).split(' ').includes(nomPrimero));
+  return (conNombre[0] || candidatos[0]);
+}
+
+async function escanearCarpetaDrive(){
+  if(!driveConectado){ alert('Primero conectá con Google Drive.'); return; }
+  const estadoEl = document.getElementById('driveEstado');
+  if(estadoEl) estadoEl.textContent = 'Buscando subcarpetas por curso...';
+  try{
+    const subcarpetas = await listarSubcarpetas(DRIVE_ROOT_FOLDER_ID);
+    const relevantes = subcarpetas.filter(f => cursoDesdeNombreCarpeta(f.name));
+    if(relevantes.length === 0){
+      if(estadoEl) estadoEl.textContent = 'No encontré subcarpetas con nombre de curso (ej: "1ER AÑO"). Revisá los nombres en Drive.';
+      return;
+    }
+    const mapeo = {};
+    const sinMatch = [];
+    let totalArchivos = 0;
+    for(const carpeta of relevantes){
+      const curso = cursoDesdeNombreCarpeta(carpeta.name);
+      if(estadoEl) estadoEl.textContent = `Revisando ${carpeta.name}...`;
+      const archivos = await listarPlanillas(carpeta.id);
+      totalArchivos += archivos.length;
+      archivos.forEach(a => {
+        const alumno = emparejarAlumno(a.name, curso);
+        if(alumno) mapeo[alumno.id] = { spreadsheetId: a.id, nombreArchivo: a.name, curso };
+        else sinMatch.push(`${carpeta.name} / ${a.name}`);
+      });
+    }
+    window.__driveMapeoPendiente = { mapeo, sinMatch, totalArchivos };
+    if(estadoEl){
+      estadoEl.innerHTML = `Encontrados ${totalArchivos} archivos en ${relevantes.length} carpetas.<br>
+        Emparejados con un alumno: <b>${Object.keys(mapeo).length}</b><br>
+        Sin poder emparejar: <b>${sinMatch.length}</b>${sinMatch.length ? '<br>' + sinMatch.slice(0,15).map(x=>'· '+x).join('<br>') : ''}`;
+    }
+    document.getElementById('guardarMapeoBtn').style.display = 'block';
+  }catch(err){
+    console.error(err);
+    if(estadoEl) estadoEl.textContent = 'Hubo un error buscando en Drive: ' + (err.result ? err.result.error.message : err.message);
+  }
+}
+
+function guardarMapeoDrive(){
+  const pendiente = window.__driveMapeoPendiente;
+  if(!pendiente) return;
+  const ops = Object.entries(pendiente.mapeo).map(([studentId, info]) =>
+    setDoc(doc(db,'driveMapping', studentId), info)
+  );
+  Promise.all(ops).then(() => showToast('Emparejamiento guardado')).catch(err=>console.error(err));
+}
+
+function renderConexionDrive(){
+  $app.innerHTML = `
+    <div class="appbar" style="padding:0 0 10px;">
+      <button class="back-btn" id="backBtn">${icon('back')}</button>
+      <h1>Conexión con Drive</h1>
+    </div>
+    <p style="font-size:13px;color:var(--ink-soft);margin-bottom:14px;">Etapa 1: conectar y emparejar los archivos con cada alumno (no escribe nada todavía).</p>
+    <button class="btn-primary" id="conectarDriveBtn" style="margin-bottom:12px;">${driveConectado ? 'Reconectar con Google Drive' : 'Conectar con Google Drive'}</button>
+    ${driveConectado ? `<button class="btn-secondary" id="escanearBtn" style="width:100%;margin-bottom:12px;">Buscar y emparejar archivos</button>` : ''}
+    <p id="driveEstado" style="font-size:12.5px;color:var(--ink-soft);line-height:1.5;"></p>
+    <button class="btn-primary" id="guardarMapeoBtn" style="display:none;margin-top:10px;">Guardar emparejamiento</button>
+  `;
+  document.getElementById('backBtn').addEventListener('click', () => navigate('home'));
+  document.getElementById('conectarDriveBtn').addEventListener('click', conectarDrive);
+  if(document.getElementById('escanearBtn')){
+    document.getElementById('escanearBtn').addEventListener('click', escanearCarpetaDrive);
+  }
+  document.getElementById('guardarMapeoBtn').addEventListener('click', guardarMapeoDrive);
 }
 
 function renderProfesorNuevo(){
