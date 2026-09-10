@@ -1,0 +1,51 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isAdmin() {
+      return request.auth != null && request.auth.token.firebase.sign_in_provider == 'anonymous';
+    }
+    function isTeacher() {
+      return request.auth != null && exists(/databases/$(database)/documents/teachers/$(request.auth.uid));
+    }
+    function isViewer() {
+      return request.auth != null && exists(/databases/$(database)/documents/viewers/$(request.auth.uid));
+    }
+    function teacherCursos() {
+      return get(/databases/$(database)/documents/teachers/$(request.auth.uid)).data.cursos;
+    }
+
+    match /teachers/{uid} {
+      allow read: if isAdmin() || (request.auth != null && request.auth.uid == uid);
+      allow write: if isAdmin();
+    }
+
+    match /viewers/{uid} {
+      allow read: if isAdmin() || (request.auth != null && request.auth.uid == uid);
+      allow write: if isAdmin();
+    }
+
+    match /valoraciones/{id} {
+      allow read: if isAdmin() || isViewer() || (isTeacher() && resource.data.curso in teacherCursos());
+      allow create, update: if isAdmin() || (isTeacher() && request.resource.data.curso in teacherCursos());
+      allow delete: if isAdmin();
+    }
+
+    match /notas/{id} {
+      allow read: if isAdmin() || isViewer() || (isTeacher() && resource.data.curso in teacherCursos());
+      allow create, update: if isAdmin() || (isTeacher() && request.resource.data.curso in teacherCursos());
+      allow delete: if isAdmin();
+    }
+
+    match /sanciones/{id} {
+      allow read: if request.auth != null;
+      allow create: if isAdmin() || (isTeacher() && request.resource.data.curso in teacherCursos());
+      allow update, delete: if isAdmin();
+    }
+
+    match /{document=**} {
+      allow read: if request.auth != null;
+      allow write: if request.auth != null && !isViewer();
+    }
+  }
+}

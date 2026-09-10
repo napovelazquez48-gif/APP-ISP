@@ -71,6 +71,7 @@ let cache = {
   teachers: {},
   valoraciones: {},
   notas: {},
+  viewers: {},
   entradasEspeciales: {},
   config: { entrada:'07:45', toleranciaMin:15, corteFaltaCompleta:'09:00' }
 };
@@ -162,6 +163,13 @@ function startListeners(){
     const next = {};
     snap.forEach(d => { next[d.id] = d.data(); });
     cache.entradasEspeciales = next;
+    render();
+  });
+
+  onSnapshot(collection(db,'viewers'), snap => {
+    const next = {};
+    snap.forEach(d => { next[d.id] = Object.assign({ uid: d.id }, d.data()); });
+    cache.viewers = next;
     render();
   });
 
@@ -676,6 +684,7 @@ function renderHome(){
       ${moduleRow('users','Familias','Contacto de padres y tutores', 'familias')}
       ${moduleRow('chart','Resumen del alumno','Faltas, apercibimientos y certificados', 'resumen')}
       ${moduleRow('users','Profesores','Altas y bajas de cuentas de profesor', 'profesores')}
+      ${moduleRow('users','Acceso de lectura','Rectoría, psicopedagogía, secretaría', 'lectura')}
       ${moduleRow('file','Valoraciones pedagógicas','Bimestral, por materia', 'valoraciones')}
       ${moduleRow('chart','Notas','Cuatrimestral, escala 1 a 10', 'notas')}
     </div>
@@ -721,7 +730,7 @@ function renderDetalleAsistenciaHoy(){
     <p class="date-label">${fmtDateLong()}</p>
     ${ausentes.length ? `<div class="sancion-list">${rows}</div>` : `<p style="font-size:13px;color:var(--ink-soft);">Nadie marcado como ausente todavía.</p>`}
   `;
-  document.getElementById('backBtn').addEventListener('click', () => navigate('home'));
+  document.getElementById('backBtn').addEventListener('click', () => navigate(homeRoute()));
 }
 
 function renderDetalleAlertas(){
@@ -755,7 +764,7 @@ function renderDetalleAlertas(){
     <p class="date-label">${bim.n}° bimestre · 5 o más faltas</p>
     ${alertados.length ? `<div class="sancion-list">${rows}</div>` : `<p style="font-size:13px;color:var(--ink-soft);">Nadie llegó a 5 faltas este bimestre.</p>`}
   `;
-  document.getElementById('backBtn').addEventListener('click', () => navigate('home'));
+  document.getElementById('backBtn').addEventListener('click', () => navigate(homeRoute()));
 }
 
 // ---------- Importar histórico ----------
@@ -1006,7 +1015,9 @@ function resolverMateriaYCursos(){
   return { materia, cursosOpciones };
 }
 function homeRoute(){
-  return userRole === 'teacher' ? 'teacherHome' : 'home';
+  if(userRole === 'teacher') return 'teacherHome';
+  if(userRole === 'viewer') return 'viewerHome';
+  return 'home';
 }
 
 function renderSancionesLista(){
@@ -1302,6 +1313,8 @@ function render(){
   else if(currentRoute === 'profesorNuevo') renderProfesorNuevo();
   else if(currentRoute === 'profesorEditar') renderProfesorEditar();
   else if(currentRoute === 'teacherHome') renderTeacherHome();
+  else if(currentRoute === 'viewerHome') renderViewerHome();
+  else if(currentRoute === 'lectura') renderLectura();
   else if(currentRoute === 'valoraciones') renderValoracionesLista();
   else if(currentRoute === 'valoracionAlumno') renderValoracionAlumno();
   else if(currentRoute === 'notas') renderNotasLista();
@@ -1670,7 +1683,7 @@ function renderResumenAlumno(){
       }
       return `<p style="font-size:13px;color:var(--ink-soft);">Sin autorización activa.</p>`;
     })()}
-    <button class="btn-secondary" id="authBtn" style="width:100%;margin-top:8px;">${(getAutorizaciones()[selectedStudentId]||{}).activa ? 'Cerrar autorización' : 'Agregar autorización'}</button>
+    ${userRole!=='viewer' ? `<button class="btn-secondary" id="authBtn" style="width:100%;margin-top:8px;">${(getAutorizaciones()[selectedStudentId]||{}).activa ? 'Cerrar autorización' : 'Agregar autorización'}</button>` : ''}
 
     <p class="section-label" style="margin-top:16px;">Docencia</p>
     <div class="module-list">
@@ -1687,7 +1700,9 @@ function renderResumenAlumno(){
   document.getElementById('backBtn').addEventListener('click', () => { selectedBimestreN = null; navigate('resumen'); });
   document.getElementById('bimSelect').addEventListener('change', (e) => { selectedBimestreN = Number(e.target.value); render(); });
   document.getElementById('cardFaltasBim').addEventListener('click', () => navigate('detalleFaltasAlumno'));
-  document.getElementById('authBtn').addEventListener('click', () => gestionarAutorizacion(selectedStudentId));
+  if(document.getElementById('authBtn')){
+    document.getElementById('authBtn').addEventListener('click', () => gestionarAutorizacion(selectedStudentId));
+  }
   document.getElementById('verValoracionesBtn').addEventListener('click', () => navigate('resumenValoraciones'));
   document.getElementById('verNotasBtn').addEventListener('click', () => navigate('resumenNotas'));
 }
@@ -2027,6 +2042,111 @@ function renderTeacherHome(){
   document.getElementById('salirProfLink').addEventListener('click', (e) => { e.preventDefault(); signOut(auth); });
 }
 
+function renderViewerHome(){
+  const stamp = fmtDateStamp();
+  $app.innerHTML = `
+    <div class="greeting-row">
+      <div>
+        <p class="hi">Hola</p>
+        <p class="name">${currentViewer.nombre}</p>
+      </div>
+      <div class="stamp">
+        <div class="dow">${stamp.dow}</div>
+        <div class="dom">${stamp.dom}</div>
+        <div class="mon">${stamp.mon}</div>
+      </div>
+    </div>
+
+    <div class="module-list">
+      ${moduleRow('users','Resumen del alumno','Faltas, apercibimientos, valoraciones y notas', 'resumen')}
+      ${moduleRow('clipboard','Asistencia de hoy','Quiénes están ausentes', 'detalleAsistenciaHoy')}
+      ${moduleRow('alert','Alumnos en alerta','5 o más faltas este bimestre', 'detalleAlertas')}
+    </div>
+
+    <p class="info-note">${icon('info')}Acceso de solo lectura — no podés cargar ni modificar nada desde acá.</p>
+
+    <p style="text-align:center;margin-top:18px;">
+      <a href="#" id="cambiarPassLink" style="font-size:12px;color:var(--ink-soft);text-decoration:underline;">Cambiar contraseña</a>
+      &nbsp;·&nbsp;
+      <a href="#" id="salirProfLink" style="font-size:12px;color:var(--ink-soft);text-decoration:underline;">Salir</a>
+    </p>
+  `;
+  document.querySelectorAll('.module-row').forEach(r => r.addEventListener('click', () => navigate(r.dataset.route)));
+  document.getElementById('cambiarPassLink').addEventListener('click', (e) => { e.preventDefault(); cambiarPasswordProfesor(); });
+  document.getElementById('salirProfLink').addEventListener('click', (e) => { e.preventDefault(); signOut(auth); });
+}
+
+// ---------- Panel de administración de accesos de lectura ----------
+async function crearViewer(){
+  const nombre = document.getElementById('nuevoViewerNombre').value.trim();
+  const email = document.getElementById('nuevoViewerEmail').value.trim();
+  const pass = document.getElementById('nuevoViewerPass').value;
+  const errEl = document.getElementById('nuevoViewerError');
+  errEl.textContent = '';
+  if(!nombre || !email || !pass){ errEl.textContent = 'Completá nombre, mail y contraseña.'; return; }
+  if(pass.length < 6){ errEl.textContent = 'La contraseña debe tener al menos 6 caracteres.'; return; }
+  const btn = document.getElementById('crearViewerBtn');
+  btn.textContent = 'Creando…';
+  btn.disabled = true;
+  try{
+    const cred = await createUserWithEmailAndPassword(authSecundaria, email, pass);
+    await setDoc(doc(db,'viewers',cred.user.uid), { nombre, email, activo: true, creadoPor: getUsuario() });
+    await signOut(authSecundaria);
+    showToast('Acceso de lectura creado');
+    navigate('lectura');
+  }catch(err){
+    console.error(err);
+    errEl.textContent = err.code === 'auth/email-already-in-use' ? 'Ese mail ya tiene una cuenta.' : 'No se pudo crear la cuenta.';
+    btn.textContent = 'Crear cuenta';
+    btn.disabled = false;
+  }
+}
+function toggleActivoViewer(uid, activo){
+  setDoc(doc(db,'viewers',uid), { activo: !activo }, { merge: true }).catch(err=>console.error(err));
+}
+function borrarViewer(uid, nombre){
+  if(!confirm(`¿Borrar el acceso de ${nombre}? No se puede deshacer.`)) return;
+  deleteDoc(doc(db,'viewers',uid)).then(() => showToast('Acceso borrado')).catch(err=>console.error(err));
+}
+
+function renderLectura(){
+  const viewers = Object.values(cache.viewers).sort((a,b)=> (a.nombre||'').localeCompare(b.nombre||''));
+  const rows = viewers.map(v => `
+    <div class="sancion-item">
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;">
+        <div>
+          <p class="folio">${v.nombre} ${v.activo===false ? '· inactivo' : ''}</p>
+          <p class="motivo">${v.email}</p>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:6px;flex-shrink:0;">
+          <button class="btn-secondary" style="padding:6px 10px;font-size:11.5px;" data-toggle="${v.uid}" data-activo="${v.activo!==false}">${v.activo===false ? 'Reactivar' : 'Dar de baja'}</button>
+          <button class="btn-secondary" style="padding:6px 10px;font-size:11.5px;color:var(--stamp);" data-borrar="${v.uid}" data-nombre="${v.nombre}">Borrar</button>
+        </div>
+      </div>
+    </div>
+  `).join('');
+
+  $app.innerHTML = `
+    <div class="appbar" style="padding:0 0 10px;">
+      <button class="back-btn" id="backBtn">${icon('back')}</button>
+      <h1>Acceso de lectura</h1>
+    </div>
+    <p class="section-label">Cuentas existentes</p>
+    ${viewers.length ? `<div class="sancion-list" style="margin-bottom:18px;">${rows}</div>` : `<p style="font-size:13px;color:var(--ink-soft);margin-bottom:18px;">Todavía no hay cuentas de lectura.</p>`}
+
+    <p class="section-label">Nueva cuenta</p>
+    <div class="field-row"><label>Nombre</label><input id="nuevoViewerNombre" type="text"></div>
+    <div class="field-row"><label>Mail</label><input id="nuevoViewerEmail" type="email"></div>
+    <div class="field-row"><label>Contraseña</label><input id="nuevoViewerPass" type="text" placeholder="mínimo 6 caracteres"></div>
+    <p id="nuevoViewerError" style="font-size:12px;color:var(--stamp);min-height:16px;margin:0 0 8px;"></p>
+    <button class="btn-primary" id="crearViewerBtn">Crear cuenta</button>
+  `;
+  document.getElementById('backBtn').addEventListener('click', () => navigate('home'));
+  document.getElementById('crearViewerBtn').addEventListener('click', crearViewer);
+  document.querySelectorAll('[data-toggle]').forEach(b => b.addEventListener('click', () => toggleActivoViewer(b.dataset.toggle, b.dataset.activo === 'true')));
+  document.querySelectorAll('[data-borrar]').forEach(b => b.addEventListener('click', () => borrarViewer(b.dataset.borrar, b.dataset.nombre)));
+}
+
 // ---------- Valoraciones pedagógicas bimestrales ----------
 const OPCIONES_VALORACION = {
   participa: ['Activamente','A veces','Casi nunca'],
@@ -2284,6 +2404,17 @@ function renderTabbar(){
     document.getElementById('tabResumen').addEventListener('click', () => navigate('resumen'));
     return;
   }
+  if(userRole === 'viewer'){
+    tb.innerHTML = `
+      <button class="tab ${currentRoute==='viewerHome'?'active':''}" id="tabHome">${icon('home')}<span>Inicio</span></button>
+      <button class="tab ${currentRoute==='resumen'||currentRoute==='resumenAlumno'?'active':''}" id="tabResumen">${icon('users')}<span>Resumen</span></button>
+      <button class="tab ${currentRoute==='detalleAlertas'?'active':''}" id="tabAlertas">${icon('alert')}<span>Alertas</span></button>
+    `;
+    document.getElementById('tabHome').addEventListener('click', () => navigate('viewerHome'));
+    document.getElementById('tabResumen').addEventListener('click', () => navigate('resumen'));
+    document.getElementById('tabAlertas').addEventListener('click', () => navigate('detalleAlertas'));
+    return;
+  }
   tb.innerHTML = `
     <button class="tab ${currentRoute==='home'?'active':''}" id="tabHome">${icon('home')}<span>Inicio</span></button>
     <button class="tab ${currentRoute==='asistencia'?'active':''}" id="tabAsist">${icon('clipboard')}<span>Asistencia</span></button>
@@ -2299,6 +2430,7 @@ function renderTabbar(){
 function getUsuario(){ return localStorage.getItem('isp_usuario') || ''; }
 let userRole = null; // 'admin' | 'teacher'
 let currentTeacher = null; // datos del profesor logueado
+let currentViewer = null; // datos de la cuenta de solo lectura logueada
 
 function slugify(s){ return String(s).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9]+/g,'-'); }
 
@@ -2313,7 +2445,7 @@ function renderPin(){
       <p id="pinError" style="font-size:12px;color:var(--stamp);height:16px;margin:0 0 10px;"></p>
       <button class="btn-primary" style="max-width:200px;margin:0 auto;" id="pinBtn">Entrar</button>
       <p style="margin-top:22px;">
-        <a href="#" id="soyProfesorLink" style="font-size:12.5px;color:var(--ink-soft);text-decoration:underline;">Soy profesor/a, ingresar con mail</a>
+        <a href="#" id="soyProfesorLink" style="font-size:12.5px;color:var(--ink-soft);text-decoration:underline;">Ingresar con mail (profesores y otros accesos)</a>
       </p>
     </div>
   `;
@@ -2398,18 +2530,27 @@ onAuthStateChanged(auth, async (user) => {
     currentRoute = getUsuario() ? 'home' : 'quien';
     render();
   } else if(user && !user.isAnonymous){
-    userRole = 'teacher';
     startListeners();
     try{
       const tdoc = await getDoc(doc(db,'teachers',user.uid));
       if(tdoc.exists() && tdoc.data().activo !== false){
+        userRole = 'teacher';
         currentTeacher = Object.assign({ uid: user.uid }, tdoc.data());
         currentRoute = 'teacherHome';
       } else {
-        currentTeacher = null;
-        currentRoute = 'profesorSinAcceso';
+        const vdoc = await getDoc(doc(db,'viewers',user.uid));
+        if(vdoc.exists() && vdoc.data().activo !== false){
+          userRole = 'viewer';
+          currentViewer = Object.assign({ uid: user.uid }, vdoc.data());
+          currentRoute = 'viewerHome';
+        } else {
+          userRole = null;
+          currentTeacher = null;
+          currentRoute = 'profesorSinAcceso';
+        }
       }
     }catch(e){
+      userRole = null;
       currentTeacher = null;
       currentRoute = 'profesorSinAcceso';
     }
