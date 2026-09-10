@@ -685,6 +685,7 @@ function renderHome(){
       ${moduleRow('chart','Resumen del alumno','Faltas, apercibimientos y certificados', 'resumen')}
       ${moduleRow('users','Profesores','Altas y bajas de cuentas de profesor', 'profesores')}
       ${moduleRow('users','Acceso de lectura','Rectoría, psicopedagogía, secretaría', 'lectura')}
+      ${moduleRow('chart','Vista por curso','Alertas y riesgo de SCP de un vistazo', 'vistaCurso')}
       ${moduleRow('file','Valoraciones pedagógicas','Bimestral, por materia', 'valoraciones')}
       ${moduleRow('chart','Notas','Cuatrimestral, escala 1 a 10', 'notas')}
     </div>
@@ -1315,6 +1316,8 @@ function render(){
   else if(currentRoute === 'teacherHome') renderTeacherHome();
   else if(currentRoute === 'viewerHome') renderViewerHome();
   else if(currentRoute === 'lectura') renderLectura();
+  else if(currentRoute === 'vistaCurso') renderVistaCurso();
+  else if(currentRoute === 'vistaCursoMateria') renderVistaCursoMateria();
   else if(currentRoute === 'valoraciones') renderValoracionesLista();
   else if(currentRoute === 'valoracionAlumno') renderValoracionAlumno();
   else if(currentRoute === 'notas') renderNotasLista();
@@ -2059,6 +2062,7 @@ function renderViewerHome(){
 
     <div class="module-list">
       ${moduleRow('users','Resumen del alumno','Faltas, apercibimientos, valoraciones y notas', 'resumen')}
+      ${moduleRow('chart','Vista por curso','Alertas y riesgo de SCP de un vistazo', 'vistaCurso')}
       ${moduleRow('clipboard','Asistencia de hoy','Quiénes están ausentes', 'detalleAsistenciaHoy')}
       ${moduleRow('alert','Alumnos en alerta','5 o más faltas este bimestre', 'detalleAlertas')}
     </div>
@@ -2388,6 +2392,105 @@ function renderNotasLista(){
         .then(() => showToast('Nota guardada'))
         .catch(err=>console.error(err));
     });
+  });
+}
+
+// ---------- Vista rápida por curso ----------
+let selectedMateriaRiesgo = null;
+
+function computeVistaCurso(curso){
+  const students = getStudents().filter(s => s.curso === curso);
+  const weights = computeAbsenceWeights();
+  const anioCompleto = { from: BIMESTRES[0].from, to: BIMESTRES[BIMESTRES.length-1].to };
+
+  let enAlerta = 0;
+  const porMateria = {}; // materia -> { enRiesgo: [ {id,nombre,pct} ] }
+  const alumnosConSCP = new Set();
+
+  students.forEach(s => {
+    if((weights[s.id]||0) >= 5) enAlerta++;
+    const stats = computeMateriaStats(s.id, anioCompleto);
+    Object.entries(stats).forEach(([materia, st]) => {
+      const pct = st.total>0 ? (1 - st.faltas/st.total) : 1;
+      if(pct < 0.85){
+        if(!porMateria[materia]) porMateria[materia] = [];
+        porMateria[materia].push({ id: s.id, nombre: `${s.apellido}, ${s.nombre}`, pct: Math.round(pct*1000)/10 });
+        alumnosConSCP.add(s.id);
+      }
+    });
+  });
+
+  return { total: students.length, enAlerta, conSCP: alumnosConSCP.size, porMateria };
+}
+
+function renderVistaCurso(){
+  const cursos = cursosDisponibles();
+  if(!cursos.includes(selectedCurso)) selectedCurso = cursos[0];
+  const v = computeVistaCurso(selectedCurso);
+
+  const materiaRows = Object.entries(v.porMateria).sort((a,b)=> b[1].length - a[1].length).map(([materia, alumnos]) => `
+    <div class="module-row" data-materia="${materia}">
+      <div class="txt"><p class="title">${materia}</p></div>
+      <span class="badge-soon" style="background:var(--stamp-bg);color:var(--stamp);">${alumnos.length}</span>
+      <span class="chevron">${icon('chevron')}</span>
+    </div>
+  `).join('');
+
+  $app.innerHTML = `
+    <div class="appbar" style="padding:0 0 10px;">
+      <button class="back-btn" id="backBtn">${icon('back')}</button>
+      <h1>Vista por curso</h1>
+    </div>
+    <div class="course-picker">
+      <select id="cursoSelect">
+        ${cursos.map(c => `<option value="${c}" ${c===selectedCurso?'selected':''}>${c}° A</option>`).join('')}
+      </select>
+    </div>
+
+    <div class="stat-grid">
+      <div class="stat-card ${v.enAlerta>0?'alert':''}">
+        <p class="label">En alerta (bimestre)</p>
+        <p class="value">${v.enAlerta}<span class="sub"> / ${v.total}</span></p>
+      </div>
+      <div class="stat-card ${v.conSCP>0?'alert':''}">
+        <p class="label">Con riesgo de SCP</p>
+        <p class="value">${v.conSCP}<span class="sub"> / ${v.total}</span></p>
+      </div>
+    </div>
+
+    <p class="section-label">Por materia (bajo 85% anual)</p>
+    ${materiaRows ? `<div class="module-list">${materiaRows}</div>` : `<p style="font-size:13px;color:var(--ink-soft);">Ninguna materia tiene alumnos por debajo del 85% en este curso.</p>`}
+  `;
+  document.getElementById('backBtn').addEventListener('click', () => navigate(homeRoute()));
+  document.getElementById('cursoSelect').addEventListener('change', (e) => { selectedCurso = e.target.value; render(); });
+  document.querySelectorAll('[data-materia]').forEach(el => {
+    el.addEventListener('click', () => { selectedMateriaRiesgo = el.dataset.materia; navigate('vistaCursoMateria'); });
+  });
+}
+
+function renderVistaCursoMateria(){
+  const v = computeVistaCurso(selectedCurso);
+  const alumnos = (v.porMateria[selectedMateriaRiesgo]||[]).sort((a,b)=> a.pct - b.pct);
+
+  const rows = alumnos.map(a => `
+    <div class="module-row" data-student="${a.id}">
+      <div class="txt"><p class="title">${a.nombre}</p></div>
+      <span class="badge-soon" style="background:var(--stamp-bg);color:var(--stamp);">${a.pct}%</span>
+      <span class="chevron">${icon('chevron')}</span>
+    </div>
+  `).join('');
+
+  $app.innerHTML = `
+    <div class="appbar" style="padding:0 0 10px;">
+      <button class="back-btn" id="backBtn">${icon('back')}</button>
+      <h1>${selectedMateriaRiesgo}</h1>
+    </div>
+    <p class="date-label">${selectedCurso}° A · debajo del 85% anual</p>
+    <div class="module-list">${rows}</div>
+  `;
+  document.getElementById('backBtn').addEventListener('click', () => navigate('vistaCurso'));
+  document.querySelectorAll('[data-student]').forEach(el => {
+    el.addEventListener('click', () => { selectedStudentId = el.dataset.student; navigate('resumenAlumno'); });
   });
 }
 
