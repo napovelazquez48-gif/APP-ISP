@@ -412,8 +412,6 @@ let selectedFecha = todayISO();
 
 function writeAttendance(key, data){
   setDoc(doc(db,'attendance',docId(key)), Object.assign({ autor: getUsuario() }, data)).catch(err=>console.error(err));
-  const [fechaK, studentIdK] = key.split('|');
-  sincronizarAsistenciaADrive(studentIdK, fechaK, data);
 }
 
 function markPresente(studentId, fecha, curso){
@@ -472,7 +470,6 @@ function toggleEF(studentId, fecha){
   const ref = doc(db,'ef', docId(`${fecha}_${studentId}`));
   if(current === null){
     setDoc(ref, { date: fecha, studentId, tipo: 'falta', autor: getUsuario() }).catch(err=>console.error(err));
-    sincronizarEFaDrive(studentId, fecha, 'falta');
   } else if(current === 'falta'){
     const b = bimestreDe(fecha) || bimestreActual();
     const used = countSAFenBimestre(studentId, b);
@@ -481,7 +478,6 @@ function toggleEF(studentId, fecha){
       return;
     }
     setDoc(ref, { date: fecha, studentId, tipo: 'saf', autor: getUsuario() }).catch(err=>console.error(err));
-    sincronizarEFaDrive(studentId, fecha, 'saf');
   } else {
     deleteDoc(ref).catch(err=>console.error(err));
   }
@@ -2163,34 +2159,73 @@ function filaParaSheet(rec, tipoManual){
   return null; // Presente no se escribe (igual que en tu Excel: solo figuran los ausentes)
 }
 
-async function sincronizarAsistenciaADrive(studentId, fechaISO, rec){
-  if(!(window.__driveSyncActivo && driveConectado)) return;
-  const info = cache.driveMapping[studentId];
-  if(!info) return;
-  const fila = filaParaSheet(rec);
-  if(!fila) return;
-  try{
-    await escribirFilaSheet(info.spreadsheetId, fmtDateShort(fechaISO), fila.tipo, fila.peso);
-  }catch(err){
-    console.error('Error sincronizando a Drive:', err);
-  }
+function registrosPendientesDeSync(){
+  const pendientesAsistencia = [];
+  Object.entries(cache.attendance).forEach(([key, rec]) => {
+    if(rec.driveSynced) return;
+    const [fecha, studentId] = key.split('|');
+    if(!cache.driveMapping[studentId]) return;
+    const fila = filaParaSheet(rec);
+    if(!fila) return;
+    pendientesAsistencia.push({ key, studentId, fecha, fila });
+  });
+  const pendientesEF = [];
+  Object.entries(cache.ef).forEach(([key, rec]) => {
+    if(rec.driveSynced) return;
+    const [fecha, studentId] = key.split('|');
+    if(!cache.driveMapping[studentId]) return;
+    pendientesEF.push({ key, studentId, fecha, tipo: rec.tipo });
+  });
+  return { pendientesAsistencia, pendientesEF };
 }
 
-async function sincronizarEFaDrive(studentId, fechaISO, tipo){
-  if(!(window.__driveSyncActivo && driveConectado)) return;
-  const info = cache.driveMapping[studentId];
-  if(!info) return;
-  const etiqueta = tipo === 'saf' ? 'SAF' : 'Ed. fisica';
-  const peso = tipo === 'saf' ? '' : 0.5;
-  try{
-    await escribirFilaSheet(info.spreadsheetId, fmtDateShort(fechaISO), etiqueta, peso);
-  }catch(err){
-    console.error('Error sincronizando EF a Drive:', err);
+function marcarTodoComoYaSincronizado(){
+  if(!confirm('Esto marca todas las faltas/tardanzas ya cargadas hasta ahora como "ya reflejadas en Drive" (porque ya las tenés a mano en el Excel), para que la sincronización de acá en más solo mande lo nuevo. ¿Confirmás?')) return;
+  const ops = [];
+  Object.keys(cache.attendance).forEach(key => {
+    ops.push(setDoc(doc(db,'attendance',docId(key)), { driveSynced: true }, { merge: true }));
+  });
+  Object.keys(cache.ef).forEach(key => {
+    const [fecha, studentId] = key.split('|');
+    ops.push(setDoc(doc(db,'ef', docId(`${fecha}_${studentId}`)), { driveSynced: true }, { merge: true }));
+  });
+  Promise.all(ops).then(() => { showToast('Todo marcado como ya sincronizado'); render(); }).catch(err=>console.error(err));
+}
+
+async function sincronizarPendientesConDrive(){
+  if(!driveConectado){ alert('Primero conectá con Google Drive.'); return; }
+  const { pendientesAsistencia, pendientesEF } = registrosPendientesDeSync();
+  const total = pendientesAsistencia.length + pendientesEF.length;
+  const estadoEl = document.getElementById('syncEstado');
+  if(total === 0){ if(estadoEl) estadoEl.textContent = 'No hay nada pendiente para sincronizar.'; return; }
+  if(estadoEl) estadoEl.textContent = `Sincronizando ${total} registros...`;
+  let ok = 0, error = 0;
+  for(const p of pendientesAsistencia){
+    try{
+      await escribirFilaSheet(cache.driveMapping[p.studentId].spreadsheetId, fmtDateShort(p.fecha), p.fila.tipo, p.fila.peso);
+      await setDoc(doc(db,'attendance', docId(p.key)), { driveSynced: true }, { merge: true });
+      ok++;
+    }catch(err){ console.error(err); error++; }
+    if(estadoEl) estadoEl.textContent = `Sincronizando... ${ok+error}/${total}`;
   }
+  for(const p of pendientesEF){
+    try{
+      const etiqueta = p.tipo === 'saf' ? 'SAF' : 'Ed. fisica';
+      const peso = p.tipo === 'saf' ? '' : 0.5;
+      await escribirFilaSheet(cache.driveMapping[p.studentId].spreadsheetId, fmtDateShort(p.fecha), etiqueta, peso);
+      await setDoc(doc(db,'ef', docId(`${p.fecha}_${p.studentId}`)), { driveSynced: true }, { merge: true });
+      ok++;
+    }catch(err){ console.error(err); error++; }
+    if(estadoEl) estadoEl.textContent = `Sincronizando... ${ok+error}/${total}`;
+  }
+  if(estadoEl) estadoEl.textContent = `Listo: ${ok} sincronizados${error?`, ${error} con error (revisá la consola)`:''}.`;
+  render();
 }
 
 function renderConexionDrive(){
   const mapeados = Object.entries(cache.driveMapping || {});
+  const { pendientesAsistencia, pendientesEF } = driveConectado ? registrosPendientesDeSync() : { pendientesAsistencia:[], pendientesEF:[] };
+  const totalPendiente = pendientesAsistencia.length + pendientesEF.length;
   $app.innerHTML = `
     <div class="appbar" style="padding:0 0 10px;">
       <button class="back-btn" id="backBtn">${icon('back')}</button>
@@ -2204,22 +2239,19 @@ function renderConexionDrive(){
 
     ${mapeados.length && driveConectado ? `
       <p class="section-label" style="margin-top:20px;">Etapa 2: prueba con un alumno</p>
-      <p style="font-size:12.5px;color:var(--ink-soft);margin-bottom:10px;">Escribe una fila de prueba bien marcada (no una falta real) en la planilla de un solo alumno, para que revises que no rompe nada antes de activarlo para todos.</p>
+      <p style="font-size:12.5px;color:var(--ink-soft);margin-bottom:10px;">Escribe una fila de prueba bien marcada (no una falta real) en la planilla de un solo alumno, para que revises que no rompe nada.</p>
       <select id="alumnoPruebaSelect" style="margin-bottom:10px;">
         ${getStudents().filter(s => cache.driveMapping[s.id]).sort((a,b)=>a.apellido.localeCompare(b.apellido)).map(s => `<option value="${s.id}">${s.apellido}, ${s.nombre}</option>`).join('')}
       </select>
       <button class="btn-secondary" id="probarEscrituraBtn" style="width:100%;">Escribir fila de prueba</button>
       <p id="pruebaEstado" style="font-size:12.5px;color:var(--ink-soft);margin-top:8px;"></p>
-    ` : ''}
 
-    ${window.__driveSyncActivo ? `
-      <p class="section-label" style="margin-top:20px;">Etapa 3: sincronización real</p>
-      <p style="font-size:12.5px;color:var(--sage);">✓ Activada — cada vez que cargues asistencia se refleja sola en Drive (mientras esta pestaña esté conectada).</p>
-    ` : (mapeados.length && driveConectado ? `
-      <p class="section-label" style="margin-top:20px;">Etapa 3: sincronización real</p>
-      <p style="font-size:12.5px;color:var(--ink-soft);margin-bottom:10px;">Una vez que confirmes que la fila de prueba se ve bien en Drive (y la hayas borrado), activá esto.</p>
-      <button class="btn-primary" id="activarSyncBtn" style="width:100%;">Activar sincronización real</button>
-    ` : '')}
+      <p class="section-label" style="margin-top:20px;">Etapa 3: sincronizar cuando quieras</p>
+      <p style="font-size:12.5px;color:var(--ink-soft);margin-bottom:10px;">Cargás la asistencia normal en la app, y cuando quieras mandarla a Drive, entrás acá y tocás sincronizar. Si es la primera vez, marcá primero lo ya cargado como "ya sincronizado" para que no se duplique con lo que ya tenés a mano en el Excel.</p>
+      <button class="btn-secondary" id="marcarSyncBtn" style="width:100%;margin-bottom:10px;">Marcar todo lo actual como ya sincronizado</button>
+      <button class="btn-primary" id="sincronizarBtn" style="width:100%;">Sincronizar ahora (${totalPendiente} pendiente${totalPendiente!==1?'s':''})</button>
+      <p id="syncEstado" style="font-size:12.5px;color:var(--ink-soft);margin-top:8px;"></p>
+    ` : ''}
   `;
   document.getElementById('backBtn').addEventListener('click', () => navigate('home'));
   document.getElementById('conectarDriveBtn').addEventListener('click', conectarDrive);
@@ -2233,12 +2265,11 @@ function renderConexionDrive(){
       probarEscrituraSheet(sid);
     });
   }
-  if(document.getElementById('activarSyncBtn')){
-    document.getElementById('activarSyncBtn').addEventListener('click', () => {
-      window.__driveSyncActivo = true;
-      showToast('Sincronización activada para esta sesión');
-      render();
-    });
+  if(document.getElementById('marcarSyncBtn')){
+    document.getElementById('marcarSyncBtn').addEventListener('click', marcarTodoComoYaSincronizado);
+  }
+  if(document.getElementById('sincronizarBtn')){
+    document.getElementById('sincronizarBtn').addEventListener('click', sincronizarPendientesConDrive);
   }
 }
 
