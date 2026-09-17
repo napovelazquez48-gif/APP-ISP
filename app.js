@@ -83,6 +83,7 @@ let cache = {
   notas: {},
   viewers: {},
   driveMapping: {},
+  diasSinClase: {},
   entradasEspeciales: {},
   config: { entrada:'07:45', toleranciaMin:15, corteFaltaCompleta:'09:00' }
 };
@@ -191,6 +192,13 @@ function startListeners(){
     render();
   });
 
+  onSnapshot(collection(db,'diasSinClase'), snap => {
+    const next = {};
+    snap.forEach(d => { next[d.id] = d.data(); });
+    cache.diasSinClase = next;
+    render();
+  });
+
   const configRef = doc(db,'config','general');
   onSnapshot(configRef, d => {
     if(d.exists()) cache.config = d.data();
@@ -267,6 +275,7 @@ function computeMateriaStats(studentId, bim){
   const efCountedDates = new Set();
 
   dates.forEach(iso => {
+    if(getDiaSinClase(iso, curso)) return; // VCF, paro, etc.: no hubo clase, no cuenta ni suma
     const diaKey = diaKeyFor(iso);
     if(!diaKey) return;
     const subjects = subjectsForDay(curso, diaKey);
@@ -388,6 +397,21 @@ function definirEntradaEspecial(fecha, curso){
 function borrarEntradaEspecial(fecha, curso){
   if(!confirm('¿Sacar la entrada especial de este curso para este día?')) return;
   deleteDoc(doc(db,'entradasEspeciales', docId(`${fecha}_${curso}`))).catch(err=>console.error(err));
+}
+
+function getDiaSinClase(fecha, curso){
+  return cache.diasSinClase[docId(`${fecha}_${curso}`)] || null;
+}
+function definirDiaSinClase(fecha, curso){
+  const actual = getDiaSinClase(fecha, curso);
+  const motivo = prompt(`Marcar ${curso}° A el ${fecha} como día sin clase (ej: VCF, paro).\n\nMotivo:`, actual ? actual.motivo : 'VCF');
+  if(motivo === null || !motivo.trim()) return;
+  setDoc(doc(db,'diasSinClase', docId(`${fecha}_${curso}`)), { fecha, curso, motivo: motivo.trim(), autor: getUsuario() })
+    .catch(err=>console.error(err));
+}
+function borrarDiaSinClase(fecha, curso){
+  if(!confirm('¿Sacar la marca de "día sin clase" de este curso para este día?')) return;
+  deleteDoc(doc(db,'diasSinClase', docId(`${fecha}_${curso}`))).catch(err=>console.error(err));
 }
 
 function estadoParaHora(hora, cfg, studentId, curso, fecha){
@@ -985,7 +1009,20 @@ function renderAsistencia(){
           </div>
         </div>`;
       }
-      return `<p style="text-align:right;margin:-8px 0 14px;"><a href="#" id="entradaEspecialLink" style="font-size:12px;color:var(--ink-soft);text-decoration:underline;">+ Entrada especial para este curso hoy</a></p>`;
+      return `<p style="text-align:right;margin:-8px 0 10px;"><a href="#" id="entradaEspecialLink" style="font-size:12px;color:var(--ink-soft);text-decoration:underline;">+ Entrada especial para este curso hoy</a></p>`;
+    })()}
+    ${(() => {
+      const sinClase = getDiaSinClase(selectedFecha, selectedCurso);
+      if(sinClase){
+        return `<div class="alert-banner" style="background:var(--gold-bg);margin-bottom:14px;">
+          <p class="alert-text" style="color:var(--gold);">Sin clase hoy para este curso · ${sinClase.motivo} — no suma faltas ni afecta el % por materia.</p>
+          <div style="display:flex;gap:8px;margin-top:8px;">
+            <button class="btn-secondary" id="editarSinClaseBtn" style="flex:1;font-size:12px;padding:6px;">Editar</button>
+            <button class="btn-secondary" id="borrarSinClaseBtn" style="flex:1;font-size:12px;padding:6px;color:var(--stamp);">Sacar</button>
+          </div>
+        </div>`;
+      }
+      return `<p style="text-align:right;margin:-8px 0 14px;"><a href="#" id="sinClaseLink" style="font-size:12px;color:var(--ink-soft);text-decoration:underline;">+ Día sin clase para este curso (VCF, paro...)</a></p>`;
     })()}
     ${students.length ? rows : `<div class="empty-state"><h2>Sin alumnos</h2><p>Este curso no tiene alumnos cargados.</p></div>`}
     <div style="height:16px"></div>
@@ -1007,6 +1044,15 @@ function renderAsistencia(){
   }
   if(document.getElementById('borrarEspecialBtn')){
     document.getElementById('borrarEspecialBtn').addEventListener('click', () => borrarEntradaEspecial(selectedFecha, selectedCurso));
+  }
+  if(document.getElementById('sinClaseLink')){
+    document.getElementById('sinClaseLink').addEventListener('click', (e) => { e.preventDefault(); definirDiaSinClase(selectedFecha, selectedCurso); });
+  }
+  if(document.getElementById('editarSinClaseBtn')){
+    document.getElementById('editarSinClaseBtn').addEventListener('click', () => definirDiaSinClase(selectedFecha, selectedCurso));
+  }
+  if(document.getElementById('borrarSinClaseBtn')){
+    document.getElementById('borrarSinClaseBtn').addEventListener('click', () => borrarDiaSinClase(selectedFecha, selectedCurso));
   }
 }
 
