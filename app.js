@@ -1411,6 +1411,8 @@ function renderJustificativoAlumno(){
   updatePreview();
 }
 
+const APP_START_TIME = Date.now();
+
 function render(){
   renderInner();
   if($app){
@@ -1419,7 +1421,10 @@ function render(){
     $app.classList.add('fade-in');
   }
   const loading = document.getElementById('loadingScreen');
-  if(loading && !loading.classList.contains('hidden')) loading.classList.add('hidden');
+  if(loading && !loading.classList.contains('hidden')){
+    const faltan = 3000 - (Date.now() - APP_START_TIME);
+    setTimeout(() => loading.classList.add('hidden'), Math.max(0, faltan));
+  }
 }
 
 function renderInner(){
@@ -1427,6 +1432,7 @@ function renderInner(){
   if(userRole==='admin' && getUsuario()!=='Napo' && RUTAS_SOLO_NAPO.includes(currentRoute)){
     currentRoute = 'home';
   }
+  if(currentRoute === 'bienvenida'){ renderBienvenida(); return; }
   if(currentRoute === 'pin'){ renderPin(); return; }
   if(currentRoute === 'quien'){ renderQuien(); return; }
   if(currentRoute === 'profesorLogin'){ renderProfesorLogin(); return; }
@@ -3087,6 +3093,22 @@ let currentViewer = null; // datos de la cuenta de solo lectura logueada
 
 function slugify(s){ return String(s).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9]+/g,'-'); }
 
+function renderBienvenida(){
+  $app.innerHTML = `
+    <div style="padding-top:60px;text-align:center;">
+      <img src="icon-192.png" alt="ISP" style="width:76px;height:76px;object-fit:contain;margin:0 auto 18px;display:block;">
+      <h1 style="font-size:19px;margin:0 0 6px;">Instituto Superior Porteño</h1>
+      <p style="font-size:13px;color:var(--ink-soft);margin:0 0 32px;">¿Cómo querés entrar?</p>
+      <div style="max-width:280px;margin:0 auto;display:flex;flex-direction:column;gap:12px;">
+        <button class="btn-primary" id="btnAdmin">Acceder como admin</button>
+        <button class="btn-secondary" id="btnMail" style="justify-content:center;">Acceder con mail</button>
+      </div>
+    </div>
+  `;
+  document.getElementById('btnAdmin').addEventListener('click', () => { currentRoute = 'pin'; render(); });
+  document.getElementById('btnMail').addEventListener('click', () => { currentRoute = 'profesorLogin'; render(); });
+}
+
 function renderPin(){
   $app.innerHTML = `
     <div style="padding-top:32px;text-align:center;">
@@ -3100,7 +3122,7 @@ function renderPin(){
         <button class="btn-primary" style="max-width:200px;margin:0 auto;" id="pinBtn">Entrar</button>
       </div>
       <p style="margin-top:22px;">
-        <a href="#" id="soyProfesorLink" style="font-size:12.5px;color:var(--ink-soft);text-decoration:underline;">Ingresar con mail (profesores y otros accesos)</a>
+        <a href="#" id="volverBienvenidaLink" style="font-size:12.5px;color:var(--ink-soft);text-decoration:underline;">‹ Volver</a>
       </p>
     </div>
   `;
@@ -3121,9 +3143,9 @@ function renderPin(){
   }
   document.getElementById('pinBtn').addEventListener('click', tryPin);
   input.addEventListener('keydown', (e) => { if(e.key === 'Enter') tryPin(); });
-  document.getElementById('soyProfesorLink').addEventListener('click', (e) => {
+  document.getElementById('volverBienvenidaLink').addEventListener('click', (e) => {
     e.preventDefault();
-    currentRoute = 'profesorLogin';
+    currentRoute = 'bienvenida';
     render();
   });
 }
@@ -3145,7 +3167,7 @@ function renderProfesorLogin(){
       </p>
     </div>
   `;
-  document.getElementById('volverPinLink').addEventListener('click', (e) => { e.preventDefault(); currentRoute='pin'; render(); });
+  document.getElementById('volverPinLink').addEventListener('click', (e) => { e.preventDefault(); currentRoute='bienvenida'; render(); });
   document.getElementById('profLoginBtn').addEventListener('click', () => {
     const email = document.getElementById('profEmail').value.trim();
     const pass = document.getElementById('profPass').value;
@@ -3219,7 +3241,7 @@ onAuthStateChanged(auth, async (user) => {
   } else {
     userRole = null;
     currentTeacher = null;
-    currentRoute = 'pin';
+    currentRoute = 'bienvenida';
     render();
   }
 });
