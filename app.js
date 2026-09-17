@@ -390,7 +390,7 @@ function nowHHMM(){
   const d = new Date();
   return String(d.getHours()).padStart(2,'0') + ':' + String(d.getMinutes()).padStart(2,'0');
 }
-const DOW = ['dom','lun','mar','mié','mié','jue','vie','sáb'];
+const DOW = ['dom','lun','mar','mié','jue','vie','sáb'];
 const DOW_FULL = ['Domingo','Lunes','Martes','Miércoles','Jueves','Viernes','Sábado'];
 const MONTHS = ['ENE','FEB','MAR','ABR','MAY','JUN','JUL','AGO','SEP','OCT','NOV','DIC'];
 
@@ -1043,7 +1043,7 @@ function renderAsistencia(){
     ${(() => {
       const especial = getEntradaEspecial(selectedFecha, selectedCurso);
       if(especial){
-        return `<div class="alert-banner" style="background:var(--sage-bg);margin-bottom:14px;">
+        return `<div class="alert-banner" style="background:var(--sage-bg);margin-bottom:14px;border-left-color:var(--sage);">
           <p class="alert-text" style="color:var(--sage);">Entrada especial hoy: hasta las ${especial.horaTope}${especial.motivo?' · '+especial.motivo:''}</p>
           <div style="display:flex;gap:8px;margin-top:8px;">
             <button class="btn-secondary" id="editarEspecialBtn" style="flex:1;font-size:12px;padding:6px;">Editar</button>
@@ -1056,7 +1056,7 @@ function renderAsistencia(){
     ${(() => {
       const sinClase = getDiaSinClase(selectedFecha, selectedCurso);
       if(sinClase){
-        return `<div class="alert-banner" style="background:var(--gold-bg);margin-bottom:14px;">
+        return `<div class="alert-banner" style="background:var(--gold-bg);margin-bottom:14px;border-left-color:var(--gold);">
           <p class="alert-text" style="color:var(--gold);">Sin clase hoy para este curso · ${sinClase.motivo} — no suma faltas ni afecta el % por materia.</p>
           <div style="display:flex;gap:8px;margin-top:8px;">
             <button class="btn-secondary" id="editarSinClaseBtn" style="flex:1;font-size:12px;padding:6px;">Editar</button>

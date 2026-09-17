@@ -21,6 +21,7 @@ html,body{margin:0;padding:0;}
 body{
   font-family:'IBM Plex Sans', sans-serif;
   background:var(--paper);
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='matrix' values='0 0 0 0 0.12  0 0 0 0 0.16  0 0 0 0 0.23  0 0 0 0.02 0'/%3E%3C/filter%3E%3Crect width='120' height='120' filter='url(%23n)'/%3E%3C/svg%3E");
   color:var(--ink);
   -webkit-tap-highlight-color:transparent;
   overscroll-behavior-y:none;
@@ -108,11 +109,6 @@ main.fade-in{animation:screenFadeIn 0.22s ease;}
   to{opacity:1;}
 }
 
-/* Feedback táctil general en botones */
-.state-btn:active, .btn-primary:active, .btn-secondary:active, .btn-chip:active, .module-row:active{
-  opacity:0.6;
-}
-
 /* Pulso de confirmación al marcar un estado */
 .state-btn.pulse{animation:statePulse 0.3s ease;}
 @keyframes statePulse{
@@ -130,21 +126,29 @@ main.fade-in{animation:screenFadeIn 0.22s ease;}
   border:1.5px dashed var(--ink);
   display:flex;align-items:center;justify-content:center;
   text-align:center;line-height:1.05;flex-shrink:0;
+  transform:rotate(-6deg);
+  box-shadow:0 1px 0 rgba(31,42,58,0.08);
 }
 .stamp .dow{font-size:9px;color:var(--ink-soft);letter-spacing:0.5px;}
 .stamp .dom{font-size:16px;font-weight:600;font-family:'Source Serif 4',serif;}
 .stamp .mon{font-size:9px;color:var(--ink-soft);}
 
 .stat-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:20px;}
-.stat-card{background:var(--card);border:0.5px solid var(--border);border-radius:var(--radius-sm);padding:14px;}
+.stat-card{
+  background:var(--card);border:0.5px solid var(--border);border-radius:var(--radius-sm);padding:14px;
+  box-shadow:0 1px 2px rgba(31,42,58,0.05), 0 4px 10px rgba(31,42,58,0.04);
+}
 .stat-card.alert{background:var(--stamp-bg);border-color:transparent;}
 .stat-card .label{font-size:12px;color:var(--ink-soft);margin:0 0 4px;}
 .stat-card.alert .label{color:var(--stamp);}
-.stat-card .value{font-size:22px;font-weight:600;margin:0;font-family:'Source Serif 4',serif;}
+.stat-card .value{font-size:24px;font-weight:600;margin:0;font-family:'Source Serif 4',serif;letter-spacing:-0.3px;}
 .stat-card.alert .value{color:var(--stamp);}
 .stat-card .sub{font-size:12px;color:var(--ink-soft);font-weight:400;}
 
-.module-list{background:var(--card);border:0.5px solid var(--border);border-radius:var(--radius-sm);overflow:hidden;}
+.module-list{
+  background:var(--card);border:0.5px solid var(--border);border-radius:var(--radius-sm);overflow:hidden;
+  box-shadow:0 1px 2px rgba(31,42,58,0.05), 0 4px 10px rgba(31,42,58,0.04);
+}
 .module-row{
   display:flex;align-items:center;gap:13px;padding:14px 15px;
   border-bottom:0.5px solid var(--border);cursor:pointer;
@@ -168,6 +172,7 @@ main.fade-in{animation:screenFadeIn 0.22s ease;}
 .student-card{
   background:var(--card);border:0.5px solid var(--border);border-radius:var(--radius-sm);
   padding:7px 10px;margin-bottom:5px;
+  box-shadow:0 1px 2px rgba(31,42,58,0.05);
 }
 .student-card .row{display:flex;align-items:center;gap:10px;}
 .student-card .name{flex:1;font-size:13.5px;font-weight:500;line-height:1.2;}
@@ -226,7 +231,7 @@ main.fade-in{animation:screenFadeIn 0.22s ease;}
 .teacher-line.ausente{color:var(--stamp);}
 .hour-block.shared{background:var(--paper-2);}
 
-.config-card{background:var(--card);border:0.5px solid var(--border);border-radius:var(--radius-sm);padding:14px 16px;margin-bottom:12px;}
+.config-card{background:var(--card);border:0.5px solid var(--border);border-radius:var(--radius-sm);padding:14px 16px;margin-bottom:12px;box-shadow:0 1px 2px rgba(31,42,58,0.05), 0 4px 10px rgba(31,42,58,0.04);}
 .config-card .k{font-size:12px;color:var(--ink-soft);margin:0 0 3px;}
 .config-card .v{font-size:15px;font-weight:500;margin:0;}
 .field-row{display:flex;align-items:center;gap:10px;margin-bottom:12px;}
@@ -249,13 +254,17 @@ input,select,textarea{
 .empty-state p{font-size:13px;margin:0;}
 
 /* Sanciones */
-.alert-banner{background:var(--stamp-bg);border-radius:var(--radius-sm);padding:14px 16px;margin-bottom:18px;}
+.alert-banner{background:var(--stamp-bg);border-radius:var(--radius-sm);padding:14px 16px;margin-bottom:18px;border-left:3px solid var(--stamp);}
 .alert-head{display:flex;align-items:center;justify-content:space-between;}
 .alert-title{font-size:14px;font-weight:600;color:var(--stamp);margin:0;}
 .alert-num{font-size:22px;font-weight:700;color:var(--stamp);font-family:'Source Serif 4',serif;}
 .alert-text{font-size:12.5px;color:var(--stamp);margin:6px 0 0;line-height:1.4;}
-.section-label{font-size:12.5px;color:var(--ink-soft);margin:0 0 8px;}
-.sancion-list{background:var(--card);border:0.5px solid var(--border);border-radius:var(--radius-sm);overflow:hidden;}
+.section-label{
+  font-size:11px;color:var(--ink-soft);margin:0 0 8px;
+  text-transform:uppercase;letter-spacing:1.1px;font-weight:600;
+  padding-bottom:5px;border-bottom:0.5px solid var(--border);
+}
+.sancion-list{background:var(--card);border:0.5px solid var(--border);border-radius:var(--radius-sm);overflow:hidden;box-shadow:0 1px 2px rgba(31,42,58,0.05), 0 4px 10px rgba(31,42,58,0.04);}
 .sancion-item{padding:11px 14px;border-bottom:0.5px solid var(--border);}
 .sancion-item:last-child{border-bottom:none;}
 .sancion-item .folio{font-size:12.5px;font-weight:500;margin:0 0 2px;}
