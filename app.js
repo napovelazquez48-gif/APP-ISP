@@ -18,7 +18,7 @@ import {
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
 import {
   getAuth, signInAnonymously, onAuthStateChanged, signInWithEmailAndPassword,
-  createUserWithEmailAndPassword, updatePassword, signOut
+  createUserWithEmailAndPassword, updatePassword, signOut, setPersistence, browserLocalPersistence
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-auth.js";
 
 const firebaseConfig = {
@@ -43,10 +43,12 @@ let driveConectado = false;
 
 const fbApp = initializeApp(firebaseConfig);
 const auth = getAuth(fbApp);
+setPersistence(auth, browserLocalPersistence).catch(err=>console.error(err));
 // App secundaria: se usa SOLO para crear cuentas de profesor sin cerrar la sesión del admin
 // (createUserWithEmailAndPassword inicia sesión automáticamente en la app en la que se llama).
 const fbAppSecundaria = initializeApp(firebaseConfig, 'secundaria');
 const authSecundaria = getAuth(fbAppSecundaria);
+setPersistence(authSecundaria, browserLocalPersistence).catch(err=>console.error(err));
 let db;
 try{
   db = initializeFirestore(fbApp, { localCache: persistentLocalCache({ tabManager: persistentSingleTabManager() }) });
@@ -777,6 +779,7 @@ function renderHome(){
       ${moduleRow('chart','Notas','Cuatrimestral, escala 1 a 10', 'notas')}
     </div>
 
+    ${getUsuario()==='Napo' ? `
     <p class="section-label" style="margin-top:22px;">Administración</p>
     <div class="module-list">
       ${moduleRow('users','Profesores','Altas y bajas de cuentas de profesor', 'profesores')}
@@ -788,18 +791,27 @@ function renderHome(){
       &nbsp;·&nbsp;
       <a href="#" id="importarLink" style="font-size:12px;color:var(--ink-soft);text-decoration:underline;">Importar histórico</a>
     </p>
+    ` : `
+    <p style="text-align:center;margin-top:18px;">
+      <a href="#" id="cambiarUsuarioLink" style="font-size:12px;color:var(--ink-soft);text-decoration:underline;">Cambiar usuario</a>
+    </p>
+    `}
   `;
   attachModuleHandlers();
   document.getElementById('cardAsistenciaHoy').addEventListener('click', () => navigate('detalleAsistenciaHoy'));
   document.getElementById('cardAlertas').addEventListener('click', () => navigate('detalleAlertas'));
   animateCounts();
-  document.getElementById('importarLink').addEventListener('click', (e) => { e.preventDefault(); navigate('importar'); });
-  document.getElementById('cambiarUsuarioLink').addEventListener('click', (e) => {
-    e.preventDefault();
-    localStorage.removeItem('isp_usuario');
-    currentRoute = 'quien';
-    render();
-  });
+  if(document.getElementById('importarLink')){
+    document.getElementById('importarLink').addEventListener('click', (e) => { e.preventDefault(); navigate('importar'); });
+  }
+  if(document.getElementById('cambiarUsuarioLink')){
+    document.getElementById('cambiarUsuarioLink').addEventListener('click', (e) => {
+      e.preventDefault();
+      localStorage.removeItem('isp_usuario');
+      currentRoute = 'quien';
+      render();
+    });
+  }
 }
 
 function renderDetalleAsistenciaHoy(){
@@ -839,7 +851,7 @@ function renderDetalleAlertas(){
 
   const rows = alertados.map(s => `
       <div class="sancion-item">
-        <p class="folio">${s.apellido}, ${s.nombre} · ${s.curso}° A</p>
+        <p class="folio"><span class="curso-chip c${s.curso}">${s.curso}°</span> ${s.apellido}, ${s.nombre}</p>
         <p class="motivo">En alerta desde el ${s.fechaAlerta ? fmtDateShort(s.fechaAlerta) : '—'}</p>
         <p class="motivo">${weights[s.id]} faltas del bimestre</p>
       </div>
@@ -1411,6 +1423,10 @@ function render(){
 }
 
 function renderInner(){
+  const RUTAS_SOLO_NAPO = ['profesores','profesorNuevo','profesorEditar','lectura','conexionDrive','importar'];
+  if(userRole==='admin' && getUsuario()!=='Napo' && RUTAS_SOLO_NAPO.includes(currentRoute)){
+    currentRoute = 'home';
+  }
   if(currentRoute === 'pin'){ renderPin(); return; }
   if(currentRoute === 'quien'){ renderQuien(); return; }
   if(currentRoute === 'profesorLogin'){ renderProfesorLogin(); return; }
@@ -1446,6 +1462,7 @@ function renderInner(){
   else if(currentRoute === 'valoraciones') renderValoracionesLista();
   else if(currentRoute === 'valoracionAlumno') renderValoracionAlumno();
   else if(currentRoute === 'notas') renderNotasLista();
+  else if(currentRoute === 'config') renderConfig();
   renderTabbar();
 }
 
@@ -3000,14 +3017,69 @@ function renderTabbar(){
     <button class="tab ${currentRoute==='home'?'active':''}" id="tabHome">${icon('home')}<span>Inicio</span></button>
     <button class="tab ${currentRoute==='asistencia'?'active':''}" id="tabAsist">${icon('clipboard')}<span>Asistencia</span></button>
     <button class="tab ${currentRoute==='horarios'?'active':''}" id="tabHorarios">${icon('calendar')}<span>Horarios</span></button>
-    <button class="tab disabled" disabled>${icon('gear')}<span>Config</span></button>
+    <button class="tab ${currentRoute==='config'?'active':''}" id="tabConfig">${icon('gear')}<span>Config</span></button>
   `;
   document.getElementById('tabHome').addEventListener('click', () => navigate('home'));
   document.getElementById('tabAsist').addEventListener('click', () => navigate('asistencia'));
   document.getElementById('tabHorarios').addEventListener('click', () => navigate('horarios'));
+  document.getElementById('tabConfig').addEventListener('click', () => navigate('config'));
 }
 
 // ---------- Identidad (PIN + Napo/Vicky) ----------
+function guardarConfigGeneral(){
+  const entrada = document.getElementById('cfgEntrada').value;
+  const tolerancia = Number(document.getElementById('cfgTolerancia').value);
+  const corte = document.getElementById('cfgCorte').value;
+  if(!/^\d{2}:\d{2}$/.test(entrada) || !/^\d{2}:\d{2}$/.test(corte) || isNaN(tolerancia)){
+    alert('Revisá los formatos: horas como HH:MM, tolerancia en minutos.');
+    return;
+  }
+  setDoc(doc(db,'config','general'), { entrada, toleranciaMin: tolerancia, corteFaltaCompleta: corte })
+    .then(() => showToast('Configuración guardada'))
+    .catch(err=>console.error(err));
+}
+
+function renderConfig(){
+  const cfg = getConfig();
+  const esNapo = getUsuario()==='Napo';
+  $app.innerHTML = `
+    <div class="appbar" style="padding:0 0 10px;">
+      <h1>Configuración</h1>
+    </div>
+
+    <p class="section-label">Tu cuenta</p>
+    <div class="config-card">
+      <p class="v" style="margin-bottom:10px;">Estás como <b>${getUsuario()}</b>.</p>
+      <button class="btn-secondary" id="cambiarUsuarioBtn" style="width:100%;">Cambiar usuario</button>
+    </div>
+
+    ${esNapo ? `
+    <p class="section-label" style="margin-top:20px;">Horarios de entrada (todo el colegio)</p>
+    <div class="config-card">
+      <div class="field-row"><label>Entrada</label><input id="cfgEntrada" type="text" value="${cfg.entrada}" placeholder="07:45"></div>
+      <div class="field-row"><label>Tolerancia (min)</label><input id="cfgTolerancia" type="number" value="${cfg.toleranciaMin}"></div>
+      <div class="field-row"><label>Corte falta completa</label><input id="cfgCorte" type="text" value="${cfg.corteFaltaCompleta}" placeholder="09:00"></div>
+      <p style="font-size:11.5px;color:var(--ink-soft);margin:8px 0 12px;">Después de la hora de "corte", una llegada ya cuenta como falta completa en vez de tardanza.</p>
+      <button class="btn-primary" id="guardarConfigBtn" style="width:100%;">Guardar</button>
+    </div>
+    ` : ''}
+
+    <p class="section-label" style="margin-top:20px;">Acerca de</p>
+    <div class="config-card">
+      <p class="v">Instituto Superior Porteño</p>
+      <p style="font-size:12px;color:var(--ink-soft);margin-top:4px;">App de preceptoría</p>
+    </div>
+  `;
+  document.getElementById('cambiarUsuarioBtn').addEventListener('click', () => {
+    localStorage.removeItem('isp_usuario');
+    currentRoute = 'quien';
+    render();
+  });
+  if(document.getElementById('guardarConfigBtn')){
+    document.getElementById('guardarConfigBtn').addEventListener('click', guardarConfigGeneral);
+  }
+}
+
 function getUsuario(){ return localStorage.getItem('isp_usuario') || ''; }
 let userRole = null; // 'admin' | 'teacher'
 let currentTeacher = null; // datos del profesor logueado
@@ -3017,14 +3089,16 @@ function slugify(s){ return String(s).toLowerCase().normalize('NFD').replace(/[\
 
 function renderPin(){
   $app.innerHTML = `
-    <div style="padding-top:40px;text-align:center;">
-      <img src="icon-192.png" alt="ISP" style="width:88px;height:88px;object-fit:contain;margin:0 auto 16px;display:block;">
-      <h1 style="font-size:18px;margin:0 0 6px;">Preceptoría</h1>
-      <p style="font-size:13px;color:var(--ink-soft);margin:0 0 20px;">Ingresá el PIN para entrar</p>
-      <input id="pinInput" type="tel" inputmode="numeric" maxlength="4" placeholder="••••"
-        style="width:140px;text-align:center;font-size:22px;letter-spacing:8px;padding:12px;margin:0 auto 14px;display:block;">
-      <p id="pinError" style="font-size:12px;color:var(--stamp);height:16px;margin:0 0 10px;"></p>
-      <button class="btn-primary" style="max-width:200px;margin:0 auto;" id="pinBtn">Entrar</button>
+    <div style="padding-top:32px;text-align:center;">
+      <div style="max-width:280px;margin:0 auto;border:1px solid var(--border);border-radius:14px;padding:28px 20px;background:var(--card);box-shadow:0 1px 2px rgba(31,42,58,0.05), 0 8px 20px rgba(31,42,58,0.06);">
+        <img src="icon-192.png" alt="ISP" style="width:76px;height:76px;object-fit:contain;margin:0 auto 14px;display:block;">
+        <h1 style="font-size:18px;margin:0 0 6px;">Preceptoría</h1>
+        <p style="font-size:13px;color:var(--ink-soft);margin:0 0 20px;">Ingresá el PIN para entrar</p>
+        <input id="pinInput" type="tel" inputmode="numeric" maxlength="4" placeholder="••••"
+          style="width:140px;text-align:center;font-size:22px;letter-spacing:8px;padding:12px;margin:0 auto 14px;display:block;">
+        <p id="pinError" style="font-size:12px;color:var(--stamp);height:16px;margin:0 0 10px;"></p>
+        <button class="btn-primary" style="max-width:200px;margin:0 auto;" id="pinBtn">Entrar</button>
+      </div>
       <p style="margin-top:22px;">
         <a href="#" id="soyProfesorLink" style="font-size:12.5px;color:var(--ink-soft);text-decoration:underline;">Ingresar con mail (profesores y otros accesos)</a>
       </p>
