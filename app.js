@@ -816,30 +816,22 @@ function renderDetalleAlertas(){
   const bim = bimestreActual();
   const alertados = students.filter(s => (weights[s.id]||0) >= 5)
     .map(s => Object.assign({}, s, { fechaAlerta: computeFechaAlerta(s.id, bim) }))
-    .sort((a,b)=> (a.fechaAlerta||'9999').localeCompare(b.fechaAlerta||'9999'));
+    .sort((a,b)=> (Number(a.curso)-Number(b.curso)) || ((weights[b.id]||0)-(weights[a.id]||0)));
 
-  const rows = alertados.map(s => {
-    const att = getAttendance();
-    let a=0,t=0,j=0;
-    Object.entries(att).forEach(([key,rec]) => {
-      const [fecha,sid] = key.split('|');
-      if(sid!==s.id || fecha<bim.from || fecha>bim.to || rec.exencion) return;
-      if(rec.estado==='A') a++; else if(rec.estado==='T') t++; else if(rec.estado==='J') j++;
-    });
-    return `
+  const rows = alertados.map(s => `
       <div class="sancion-item">
         <p class="folio">${s.apellido}, ${s.nombre} · ${s.curso}° A</p>
-        <p class="motivo">En alerta desde el ${s.fechaAlerta ? fmtDateShort(s.fechaAlerta) : '—'} · ${weights[s.id]} faltas del bimestre (${a} ausentes, ${j} justificadas, ${t} tardes)</p>
+        <p class="motivo">En alerta desde el ${s.fechaAlerta ? fmtDateShort(s.fechaAlerta) : '—'}</p>
+        <p class="motivo">${weights[s.id]} faltas del bimestre</p>
       </div>
-    `;
-  }).join('');
+    `).join('');
 
   $app.innerHTML = `
     <div class="appbar" style="padding:0 0 10px;">
       <button class="back-btn" id="backBtn">${icon('back')}</button>
       <h1>Alumnos en alerta</h1>
     </div>
-    <p class="date-label">${bim.n}° bimestre · 5 o más faltas · ordenado por fecha en que entraron en alerta</p>
+    <p class="date-label">${bim.n}° bimestre · 5 o más faltas · por curso</p>
     ${alertados.length ? `<div class="sancion-list">${rows}</div>` : `<p style="font-size:13px;color:var(--ink-soft);">Nadie llegó a 5 faltas este bimestre.</p>`}
   `;
   document.getElementById('backBtn').addEventListener('click', () => navigate(homeRoute()));
@@ -2817,7 +2809,7 @@ function computeVistaCurso(curso){
     });
   });
 
-  alertaList.sort((a,b)=> (a.fechaAlerta||'9999').localeCompare(b.fechaAlerta||'9999'));
+  alertaList.sort((a,b)=> b.valor - a.valor);
   const scpList = Object.values(scpMap).sort((a,b)=> a.nombre.localeCompare(b.nombre));
 
   return { total: students.length, enAlerta: alertaList.length, conSCP: scpList.length, alertaList, scpList, porMateria };
@@ -2914,7 +2906,7 @@ function renderVistaCursoAlerta(){
       <button class="back-btn" id="backBtn">${icon('back')}</button>
       <h1>En alerta</h1>
     </div>
-    <p class="date-label">${selectedCurso}° A · 5 o más faltas · ordenado por fecha en que entraron en alerta</p>
+    <p class="date-label">${selectedCurso}° A · 5 o más faltas</p>
     ${rows ? `<div class="module-list">${rows}</div>` : `<p style="font-size:13px;color:var(--ink-soft);">Nadie en alerta en este curso.</p>`}
   `;
   document.getElementById('backBtn').addEventListener('click', () => navigate('vistaCurso'));
