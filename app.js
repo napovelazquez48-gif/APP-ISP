@@ -701,11 +701,15 @@ function renderHome(){
       ${moduleRow('calendar','Horarios y suplencias','Grilla por curso y división', 'horarios')}
       ${moduleRow('users','Familias','Contacto de padres y tutores', 'familias')}
       ${moduleRow('chart','Resumen del alumno','Faltas, apercibimientos y certificados', 'resumen')}
-      ${moduleRow('users','Profesores','Altas y bajas de cuentas de profesor', 'profesores')}
-      ${moduleRow('users','Acceso de lectura','Rectoría, psicopedagogía, secretaría', 'lectura')}
       ${moduleRow('chart','Vista por curso','Alertas y riesgo de SCP de un vistazo', 'vistaCurso')}
       ${moduleRow('file','Valoraciones pedagógicas','Bimestral, por materia', 'valoraciones')}
       ${moduleRow('chart','Notas','Cuatrimestral, escala 1 a 10', 'notas')}
+    </div>
+
+    <p class="section-label" style="margin-top:22px;">Administración</p>
+    <div class="module-list">
+      ${moduleRow('users','Profesores','Altas y bajas de cuentas de profesor', 'profesores')}
+      ${moduleRow('users','Acceso de lectura','Rectoría, psicopedagogía, secretaría', 'lectura')}
       ${moduleRow('calendar','Conexión con Drive','Emparejar y sincronizar faltas con Excel', 'conexionDrive')}
     </div>
     <p style="text-align:center;margin-top:18px;">
@@ -917,7 +921,7 @@ function renderAsistencia(){
       } else if(rec.llegoTarde){
         metaHtml = `<p class="meta" data-exent="${s.id}">Ausente · llegó ${rec.hora} (pasó las ${cfg.corteFaltaCompleta})</p>`;
       } else {
-        metaHtml = `<p class="meta meta-tap" data-exent="${s.id}">Ausente · tocar para exención</p>`;
+        metaHtml = `<p class="meta meta-tap" data-exent="${s.id}">Ausente</p>`;
       }
     } else if(estado === 'J'){
       metaHtml = `<p class="meta j">Ausente · justificada</p>`;
@@ -1946,9 +1950,9 @@ function renderProfesores(){
           <p class="motivo">${t.email} · ${(t.materias||[]).join(', ') || 'sin materia'} · ${(t.cursos||[]).map(c=>c+'°A').join(', ')}</p>
         </div>
         <div style="display:flex;flex-direction:column;gap:6px;flex-shrink:0;">
-          <button class="btn-secondary" style="padding:6px 10px;font-size:11.5px;" data-editar="${t.uid}">Editar</button>
-          <button class="btn-secondary" style="padding:6px 10px;font-size:11.5px;" data-toggle="${t.uid}" data-activo="${t.activo!==false}">${t.activo===false ? 'Reactivar' : 'Dar de baja'}</button>
-          <button class="btn-secondary" style="padding:6px 10px;font-size:11.5px;color:var(--stamp);border-color:var(--border-danger,var(--stamp));" data-borrar="${t.uid}" data-nombre="${t.nombre}">Borrar</button>
+          <button class="btn-chip" data-editar="${t.uid}">Editar</button>
+          <button class="btn-chip" data-toggle="${t.uid}" data-activo="${t.activo!==false}">${t.activo===false ? 'Reactivar' : 'Dar de baja'}</button>
+          <button class="btn-chip danger" data-borrar="${t.uid}" data-nombre="${t.nombre}">Borrar</button>
         </div>
       </div>
     </div>
@@ -2437,8 +2441,8 @@ function renderLectura(){
           <p class="motivo">${v.email}</p>
         </div>
         <div style="display:flex;flex-direction:column;gap:6px;flex-shrink:0;">
-          <button class="btn-secondary" style="padding:6px 10px;font-size:11.5px;" data-toggle="${v.uid}" data-activo="${v.activo!==false}">${v.activo===false ? 'Reactivar' : 'Dar de baja'}</button>
-          <button class="btn-secondary" style="padding:6px 10px;font-size:11.5px;color:var(--stamp);" data-borrar="${v.uid}" data-nombre="${v.nombre}">Borrar</button>
+          <button class="btn-chip" data-toggle="${v.uid}" data-activo="${v.activo!==false}">${v.activo===false ? 'Reactivar' : 'Dar de baja'}</button>
+          <button class="btn-chip danger" data-borrar="${v.uid}" data-nombre="${v.nombre}">Borrar</button>
         </div>
       </div>
     </div>
