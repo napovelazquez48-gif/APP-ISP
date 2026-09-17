@@ -462,6 +462,22 @@ function estadoParaHora(hora, cfg, studentId, curso, fecha){
 }
 
 let selectedFecha = todayISO();
+let ultimaAccionPulso = null;
+
+function animateCounts(){
+  document.querySelectorAll('.count-num').forEach(el => {
+    const target = Number(el.dataset.target) || 0;
+    const dur = 450;
+    const t0 = performance.now();
+    function paso(now){
+      const p = Math.min(1, (now - t0) / dur);
+      const eased = 1 - Math.pow(1 - p, 3);
+      el.textContent = Math.round(target * eased);
+      if(p < 1) requestAnimationFrame(paso);
+    }
+    requestAnimationFrame(paso);
+  });
+}
 
 function writeAttendance(key, data){
   setDoc(doc(db,'attendance',docId(key)), Object.assign({ autor: getUsuario() }, data)).catch(err=>console.error(err));
@@ -475,6 +491,7 @@ function markPresente(studentId, fecha, curso){
     deleteDoc(doc(db,'attendance',docId(key))).catch(err=>console.error(err));
     return;
   }
+  ultimaAccionPulso = { studentId };
   const cfg = getConfig();
   if(fecha === todayISO()){
     writeAttendance(key, estadoParaHora(nowHHMM(), cfg, studentId, curso, fecha));
@@ -490,6 +507,7 @@ function markAusente(studentId, fecha){
     deleteDoc(doc(db,'attendance',docId(key))).catch(err=>console.error(err));
     return;
   }
+  ultimaAccionPulso = { studentId };
   writeAttendance(key, { estado: 'A', hora: null });
 }
 function marcarExencion(studentId, fecha){
@@ -739,11 +757,11 @@ function renderHome(){
     <div class="stat-grid">
       <div class="stat-card" id="cardAsistenciaHoy" style="cursor:pointer;">
         <p class="label">Asistencia hoy</p>
-        <p class="value">${presentCount}<span class="sub"> / ${totalMarked || 0}</span></p>
+        <p class="value"><span class="count-num" data-target="${presentCount}">0</span><span class="sub"> / ${totalMarked || 0}</span></p>
       </div>
       <div class="stat-card ${alertCount>0?'alert':''}" id="cardAlertas" style="cursor:pointer;">
         <p class="label">Alumnos en alerta</p>
-        <p class="value">${alertCount}</p>
+        <p class="value"><span class="count-num" data-target="${alertCount}">0</span></p>
       </div>
     </div>
 
@@ -774,6 +792,7 @@ function renderHome(){
   attachModuleHandlers();
   document.getElementById('cardAsistenciaHoy').addEventListener('click', () => navigate('detalleAsistenciaHoy'));
   document.getElementById('cardAlertas').addEventListener('click', () => navigate('detalleAlertas'));
+  animateCounts();
   document.getElementById('importarLink').addEventListener('click', (e) => { e.preventDefault(); navigate('importar'); });
   document.getElementById('cambiarUsuarioLink').addEventListener('click', (e) => {
     e.preventDefault();
@@ -999,14 +1018,15 @@ function renderAsistencia(){
             ${metaHtml}
           </div>
           <div class="btn-group">
-            <button class="state-btn ${estado==='P'||estado==='T'||estado==='TJ'?'on-p':''}" data-p="${s.id}">P</button>
-            <button class="state-btn ${estado==='A'?'on-a':''}" data-a="${s.id}">A</button>
+            <button class="state-btn ${estado==='P'||estado==='T'||estado==='TJ'?'on-p':''} ${ultimaAccionPulso && ultimaAccionPulso.studentId===s.id && (estado==='P'||estado==='T'||estado==='TJ') ? 'pulse' : ''}" data-p="${s.id}">P</button>
+            <button class="state-btn ${estado==='A'?'on-a':''} ${ultimaAccionPulso && ultimaAccionPulso.studentId===s.id && estado==='A' ? 'pulse' : ''}" data-a="${s.id}">A</button>
             ${efHtml}
             <button class="state-btn hora-btn" data-edit="${s.id}" title="Editar hora de llegada">${icon('clock')}</button>
           </div>
         </div>
       </div>`;
   }).join('');
+  ultimaAccionPulso = null;
 
   $app.innerHTML = `
     <div class="appbar" style="padding:0 0 10px;">
@@ -1380,6 +1400,17 @@ function renderJustificativoAlumno(){
 }
 
 function render(){
+  renderInner();
+  if($app){
+    $app.classList.remove('fade-in');
+    void $app.offsetWidth; // reinicia la animación en cada pantalla
+    $app.classList.add('fade-in');
+  }
+  const loading = document.getElementById('loadingScreen');
+  if(loading && !loading.classList.contains('hidden')) loading.classList.add('hidden');
+}
+
+function renderInner(){
   if(currentRoute === 'pin'){ renderPin(); return; }
   if(currentRoute === 'quien'){ renderQuien(); return; }
   if(currentRoute === 'profesorLogin'){ renderProfesorLogin(); return; }
@@ -3072,6 +3103,12 @@ function renderQuien(){
 }
 
 // ---------- Init ----------
+// Resguardo: si por algún motivo tarda de más en cargar, sacamos la pantalla de carga igual.
+setTimeout(() => {
+  const loading = document.getElementById('loadingScreen');
+  if(loading) loading.classList.add('hidden');
+}, 4000);
+
 onAuthStateChanged(auth, async (user) => {
   if(user && user.isAnonymous){
     userRole = 'admin';
