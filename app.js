@@ -342,6 +342,35 @@ function computeAbsenceWeights(range){
   return weights;
 }
 
+function computeFechaAlerta(studentId, range){
+  const r = range || bimestreActual();
+  const att = getAttendance();
+  const eventos = [];
+  Object.entries(att).forEach(([key, rec]) => {
+    const [fecha, sid] = key.split('|');
+    if(sid !== studentId) return;
+    if(r && (fecha < r.from || fecha > r.to)) return;
+    if(rec.exencion) return;
+    let w = 0;
+    if(rec.estado === 'A' || rec.estado === 'J') w = 1;
+    else if(rec.estado === 'T') w = 0.5;
+    if(w>0) eventos.push({ fecha, w });
+  });
+  Object.entries(getEF()).forEach(([key, val]) => {
+    const [fecha, sid] = key.split('|');
+    if(sid !== studentId) return;
+    if(r && (fecha < r.from || fecha > r.to)) return;
+    if(val && val.tipo === 'falta') eventos.push({ fecha, w: 0.5 });
+  });
+  eventos.sort((a,b)=> a.fecha.localeCompare(b.fecha));
+  let acumulado = 0;
+  for(const ev of eventos){
+    acumulado += ev.w;
+    if(acumulado >= 5) return ev.fecha;
+  }
+  return null;
+}
+
 
 function todayISO(){
   return localISODate(new Date());
@@ -786,7 +815,8 @@ function renderDetalleAlertas(){
   const weights = computeAbsenceWeights();
   const bim = bimestreActual();
   const alertados = students.filter(s => (weights[s.id]||0) >= 5)
-    .sort((a,b)=> (weights[b.id]||0) - (weights[a.id]||0));
+    .map(s => Object.assign({}, s, { fechaAlerta: computeFechaAlerta(s.id, bim) }))
+    .sort((a,b)=> (a.fechaAlerta||'9999').localeCompare(b.fechaAlerta||'9999'));
 
   const rows = alertados.map(s => {
     const att = getAttendance();
@@ -799,7 +829,7 @@ function renderDetalleAlertas(){
     return `
       <div class="sancion-item">
         <p class="folio">${s.apellido}, ${s.nombre} · ${s.curso}° A</p>
-        <p class="motivo">${weights[s.id]} faltas del bimestre (${a} ausentes, ${j} justificadas, ${t} tardes)</p>
+        <p class="motivo">En alerta desde el ${s.fechaAlerta ? fmtDateShort(s.fechaAlerta) : '—'} · ${weights[s.id]} faltas del bimestre (${a} ausentes, ${j} justificadas, ${t} tardes)</p>
       </div>
     `;
   }).join('');
@@ -809,7 +839,7 @@ function renderDetalleAlertas(){
       <button class="back-btn" id="backBtn">${icon('back')}</button>
       <h1>Alumnos en alerta</h1>
     </div>
-    <p class="date-label">${bim.n}° bimestre · 5 o más faltas</p>
+    <p class="date-label">${bim.n}° bimestre · 5 o más faltas · ordenado por fecha en que entraron en alerta</p>
     ${alertados.length ? `<div class="sancion-list">${rows}</div>` : `<p style="font-size:13px;color:var(--ink-soft);">Nadie llegó a 5 faltas este bimestre.</p>`}
   `;
   document.getElementById('backBtn').addEventListener('click', () => navigate(homeRoute()));
@@ -2773,7 +2803,7 @@ function computeVistaCurso(curso){
 
   students.forEach(s => {
     const w = weights[s.id] || 0;
-    if(w >= 5) alertaList.push({ id: s.id, nombre: `${s.apellido}, ${s.nombre}`, valor: w });
+    if(w >= 5) alertaList.push({ id: s.id, nombre: `${s.apellido}, ${s.nombre}`, valor: w, fechaAlerta: computeFechaAlerta(s.id, bimestreActual()) });
     const stats = computeMateriaStats(s.id, anioCompleto);
     Object.entries(stats).forEach(([materia, st]) => {
       const pct = st.total>0 ? (1 - st.faltas/st.total) : 1;
@@ -2787,7 +2817,7 @@ function computeVistaCurso(curso){
     });
   });
 
-  alertaList.sort((a,b)=> b.valor - a.valor);
+  alertaList.sort((a,b)=> (a.fechaAlerta||'9999').localeCompare(b.fechaAlerta||'9999'));
   const scpList = Object.values(scpMap).sort((a,b)=> a.nombre.localeCompare(b.nombre));
 
   return { total: students.length, enAlerta: alertaList.length, conSCP: scpList.length, alertaList, scpList, porMateria };
@@ -2870,7 +2900,10 @@ function renderVistaCursoAlerta(){
   const v = computeVistaCurso(selectedCurso);
   const rows = v.alertaList.map(a => `
     <div class="module-row" data-student="${a.id}">
-      <div class="txt"><p class="title">${a.nombre}</p></div>
+      <div class="txt">
+        <p class="title">${a.nombre}</p>
+        <p class="desc">Desde el ${a.fechaAlerta ? fmtDateShort(a.fechaAlerta) : '—'}</p>
+      </div>
       <span class="badge-soon" style="background:var(--stamp-bg);color:var(--stamp);">${a.valor}</span>
       <span class="chevron">${icon('chevron')}</span>
     </div>
@@ -2881,7 +2914,7 @@ function renderVistaCursoAlerta(){
       <button class="back-btn" id="backBtn">${icon('back')}</button>
       <h1>En alerta</h1>
     </div>
-    <p class="date-label">${selectedCurso}° A · 5 o más faltas este bimestre</p>
+    <p class="date-label">${selectedCurso}° A · 5 o más faltas · ordenado por fecha en que entraron en alerta</p>
     ${rows ? `<div class="module-list">${rows}</div>` : `<p style="font-size:13px;color:var(--ink-soft);">Nadie en alerta en este curso.</p>`}
   `;
   document.getElementById('backBtn').addEventListener('click', () => navigate('vistaCurso'));
