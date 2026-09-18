@@ -2521,7 +2521,8 @@ function renderStudentHome(){
     </div>
 
     <div class="module-list">
-      ${moduleRow('chart','Mis faltas y notas','Bimestre, materias y detalle', 'studentResumen')}
+      ${moduleRow('clipboard','Mis faltas','Bimestre, materias y detalle día por día', 'studentFaltas')}
+      ${moduleRow('chart','Mis notas','1er y 2do cuatrimestre', 'studentNotas')}
       ${moduleRow('users','Mis profesores','Materia y mail de contacto', 'studentProfesores')}
     </div>
 
@@ -2532,7 +2533,9 @@ function renderStudentHome(){
     </p>
   `;
   document.querySelectorAll('.module-row').forEach(r => r.addEventListener('click', () => {
-    if(r.dataset.route === 'studentResumen'){ selectedStudentId = currentStudentAuth.studentId; navigate('resumenAlumno'); }
+    selectedStudentId = currentStudentAuth.studentId;
+    if(r.dataset.route === 'studentFaltas') navigate('resumenAlumno');
+    else if(r.dataset.route === 'studentNotas') navigate('resumenNotas');
     else navigate(r.dataset.route);
   }));
   document.getElementById('cambiarPassLink').addEventListener('click', (e) => { e.preventDefault(); cambiarPasswordProfesor(); });
