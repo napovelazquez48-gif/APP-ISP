@@ -825,8 +825,8 @@ function renderDetalleAsistenciaHoy(){
 
   const rows = ausentes.map(s => `
     <div class="sancion-item">
-      <p class="folio">${s.apellido}, ${s.nombre}</p>
-      <p class="motivo">${s.curso}° A${(att[`${today}|${s.id}`].exencion) ? ' · Exenta ('+att[`${today}|${s.id}`].exencion+')' : ''}</p>
+      <p class="folio"><span class="curso-chip c${s.curso}">${s.curso}°</span> ${s.apellido}, ${s.nombre}</p>
+      ${(att[`${today}|${s.id}`].exencion) ? `<p class="motivo">Exenta (${att[`${today}|${s.id}`].exencion})</p>` : ''}
     </div>
   `).join('');
 
@@ -2040,7 +2040,7 @@ function renderProfesorEditar(){
     </div>
     <p class="section-label">Cursos a cargo</p>
     <div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:18px;">
-      ${CURSOS.map(c => `<label class="curso-check-label"><input type="checkbox" class="curso-check-edit" value="${c}" ${(t.cursos||[]).includes(c)?'checked':''}> ${c}° A</label>`).join('')}
+      ${CURSOS.map(c => `<label class="curso-check-label"><input type="checkbox" class="curso-check-edit" value="${c}" ${(t.cursos||[]).includes(c)?'checked':''}> <span class="curso-dot c${c}"></span>${c}° A</label>`).join('')}
     </div>
     <p class="info-note" style="margin-top:0;margin-bottom:10px;">${icon('info')}Guardar cambios acá asume que todas las materias tildadas aplican a todos los cursos tildados. Si da distintas materias en distintos cursos, usá "Recalcular desde el horario" en vez de esto.</p>
     <button class="btn-primary" id="guardarEdicionBtn">Guardar cambios</button>
@@ -2069,7 +2069,8 @@ function renderProfesores(){
       <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;">
         <div>
           <p class="folio">${t.nombre} ${t.activo===false ? '· inactivo' : ''}</p>
-          <p class="motivo">${t.email} · ${(t.materias||[]).join(', ') || 'sin materia'} · ${(t.cursos||[]).map(c=>c+'°A').join(', ')}</p>
+          <p class="motivo">${t.email} · ${(t.materias||[]).join(', ') || 'sin materia'}</p>
+          <p class="motivo" style="margin-top:5px;">${(t.cursos||[]).sort().map(c=>`<span class="curso-chip c${c}">${c}°</span>`).join(' ') || 'sin curso'}</p>
         </div>
         <div style="display:flex;flex-direction:column;gap:6px;flex-shrink:0;">
           <button class="btn-chip" data-editar="${t.uid}">Editar</button>
@@ -2423,7 +2424,7 @@ function renderProfesorNuevo(){
     </div>
     <p style="font-size:12.5px;color:var(--ink-soft);margin:10px 0 6px;">Cursos a cargo</p>
     <div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:14px;">
-      ${CURSOS.map(c => `<label class="curso-check-label"><input type="checkbox" class="curso-check" value="${c}"> ${c}° A</label>`).join('')}
+      ${CURSOS.map(c => `<label class="curso-check-label"><input type="checkbox" class="curso-check" value="${c}"> <span class="curso-dot c${c}"></span>${c}° A</label>`).join('')}
     </div>
     <p style="font-size:11.5px;color:var(--ink-soft);margin:-8px 0 12px;">Si elegís un/a profesor/a de la lista, las materias y cursos se marcan solos según el horario — revisalos y ajustá si hace falta.</p>
     <p id="nuevoProfError" style="font-size:12px;color:var(--stamp);min-height:16px;margin:0 0 8px;"></p>
