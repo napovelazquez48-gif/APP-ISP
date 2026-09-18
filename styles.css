@@ -207,6 +207,26 @@ main.fade-in{animation:screenFadeIn 0.22s ease;}
 .curso-pick-btn.active.c3{background:#9B7418;color:#fff;}
 .curso-pick-btn.active.c4{background:#8A5A44;color:#fff;}
 .curso-pick-btn.active.c5{background:#6B5B8A;color:#fff;}
+
+.pill-btn-row{display:flex;gap:6px;flex:1;}
+.pill-btn{
+  flex:1;padding:10px 4px;border-radius:10px;border:1.5px solid var(--border);
+  background:var(--card);color:var(--ink-soft);font-weight:500;font-size:12.5px;cursor:pointer;
+  text-align:center;
+}
+.pill-btn.active{background:var(--ink);border-color:var(--ink);color:#fff;}
+.pill-btn.c1{border-color:#5C6F80;color:#5C6F80;}
+.pill-btn.c2{border-color:#5C7F6B;color:#5C7F6B;}
+.pill-btn.c3{border-color:#9B7418;color:#9B7418;}
+.pill-btn.c4{border-color:#8A5A44;color:#8A5A44;}
+.pill-btn.active.c1{background:#5C6F80;color:#fff;}
+.pill-btn.active.c2{background:#5C7F6B;color:#fff;}
+.pill-btn.active.c3{background:#9B7418;color:#fff;}
+.pill-btn.active.c4{background:#8A5A44;color:#fff;}
+.course-picker .pill-btn-row{flex:1;}
+.status-dot{display:inline-block;width:7px;height:7px;border-radius:50%;margin-right:6px;vertical-align:middle;}
+.status-dot.on{background:var(--sage);}
+.status-dot.off{background:var(--ink-soft);}
 .date-label{font-size:12.5px;color:var(--ink-soft);margin:0 0 10px;}
 .legend{display:flex;gap:12px;font-size:11px;color:var(--ink-soft);margin-bottom:10px;justify-content:flex-end;}
 

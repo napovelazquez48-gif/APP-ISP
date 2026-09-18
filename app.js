@@ -663,16 +663,14 @@ function renderHorarios(){
     </div>
     <div class="course-picker">
       ${cursoBtns(CURSOS)}
-      <select id="diaSelect">
-        ${DIAS.map(d => `<option value="${d}" ${d===selectedDia?'selected':''}>${DIA_LABEL[d]}</option>`).join('')}
-      </select>
+      ${pillBtnRow('dia', DIAS.map(d => ({value:d, label:DIA_LABEL[d].slice(0,3)})), selectedDia)}
     </div>
     ${blocks.length ? `<div class="hour-list">${rows}</div>` : `<div class="empty-state"><h2>Sin clases</h2><p>No hay horario cargado para este día.</p></div>`}
   `;
 
   document.getElementById('backBtn').addEventListener('click', () => navigate('home'));
   attachCursoBtns((c) => { selectedCurso = c; render(); });
-  document.getElementById('diaSelect').addEventListener('change', (e) => { selectedDia = e.target.value; render(); });
+  attachPillBtns('dia', (d) => { selectedDia = d; render(); });
   document.querySelectorAll('.teacher-line').forEach(el => {
     el.addEventListener('click', () => toggleSuplencia(el.dataset.subkey, el.dataset.teacher));
   });
@@ -1125,6 +1123,22 @@ function attachCursoBtns(onPick){
   document.querySelectorAll('[data-curso-pick]').forEach(b => {
     b.addEventListener('click', () => onPick(b.dataset.cursoPick));
   });
+}
+
+function pillBtnRow(group, options, selectedVal, colorClassFn){
+  return `<div class="pill-btn-row">${options.map(o => {
+    const active = String(o.value)===String(selectedVal);
+    const cls = colorClassFn ? colorClassFn(o.value) : '';
+    return `<button type="button" class="pill-btn ${cls} ${active?'active':''}" data-pill-group="${group}" data-pill-value="${o.value}">${o.label}</button>`;
+  }).join('')}</div>`;
+}
+function attachPillBtns(group, onPick){
+  document.querySelectorAll(`[data-pill-group="${group}"]`).forEach(b => {
+    b.addEventListener('click', () => onPick(b.dataset.pillValue));
+  });
+}
+function bimColorClass(n){
+  return { '1':'c1','2':'c2','3':'c3','4':'c4' }[String(n)] || '';
 }
 
 function cursosDisponibles(){
@@ -1781,10 +1795,7 @@ function renderResumenAlumno(){
     </div>
 
     <div class="course-picker">
-      <select id="bimSelect">
-        ${BIMESTRES.map(b => `<option value="${b.n}" ${b.n===bim.n?'selected':''}>${b.n}° bimestre</option>`).join('')}
-        <option value="0" ${bim.n===0?'selected':''}>Total (año)</option>
-      </select>
+      ${pillBtnRow('bim', [...BIMESTRES.map(b => ({value:b.n, label:b.n+'°'})), {value:0, label:'Año'}], bim.n, bimColorClass)}
     </div>
 
     <div class="stat-grid">
@@ -1846,7 +1857,7 @@ function renderResumenAlumno(){
     </div>
   `;
   document.getElementById('backBtn').addEventListener('click', () => { selectedBimestreN = null; navigate('resumen'); });
-  document.getElementById('bimSelect').addEventListener('change', (e) => { selectedBimestreN = Number(e.target.value); render(); });
+  attachPillBtns('bim', (v) => { selectedBimestreN = Number(v); render(); });
   document.getElementById('cardFaltasBim').addEventListener('click', () => navigate('detalleFaltasAlumno'));
   if(document.getElementById('authBtn')){
     document.getElementById('authBtn').addEventListener('click', () => gestionarAutorizacion(selectedStudentId));
@@ -1878,15 +1889,12 @@ function renderResumenValoraciones(){
       <h1>${student.apellido}, ${student.nombre}</h1>
     </div>
     <div class="course-picker">
-      <select id="bimSelectResVal">
-        <option value="1" ${bim===1?'selected':''}>1° bimestre</option>
-        <option value="3" ${bim===3?'selected':''}>3° bimestre</option>
-      </select>
+      ${pillBtnRow('bimResVal', [{value:1,label:'1° bimestre'},{value:3,label:'3° bimestre'}], bim, bimColorClass)}
     </div>
     ${rows ? `<div class="sancion-list">${rows}</div>` : `<p style="font-size:13px;color:var(--ink-soft);">Sin valoraciones cargadas para este bimestre.</p>`}
   `;
   document.getElementById('backBtn').addEventListener('click', () => navigate('resumenAlumno'));
-  document.getElementById('bimSelectResVal').addEventListener('change', (e) => { window.__resumenValBim = Number(e.target.value); render(); });
+  attachPillBtns('bimResVal', (v) => { window.__resumenValBim = Number(v); render(); });
 }
 
 function renderResumenNotas(){
@@ -2065,7 +2073,7 @@ function renderProfesores(){
     <div class="sancion-item">
       <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;">
         <div>
-          <p class="folio">${t.nombre} ${t.activo===false ? '· inactivo' : ''}</p>
+          <p class="folio"><span class="status-dot ${t.activo===false?'off':'on'}"></span>${t.nombre} ${t.activo===false ? '· inactivo' : ''}</p>
           <p class="motivo">${t.email} · ${(t.materias||[]).join(', ') || 'sin materia'}</p>
           <p class="motivo" style="margin-top:5px;">${(t.cursos||[]).sort().map(c=>`<span class="curso-chip c${c}">${c}°</span>`).join(' ') || 'sin curso'}</p>
         </div>
@@ -2557,7 +2565,7 @@ function renderLectura(){
     <div class="sancion-item">
       <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;">
         <div>
-          <p class="folio">${v.nombre} ${v.activo===false ? '· inactivo' : ''}</p>
+          <p class="folio"><span class="status-dot ${v.activo===false?'off':'on'}"></span>${v.nombre} ${v.activo===false ? '· inactivo' : ''}</p>
           <p class="motivo">${v.email}</p>
         </div>
         <div style="display:flex;flex-direction:column;gap:6px;flex-shrink:0;">
@@ -2689,16 +2697,13 @@ function renderValoracionesLista(){
     ${materiaPicker ? `<div class="course-picker">${materiaPicker}</div>` : ''}
     <div class="course-picker">
       ${cursoBtns(cursos)}
-      <select id="bimSelectVal">
-        <option value="1" ${window.__valBim===1?'selected':''}>1° bimestre</option>
-        <option value="3" ${window.__valBim===3?'selected':''}>3° bimestre</option>
-      </select>
+      ${pillBtnRow('bimVal', [{value:1,label:'1° bim.'},{value:3,label:'3° bim.'}], window.__valBim, bimColorClass)}
     </div>
     <div class="module-list">${rows}</div>
   `;
   document.getElementById('backBtn').addEventListener('click', () => navigate(homeRoute()));
   attachCursoBtns((c) => { selectedCurso = c; render(); });
-  document.getElementById('bimSelectVal').addEventListener('change', (e) => { window.__valBim = Number(e.target.value); render(); });
+  attachPillBtns('bimVal', (v) => { window.__valBim = Number(v); render(); });
   if(document.getElementById('materiaSelect')){
     document.getElementById('materiaSelect').addEventListener('change', (e) => { window.__materiaSel = e.target.value; render(); });
   }
@@ -2805,17 +2810,14 @@ function renderNotasLista(){
     ${materiaPicker ? `<div class="course-picker">${materiaPicker}</div>` : ''}
     <div class="course-picker">
       ${cursoBtns(cursos)}
-      <select id="cuatriSelect">
-        <option value="1" ${window.__notaCuatri===1?'selected':''}>1° cuatrimestre</option>
-        <option value="2" ${window.__notaCuatri===2?'selected':''}>2° cuatrimestre</option>
-      </select>
+      ${pillBtnRow('cuatri', [{value:1,label:'1° cuatri.'},{value:2,label:'2° cuatri.'}], window.__notaCuatri)}
     </div>
     ${rows}
     <p class="info-note">${icon('info')}Se guarda solo al salir del campo (tocá afuera después de escribir la nota).</p>
   `;
   document.getElementById('backBtn').addEventListener('click', () => navigate(homeRoute()));
   attachCursoBtns((c) => { selectedCurso = c; render(); });
-  document.getElementById('cuatriSelect').addEventListener('change', (e) => { window.__notaCuatri = Number(e.target.value); render(); });
+  attachPillBtns('cuatri', (v) => { window.__notaCuatri = Number(v); render(); });
   if(document.getElementById('materiaSelect')){
     document.getElementById('materiaSelect').addEventListener('change', (e) => { window.__materiaSel = e.target.value; render(); });
   }
