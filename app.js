@@ -662,9 +662,7 @@ function renderHorarios(){
       <h1>Horarios y suplencias</h1>
     </div>
     <div class="course-picker">
-      <select id="cursoSelect">
-        ${CURSOS.map(c => `<option value="${c}" ${c===selectedCurso?'selected':''}>${c}° A</option>`).join('')}
-      </select>
+      ${cursoBtns(CURSOS)}
       <select id="diaSelect">
         ${DIAS.map(d => `<option value="${d}" ${d===selectedDia?'selected':''}>${DIA_LABEL[d]}</option>`).join('')}
       </select>
@@ -673,7 +671,7 @@ function renderHorarios(){
   `;
 
   document.getElementById('backBtn').addEventListener('click', () => navigate('home'));
-  document.getElementById('cursoSelect').addEventListener('change', (e) => { selectedCurso = e.target.value; render(); });
+  attachCursoBtns((c) => { selectedCurso = c; render(); });
   document.getElementById('diaSelect').addEventListener('change', (e) => { selectedDia = e.target.value; render(); });
   document.querySelectorAll('.teacher-line').forEach(el => {
     el.addEventListener('click', () => toggleSuplencia(el.dataset.subkey, el.dataset.teacher));
@@ -1046,9 +1044,7 @@ function renderAsistencia(){
       <h1>Asistencia diaria</h1>
     </div>
     <div class="course-picker">
-      <select id="cursoSelect">
-        ${CURSOS.map(c => `<option value="${c}" ${c===selectedCurso?'selected':''}>${c}° A</option>`).join('')}
-      </select>
+      ${cursoBtns(CURSOS)}
       <input type="date" id="fechaSelect" value="${selectedFecha}" max="${maxFechaSeleccionable()}">
     </div>
     <p class="date-label">${fmtDateLong(selectedFecha)} · entrada ${cfg.entrada}, tolerancia ${cfg.toleranciaMin} min</p>
@@ -1083,7 +1079,7 @@ function renderAsistencia(){
   `;
 
   document.getElementById('backBtn').addEventListener('click', () => navigate('home'));
-  document.getElementById('cursoSelect').addEventListener('change', (e) => { selectedCurso = e.target.value; render(); });
+  attachCursoBtns((c) => { selectedCurso = c; render(); });
   document.getElementById('fechaSelect').addEventListener('change', (e) => { selectedFecha = e.target.value; render(); });
   document.querySelectorAll('[data-p]').forEach(b => b.addEventListener('click', (e) => markPresente(e.target.dataset.p, selectedFecha, selectedCurso)));
   document.querySelectorAll('[data-a]').forEach(b => b.addEventListener('click', (e) => markAusente(e.target.dataset.a, selectedFecha)));
@@ -1120,6 +1116,15 @@ let selectedStudentId = null;
 
 function ordinal(n){
   return `${n}°`;
+}
+
+function cursoBtns(cursosArr){
+  return `<div class="curso-btn-row">${cursosArr.map(c => `<button type="button" class="curso-pick-btn c${c} ${c===selectedCurso?'active':''}" data-curso-pick="${c}">${c}°</button>`).join('')}</div>`;
+}
+function attachCursoBtns(onPick){
+  document.querySelectorAll('[data-curso-pick]').forEach(b => {
+    b.addEventListener('click', () => onPick(b.dataset.cursoPick));
+  });
 }
 
 function cursosDisponibles(){
@@ -1168,15 +1173,13 @@ function renderSancionesLista(){
       <h1>Sanciones e incidentes</h1>
     </div>
     <div class="course-picker">
-      <select id="cursoSelect">
-        ${cursos.map(c => `<option value="${c}" ${c===selectedCurso?'selected':''}>${c}° A</option>`).join('')}
-      </select>
+      ${cursoBtns(cursos)}
     </div>
     <div class="module-list">${rows}</div>
   `;
 
   document.getElementById('backBtn').addEventListener('click', () => navigate(homeRoute()));
-  document.getElementById('cursoSelect').addEventListener('change', (e) => { selectedCurso = e.target.value; render(); });
+  attachCursoBtns((c) => { selectedCurso = c; render(); });
   document.querySelectorAll('[data-student]').forEach(el => {
     el.addEventListener('click', () => { selectedStudentId = el.dataset.student; navigate('sancionDetalle'); });
   });
@@ -1287,14 +1290,12 @@ function renderJustificativosLista(){
       <h1>Justificativos médicos</h1>
     </div>
     <div class="course-picker">
-      <select id="cursoSelect">
-        ${CURSOS.map(c => `<option value="${c}" ${c===selectedCurso?'selected':''}>${c}° A</option>`).join('')}
-      </select>
+      ${cursoBtns(CURSOS)}
     </div>
     <div class="module-list">${rows}</div>
   `;
   document.getElementById('backBtn').addEventListener('click', () => navigate('home'));
-  document.getElementById('cursoSelect').addEventListener('change', (e) => { selectedCurso = e.target.value; render(); });
+  attachCursoBtns((c) => { selectedCurso = c; render(); });
   document.querySelectorAll('[data-student]').forEach(el => {
     el.addEventListener('click', () => { selectedStudentId = el.dataset.student; pendingFileDataUrl = null; navigate('justificativoAlumno'); });
   });
@@ -1535,14 +1536,12 @@ function renderFamiliasLista(){
       <h1>Familias</h1>
     </div>
     <div class="course-picker">
-      <select id="cursoSelect">
-        ${CURSOS.map(c => `<option value="${c}" ${c===selectedCurso?'selected':''}>${c}° A</option>`).join('')}
-      </select>
+      ${cursoBtns(CURSOS)}
     </div>
     <div class="module-list">${rows}</div>
   `;
   document.getElementById('backBtn').addEventListener('click', () => navigate('home'));
-  document.getElementById('cursoSelect').addEventListener('change', (e) => { selectedCurso = e.target.value; render(); });
+  attachCursoBtns((c) => { selectedCurso = c; render(); });
   document.querySelectorAll('[data-student]').forEach(el => {
     el.addEventListener('click', () => { selectedStudentId = el.dataset.student; navigate('familiaAlumno'); });
   });
@@ -1642,14 +1641,12 @@ function renderResumenLista(){
       <h1>Resumen del alumno</h1>
     </div>
     <div class="course-picker">
-      <select id="cursoSelect">
-        ${cursos.map(c => `<option value="${c}" ${c===selectedCurso?'selected':''}>${c}° A</option>`).join('')}
-      </select>
+      ${cursoBtns(cursos)}
     </div>
     <div class="module-list">${rows}</div>
   `;
   document.getElementById('backBtn').addEventListener('click', () => navigate(homeRoute()));
-  document.getElementById('cursoSelect').addEventListener('change', (e) => { selectedCurso = e.target.value; render(); });
+  attachCursoBtns((c) => { selectedCurso = c; render(); });
   document.querySelectorAll('[data-student]').forEach(el => {
     el.addEventListener('click', () => { selectedStudentId = el.dataset.student; navigate('resumenAlumno'); });
   });
@@ -2691,7 +2688,7 @@ function renderValoracionesLista(){
     </div>
     ${materiaPicker ? `<div class="course-picker">${materiaPicker}</div>` : ''}
     <div class="course-picker">
-      <select id="cursoSelect">${cursos.map(c => `<option value="${c}" ${c===selectedCurso?'selected':''}>${c}° A</option>`).join('')}</select>
+      ${cursoBtns(cursos)}
       <select id="bimSelectVal">
         <option value="1" ${window.__valBim===1?'selected':''}>1° bimestre</option>
         <option value="3" ${window.__valBim===3?'selected':''}>3° bimestre</option>
@@ -2700,7 +2697,7 @@ function renderValoracionesLista(){
     <div class="module-list">${rows}</div>
   `;
   document.getElementById('backBtn').addEventListener('click', () => navigate(homeRoute()));
-  document.getElementById('cursoSelect').addEventListener('change', (e) => { selectedCurso = e.target.value; render(); });
+  attachCursoBtns((c) => { selectedCurso = c; render(); });
   document.getElementById('bimSelectVal').addEventListener('change', (e) => { window.__valBim = Number(e.target.value); render(); });
   if(document.getElementById('materiaSelect')){
     document.getElementById('materiaSelect').addEventListener('change', (e) => { window.__materiaSel = e.target.value; render(); });
@@ -2807,7 +2804,7 @@ function renderNotasLista(){
     </div>
     ${materiaPicker ? `<div class="course-picker">${materiaPicker}</div>` : ''}
     <div class="course-picker">
-      <select id="cursoSelect">${cursos.map(c => `<option value="${c}" ${c===selectedCurso?'selected':''}>${c}° A</option>`).join('')}</select>
+      ${cursoBtns(cursos)}
       <select id="cuatriSelect">
         <option value="1" ${window.__notaCuatri===1?'selected':''}>1° cuatrimestre</option>
         <option value="2" ${window.__notaCuatri===2?'selected':''}>2° cuatrimestre</option>
@@ -2817,7 +2814,7 @@ function renderNotasLista(){
     <p class="info-note">${icon('info')}Se guarda solo al salir del campo (tocá afuera después de escribir la nota).</p>
   `;
   document.getElementById('backBtn').addEventListener('click', () => navigate(homeRoute()));
-  document.getElementById('cursoSelect').addEventListener('change', (e) => { selectedCurso = e.target.value; render(); });
+  attachCursoBtns((c) => { selectedCurso = c; render(); });
   document.getElementById('cuatriSelect').addEventListener('change', (e) => { window.__notaCuatri = Number(e.target.value); render(); });
   if(document.getElementById('materiaSelect')){
     document.getElementById('materiaSelect').addEventListener('change', (e) => { window.__materiaSel = e.target.value; render(); });
@@ -2889,9 +2886,7 @@ function renderVistaCurso(){
       <h1>Vista por curso</h1>
     </div>
     <div class="course-picker">
-      <select id="cursoSelect">
-        ${cursos.map(c => `<option value="${c}" ${c===selectedCurso?'selected':''}>${c}° A</option>`).join('')}
-      </select>
+      ${cursoBtns(cursos)}
     </div>
 
     <div class="stat-grid">
@@ -2909,7 +2904,7 @@ function renderVistaCurso(){
     ${materiaRows ? `<div class="module-list">${materiaRows}</div>` : `<p style="font-size:13px;color:var(--ink-soft);">Ninguna materia tiene alumnos por debajo del 85% en este curso.</p>`}
   `;
   document.getElementById('backBtn').addEventListener('click', () => navigate(homeRoute()));
-  document.getElementById('cursoSelect').addEventListener('change', (e) => { selectedCurso = e.target.value; render(); });
+  attachCursoBtns((c) => { selectedCurso = c; render(); });
   document.getElementById('cardAlertaCurso').addEventListener('click', () => navigate('vistaCursoAlerta'));
   document.getElementById('cardSCPCurso').addEventListener('click', () => navigate('vistaCursoSCP'));
   document.querySelectorAll('[data-materia]').forEach(el => {
