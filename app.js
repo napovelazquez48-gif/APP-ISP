@@ -1457,10 +1457,10 @@ function renderInner(){
   if(userRole==='admin' && getUsuario()!=='Napo' && RUTAS_SOLO_NAPO.includes(currentRoute)){
     currentRoute = 'home';
   }
-  if(currentRoute === 'bienvenida'){ renderBienvenida(); return; }
-  if(currentRoute === 'quien'){ renderQuien(); return; }
-  if(currentRoute === 'profesorLogin'){ renderProfesorLogin(); return; }
-  if(currentRoute === 'profesorSinAcceso'){ renderProfesorSinAcceso(); return; }
+  if(currentRoute === 'bienvenida'){ renderBienvenida(); renderTabbar(); return; }
+  if(currentRoute === 'quien'){ renderQuien(); renderTabbar(); return; }
+  if(currentRoute === 'profesorLogin'){ renderProfesorLogin(); renderTabbar(); return; }
+  if(currentRoute === 'profesorSinAcceso'){ renderProfesorSinAcceso(); renderTabbar(); return; }
   if(currentRoute === 'home') renderHome();
   else if(currentRoute === 'asistencia') renderAsistencia();
   else if(currentRoute === 'horarios') renderHorarios();
@@ -3216,6 +3216,7 @@ function renderVistaCursoSCP(){
 
 function renderTabbar(){
   const tb = document.getElementById('tabbar');
+  if(!userRole){ tb.innerHTML = ''; return; }
   if(userRole === 'teacher'){
     tb.innerHTML = `
       <button class="tab ${currentRoute==='teacherHome'?'active':''}" id="tabHome">${icon('home')}<span>Inicio</span></button>
