@@ -1856,9 +1856,10 @@ function renderResumenAlumno(){
     })()}
     ${(userRole!=='viewer' && userRole!=='student') ? `<button class="btn-secondary" id="authBtn" style="width:100%;margin-top:8px;">${(getAutorizaciones()[selectedStudentId]||{}).activa ? 'Cerrar autorización' : 'Agregar autorización'}</button>` : ''}
 
+    ${userRole!=='student' ? `
     <p class="section-label" style="margin-top:16px;">Docencia</p>
     <div class="module-list">
-      ${userRole!=='student' ? `<div class="module-row" id="verValoracionesBtn">
+      ${userRole!=='viewer' ? `<div class="module-row" id="verValoracionesBtn">
         <div class="txt"><p class="title">Valoraciones pedagógicas</p><p class="desc">1er y 3er bimestre, por materia</p></div>
         <span class="chevron">${icon('chevron')}</span>
       </div>` : ''}
@@ -1867,6 +1868,7 @@ function renderResumenAlumno(){
         <span class="chevron">${icon('chevron')}</span>
       </div>
     </div>
+    ` : ''}
   `;
   document.getElementById('backBtn').addEventListener('click', () => { selectedBimestreN = null; navigate(userRole==='student' ? 'studentHome' : 'resumen'); });
   attachPillBtns('bim', (v) => { selectedBimestreN = Number(v); render(); });
@@ -1877,7 +1879,9 @@ function renderResumenAlumno(){
   if(document.getElementById('verValoracionesBtn')){
     document.getElementById('verValoracionesBtn').addEventListener('click', () => navigate('resumenValoraciones'));
   }
-  document.getElementById('verNotasBtn').addEventListener('click', () => navigate('resumenNotas'));
+  if(document.getElementById('verNotasBtn')){
+    document.getElementById('verNotasBtn').addEventListener('click', () => navigate('resumenNotas'));
+  }
 }
 
 function renderResumenValoraciones(){
@@ -1938,7 +1942,7 @@ function renderResumenNotas(){
     </div>
     ${materias.length ? `<div class="sancion-list">${rows}</div>` : `<p style="font-size:13px;color:var(--ink-soft);margin-top:10px;">Sin notas cargadas todavía.</p>`}
   `;
-  document.getElementById('backBtn').addEventListener('click', () => navigate('resumenAlumno'));
+  document.getElementById('backBtn').addEventListener('click', () => navigate(userRole==='student' ? 'studentHome' : 'resumenAlumno'));
 }
 
 // ---------- Educación Física ----------
@@ -3374,7 +3378,7 @@ function renderBienvenida(){
 function renderProfesorLogin(){
   $app.innerHTML = `
     <div style="padding-top:60px;text-align:center;">
-      <h1 style="font-size:18px;margin:0 0 20px;">Ingreso de profesores</h1>
+      <h1 style="font-size:18px;margin:0 0 20px;">Iniciar sesión</h1>
       <div style="max-width:260px;margin:0 auto;text-align:left;">
         <label style="font-size:12.5px;color:var(--ink-soft);display:block;margin-bottom:4px;">Mail</label>
         <input id="profEmail" type="email" style="width:100%;margin-bottom:12px;" autocomplete="username">
@@ -3394,9 +3398,17 @@ function renderProfesorLogin(){
     const pass = document.getElementById('profPass').value;
     const errEl = document.getElementById('profError');
     errEl.textContent = '';
+    const btn = document.getElementById('profLoginBtn');
+    btn.disabled = true;
+    btn.textContent = 'Ingresando…';
+    const loading = document.getElementById('loadingScreen');
+    if(loading) loading.classList.remove('hidden');
     signInWithEmailAndPassword(auth, email, pass).catch(err => {
       errEl.textContent = 'Mail o contraseña incorrectos.';
       console.error(err);
+      btn.disabled = false;
+      btn.textContent = 'Ingresar';
+      if(loading) loading.classList.add('hidden');
     });
   });
 }
