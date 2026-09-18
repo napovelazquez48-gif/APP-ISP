@@ -689,6 +689,50 @@ const $app = document.getElementById('main');
 let currentRoute = 'home';
 let selectedCurso = '1';
 
+function renderStudentHorario(){
+  const curso = currentStudentAuth.curso;
+  window.__studentDia = window.__studentDia || diaKeyFor(todayISO()) || 'lunes';
+  const dayEntries = (SEED_SCHEDULE[curso] && SEED_SCHEDULE[curso][window.__studentDia]) || [];
+  const blocks = buildBlocks(dayEntries);
+  const subs = getSubstitutions();
+  const dateKey = todayISO();
+
+  const rows = blocks.map(b => {
+    const hourLabel = b.startHour === b.endHour ? `${b.startHour}ª hs` : `${b.startHour}-${b.endHour}ª hs`;
+    const subKey = `${dateKey}|${curso}|${window.__studentDia}|${b.startHour}`;
+    const isShared = b.teachers.length > 1;
+    const teacherRows = b.teachers.map(t => {
+      const state = subs[subKey] && subs[subKey][t];
+      const label = state ? (state.suplente ? `Suplente: ${state.suplente}` : 'Ausente · sin suplente') : t;
+      return `<div class="teacher-line" style="cursor:default;"><span>${label}</span></div>`;
+    }).join('');
+    return `
+      <div class="hour-block ${isShared?'shared':''}">
+        <div class="hour-head">
+          <span class="hour-label">${hourLabel}</span>
+          <div class="hour-info">
+            <p class="subject">${b.subject}</p>
+            ${isShared ? '<p class="submeta">Grupo compartido</p>' : ''}
+          </div>
+        </div>
+        <div class="teacher-list">${teacherRows}</div>
+      </div>`;
+  }).join('');
+
+  $app.innerHTML = `
+    <div class="appbar" style="padding:0 0 10px;">
+      <button class="back-btn" id="backBtn">${icon('back')}</button>
+      <h1>Mi horario</h1>
+    </div>
+    <div class="course-picker">
+      ${pillBtnRow('diaAlumno', DIAS.map(d => ({value:d, label:DIA_LABEL[d].slice(0,3)})), window.__studentDia)}
+    </div>
+    ${blocks.length ? `<div class="hour-list">${rows}</div>` : `<div class="empty-state"><h2>Sin clases</h2><p>No hay horario cargado para este día.</p></div>`}
+  `;
+  document.getElementById('backBtn').addEventListener('click', () => navigate('studentHome'));
+  attachPillBtns('diaAlumno', (d) => { window.__studentDia = d; render(); });
+}
+
 function icon(name){
   const icons = {
     clipboard: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><rect x="6" y="4" width="12" height="17" rx="2"/><path d="M9 4V3a1 1 0 011-1h4a1 1 0 011 1v1"/><path d="M9 11h6M9 15h4"/></svg>',
@@ -1506,6 +1550,7 @@ function renderInner(){
   else if(currentRoute === 'alumnosCuentas') renderAlumnosCuentas();
   else if(currentRoute === 'studentHome') renderStudentHome();
   else if(currentRoute === 'studentProfesores') renderStudentProfesores();
+  else if(currentRoute === 'studentHorario') renderStudentHorario();
   else if(currentRoute === 'vistaCurso') renderVistaCurso();
   else if(currentRoute === 'vistaCursoMateria') renderVistaCursoMateria();
   else if(currentRoute === 'vistaCursoAlerta') renderVistaCursoAlerta();
@@ -2547,6 +2592,7 @@ function renderStudentHome(){
     <div class="module-list big">
       ${moduleRow('clipboard','Mis faltas','Bimestre, materias y detalle día por día', 'studentFaltas')}
       ${moduleRow('chart','Mis notas','1er y 2do cuatrimestre', 'studentNotas')}
+      ${moduleRow('calendar','Mi horario','Materias y profesores por día', 'studentHorario')}
       ${moduleRow('users','Mis profesores','Materia y mail de contacto', 'studentProfesores')}
     </div>
 
