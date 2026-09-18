@@ -17,7 +17,7 @@ import {
   collection, doc, setDoc, deleteDoc, addDoc, onSnapshot, getDoc, writeBatch
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
 import {
-  getAuth, signInAnonymously, onAuthStateChanged, signInWithEmailAndPassword,
+  getAuth, onAuthStateChanged, signInWithEmailAndPassword,
   createUserWithEmailAndPassword, updatePassword, signOut, setPersistence, browserLocalPersistence
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-auth.js";
 
@@ -29,7 +29,6 @@ const firebaseConfig = {
   messagingSenderId: "1052109436240",
   appId: "1:1052109436240:web:f5e6a49100db6fb85d6855"
 };
-const APP_PIN = "1936";
 
 // ---------- Google Drive / Sheets (sincronización de faltas a los Excel del colegio) ----------
 const GOOGLE_CLIENT_ID = "847063469157-7o02cri2bhusekpo2qicqtini48u0vbr.apps.googleusercontent.com";
@@ -1459,8 +1458,6 @@ function renderInner(){
     currentRoute = 'home';
   }
   if(currentRoute === 'bienvenida'){ renderBienvenida(); return; }
-  if(currentRoute === 'accesoOtro'){ renderAccesoOtro(); return; }
-  if(currentRoute === 'pin'){ renderPin(); return; }
   if(currentRoute === 'quien'){ renderQuien(); return; }
   if(currentRoute === 'profesorLogin'){ renderProfesorLogin(); return; }
   if(currentRoute === 'profesorSinAcceso'){ renderProfesorSinAcceso(); return; }
@@ -3363,73 +3360,12 @@ function renderBienvenida(){
         <button class="btn-primary" id="btnAlumno" style="width:100%;">Ingresar como alumno/a</button>
       </div>
       <p style="margin-top:26px;">
-        <a href="#" id="btnOtro" style="font-size:12.5px;color:var(--ink-soft);text-decoration:underline;">Docente / otro acceso</a>
+        <a href="#" id="btnOtro" style="font-size:12.5px;color:var(--ink-soft);text-decoration:underline;">Docente / preceptores / otro acceso</a>
       </p>
     </div>
   `;
   document.getElementById('btnAlumno').addEventListener('click', () => { currentRoute = 'profesorLogin'; render(); });
-  document.getElementById('btnOtro').addEventListener('click', (e) => { e.preventDefault(); currentRoute = 'accesoOtro'; render(); });
-}
-
-function renderAccesoOtro(){
-  $app.innerHTML = `
-    <div style="padding-top:60px;text-align:center;">
-      <img src="icon-192.png" alt="ISP" style="width:76px;height:76px;object-fit:contain;margin:0 auto 18px;display:block;">
-      <h1 style="font-size:19px;margin:0 0 6px;">Instituto Superior Porteño</h1>
-      <p style="font-size:13px;color:var(--ink-soft);margin:0 0 32px;">¿Cómo querés entrar?</p>
-      <div style="max-width:280px;margin:0 auto;display:flex;flex-direction:column;gap:12px;">
-        <button class="btn-primary" id="btnAdmin">Acceder como admin</button>
-        <button class="btn-secondary" id="btnMail" style="justify-content:center;">Acceder con mail (docente / otro)</button>
-      </div>
-      <p style="margin-top:26px;">
-        <a href="#" id="volverAlumnoLink" style="font-size:12.5px;color:var(--ink-soft);text-decoration:underline;">‹ Volver</a>
-      </p>
-    </div>
-  `;
-  document.getElementById('btnAdmin').addEventListener('click', () => { currentRoute = 'pin'; render(); });
-  document.getElementById('btnMail').addEventListener('click', () => { currentRoute = 'profesorLogin'; render(); });
-  document.getElementById('volverAlumnoLink').addEventListener('click', (e) => { e.preventDefault(); currentRoute = 'bienvenida'; render(); });
-}
-
-function renderPin(){
-  $app.innerHTML = `
-    <div style="padding-top:32px;text-align:center;">
-      <div style="max-width:280px;margin:0 auto;border:1px solid var(--border);border-radius:14px;padding:28px 20px;background:var(--card);box-shadow:0 1px 2px rgba(31,42,58,0.05), 0 8px 20px rgba(31,42,58,0.06);">
-        <img src="icon-192.png" alt="ISP" style="width:76px;height:76px;object-fit:contain;margin:0 auto 14px;display:block;">
-        <h1 style="font-size:18px;margin:0 0 6px;">Preceptoría</h1>
-        <p style="font-size:13px;color:var(--ink-soft);margin:0 0 20px;">Ingresá el PIN para entrar</p>
-        <input id="pinInput" type="tel" inputmode="numeric" maxlength="4" placeholder="••••"
-          style="width:140px;text-align:center;font-size:22px;letter-spacing:8px;padding:12px;margin:0 auto 14px;display:block;">
-        <p id="pinError" style="font-size:12px;color:var(--stamp);height:16px;margin:0 0 10px;"></p>
-        <button class="btn-primary" style="max-width:200px;margin:0 auto;" id="pinBtn">Entrar</button>
-      </div>
-      <p style="margin-top:22px;">
-        <a href="#" id="volverBienvenidaLink" style="font-size:12.5px;color:var(--ink-soft);text-decoration:underline;">‹ Volver</a>
-      </p>
-    </div>
-  `;
-  const input = document.getElementById('pinInput');
-  input.focus();
-  function tryPin(){
-    if(input.value.trim() === APP_PIN){
-      document.getElementById('pinError').textContent = '';
-      document.getElementById('pinBtn').textContent = 'Conectando…';
-      signInAnonymously(auth).catch(err => {
-        document.getElementById('pinError').textContent = 'No se pudo conectar. Revisá tu internet.';
-        console.error(err);
-      });
-    } else {
-      document.getElementById('pinError').textContent = 'PIN incorrecto';
-      input.value = '';
-    }
-  }
-  document.getElementById('pinBtn').addEventListener('click', tryPin);
-  input.addEventListener('keydown', (e) => { if(e.key === 'Enter') tryPin(); });
-  document.getElementById('volverBienvenidaLink').addEventListener('click', (e) => {
-    e.preventDefault();
-    currentRoute = 'accesoOtro';
-    render();
-  });
+  document.getElementById('btnOtro').addEventListener('click', (e) => { e.preventDefault(); currentRoute = 'profesorLogin'; render(); });
 }
 
 function renderProfesorLogin(){
@@ -3487,8 +3423,10 @@ setTimeout(() => {
   if(loading) loading.classList.add('hidden');
 }, 4000);
 
+const ADMIN_EMAIL = 'preceptores.isp@gmail.com';
+
 onAuthStateChanged(auth, async (user) => {
-  if(user && user.isAnonymous){
+  if(user && !user.isAnonymous && user.email === ADMIN_EMAIL){
     userRole = 'admin';
     currentTeacher = null;
     startListeners();
