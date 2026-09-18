@@ -2668,6 +2668,29 @@ function borrarAlumnoCuenta(uid, nombre){
   deleteDoc(doc(db,'students_auth',uid)).then(() => showToast('Cuenta borrada')).catch(err=>console.error(err));
 }
 
+async function crearCuentasMasivo(){
+  const pendientes = window.__cargaMasivaPendiente || [];
+  if(pendientes.length === 0) return;
+  if(!confirm(`Se van a crear ${pendientes.length} cuentas con la contraseña genérica. ¿Confirmás?`)) return;
+  const estadoEl = document.getElementById('masivoEstado');
+  let ok = 0, error = 0;
+  for(const a of pendientes){
+    try{
+      const cred = await createUserWithEmailAndPassword(authSecundaria, a.email, '123456');
+      await setDoc(doc(db,'students_auth',cred.user.uid), { studentId: a.studentId, nombre: a.nombre, curso: a.curso, email: a.email, activo: true, creadoPor: getUsuario() });
+      await signOut(authSecundaria);
+      ok++;
+    }catch(err){
+      console.error(a.email, err);
+      error++;
+    }
+    if(estadoEl) estadoEl.textContent = `Creando... ${ok+error}/${pendientes.length} (${error} con error)`;
+  }
+  if(estadoEl) estadoEl.textContent = `Listo: ${ok} cuentas creadas${error?`, ${error} con error (revisá la consola, probablemente mails repetidos)`:''}.`;
+  window.__cargaMasivaPendiente = null;
+  showToast('Carga masiva terminada');
+}
+
 function renderAlumnosCuentas(){
   const cuentas = Object.values(cache.students_auth).sort((a,b)=> (a.nombre||'').localeCompare(b.nombre||''));
   const filtro = (window.__alumnoFiltro||'').toLowerCase();
@@ -2699,7 +2722,16 @@ function renderAlumnosCuentas(){
     <p class="section-label">Cuentas existentes (${visibles.length} de ${cuentas.length})</p>
     ${visibles.length ? `<div class="sancion-list" style="margin-bottom:18px;">${rows}</div>` : `<p style="font-size:13px;color:var(--ink-soft);margin-bottom:18px;">${cuentas.length ? 'Nadie coincide con esa búsqueda.' : 'Todavía no hay cuentas de alumnos.'}</p>`}
 
-    <p class="section-label">Nueva cuenta</p>
+    <p class="section-label">Carga masiva</p>
+    <div class="config-card" style="margin-bottom:18px;">
+      <p style="font-size:12.5px;color:var(--ink-soft);margin-bottom:10px;">Subí el archivo de alumnos emparejados con su mail (JSON), y creá todas esas cuentas de una vez con la contraseña genérica <b>123456</b> (cada alumno la puede cambiar después).</p>
+      <input type="file" id="cargaMasivaInput" accept="application/json" style="margin-bottom:10px;">
+      <p id="masivoPreview" style="font-size:12.5px;color:var(--ink-soft);margin-bottom:10px;"></p>
+      <button class="btn-primary" id="crearMasivoBtn" style="width:100%;display:none;">Crear todas las cuentas</button>
+      <p id="masivoEstado" style="font-size:12.5px;color:var(--ink-soft);margin-top:8px;"></p>
+    </div>
+
+    <p class="section-label">Nueva cuenta (una por una)</p>
     <div class="field-row">
       <label>Alumno/a</label>
       <select id="nuevoAlumnoSelect">
@@ -2715,6 +2747,30 @@ function renderAlumnosCuentas(){
   document.getElementById('backBtn').addEventListener('click', () => navigate('home'));
   document.getElementById('filtroAlumnoCuenta').addEventListener('input', (e) => { window.__alumnoFiltro = e.target.value; render(); });
   document.getElementById('crearAlumnoBtn').addEventListener('click', crearAlumnoCuenta);
+  document.getElementById('cargaMasivaInput').addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if(!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try{
+        const data = JSON.parse(reader.result);
+        const lista = data.alumnos || [];
+        const conCuentaYa = new Set(Object.values(cache.students_auth).map(a => a.studentId));
+        const pendientes = lista.filter(a => !conCuentaYa.has(a.studentId)).map(a => {
+          const st = getStudents().find(s => s.id === a.studentId);
+          return Object.assign({}, a, { curso: st ? st.curso : null });
+        });
+        const yaTenian = lista.length - pendientes.length;
+        window.__cargaMasivaPendiente = pendientes;
+        document.getElementById('masivoPreview').textContent = `${lista.length} en el archivo · ${pendientes.length} para crear · ${yaTenian} ya tenían cuenta (se omiten).`;
+        document.getElementById('crearMasivoBtn').style.display = pendientes.length ? 'block' : 'none';
+      }catch(err){
+        document.getElementById('masivoPreview').textContent = 'No pude leer ese archivo, revisá que sea el JSON correcto.';
+      }
+    };
+    reader.readAsText(file);
+  });
+  document.getElementById('crearMasivoBtn').addEventListener('click', crearCuentasMasivo);
   document.querySelectorAll('[data-toggle]').forEach(b => b.addEventListener('click', () => toggleActivoAlumnoCuenta(b.dataset.toggle, b.dataset.activo === 'true')));
   document.querySelectorAll('[data-borrar]').forEach(b => b.addEventListener('click', () => borrarAlumnoCuenta(b.dataset.borrar, b.dataset.nombre)));
 }
