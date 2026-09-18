@@ -1459,6 +1459,7 @@ function renderInner(){
     currentRoute = 'home';
   }
   if(currentRoute === 'bienvenida'){ renderBienvenida(); return; }
+  if(currentRoute === 'accesoOtro'){ renderAccesoOtro(); return; }
   if(currentRoute === 'pin'){ renderPin(); return; }
   if(currentRoute === 'quien'){ renderQuien(); return; }
   if(currentRoute === 'profesorLogin'){ renderProfesorLogin(); return; }
@@ -3357,15 +3358,37 @@ function renderBienvenida(){
     <div style="padding-top:60px;text-align:center;">
       <img src="icon-192.png" alt="ISP" style="width:76px;height:76px;object-fit:contain;margin:0 auto 18px;display:block;">
       <h1 style="font-size:19px;margin:0 0 6px;">Instituto Superior Porteño</h1>
+      <p style="font-size:13px;color:var(--ink-soft);margin:0 0 32px;">Bienvenido/a</p>
+      <div style="max-width:280px;margin:0 auto;">
+        <button class="btn-primary" id="btnAlumno" style="width:100%;">Ingresar como alumno/a</button>
+      </div>
+      <p style="margin-top:26px;">
+        <a href="#" id="btnOtro" style="font-size:12.5px;color:var(--ink-soft);text-decoration:underline;">Docente / otro acceso</a>
+      </p>
+    </div>
+  `;
+  document.getElementById('btnAlumno').addEventListener('click', () => { currentRoute = 'profesorLogin'; render(); });
+  document.getElementById('btnOtro').addEventListener('click', (e) => { e.preventDefault(); currentRoute = 'accesoOtro'; render(); });
+}
+
+function renderAccesoOtro(){
+  $app.innerHTML = `
+    <div style="padding-top:60px;text-align:center;">
+      <img src="icon-192.png" alt="ISP" style="width:76px;height:76px;object-fit:contain;margin:0 auto 18px;display:block;">
+      <h1 style="font-size:19px;margin:0 0 6px;">Instituto Superior Porteño</h1>
       <p style="font-size:13px;color:var(--ink-soft);margin:0 0 32px;">¿Cómo querés entrar?</p>
       <div style="max-width:280px;margin:0 auto;display:flex;flex-direction:column;gap:12px;">
         <button class="btn-primary" id="btnAdmin">Acceder como admin</button>
-        <button class="btn-secondary" id="btnMail" style="justify-content:center;">Acceder con mail</button>
+        <button class="btn-secondary" id="btnMail" style="justify-content:center;">Acceder con mail (docente / otro)</button>
       </div>
+      <p style="margin-top:26px;">
+        <a href="#" id="volverAlumnoLink" style="font-size:12.5px;color:var(--ink-soft);text-decoration:underline;">‹ Volver</a>
+      </p>
     </div>
   `;
   document.getElementById('btnAdmin').addEventListener('click', () => { currentRoute = 'pin'; render(); });
   document.getElementById('btnMail').addEventListener('click', () => { currentRoute = 'profesorLogin'; render(); });
+  document.getElementById('volverAlumnoLink').addEventListener('click', (e) => { e.preventDefault(); currentRoute = 'bienvenida'; render(); });
 }
 
 function renderPin(){
@@ -3404,7 +3427,7 @@ function renderPin(){
   input.addEventListener('keydown', (e) => { if(e.key === 'Enter') tryPin(); });
   document.getElementById('volverBienvenidaLink').addEventListener('click', (e) => {
     e.preventDefault();
-    currentRoute = 'bienvenida';
+    currentRoute = 'accesoOtro';
     render();
   });
 }
