@@ -2406,33 +2406,82 @@ function marcarTodoComoYaSincronizado(){
   Promise.all(ops).then(() => { showToast('Todo marcado como ya sincronizado'); render(); }).catch(err=>console.error(err));
 }
 
+function esperar(ms){ return new Promise(resolve => setTimeout(resolve, ms)); }
+function conTimeout(promise, ms){
+  return Promise.race([
+    promise,
+    new Promise((_, reject) => setTimeout(() => reject(new Error('TIMEOUT: no respondió Google a tiempo')), ms))
+  ]);
+}
+function esErrorDeAutenticacion(err){
+  const status = (err && err.status) || (err && err.result && err.result.error && err.result.error.status);
+  const code = err && err.result && err.result.error && err.result.error.code;
+  return status === 'UNAUTHENTICATED' || status === 'PERMISSION_DENIED' || code === 401 || code === 403;
+}
+
+let syncCancelado = false;
+
 async function sincronizarPendientesConDrive(){
   if(!driveConectado){ alert('Primero conectá con Google Drive.'); return; }
   const { pendientesAsistencia, pendientesEF } = registrosPendientesDeSync();
   const total = pendientesAsistencia.length + pendientesEF.length;
   const estadoEl = document.getElementById('syncEstado');
   if(total === 0){ if(estadoEl) estadoEl.textContent = 'No hay nada pendiente para sincronizar.'; return; }
+  syncCancelado = false;
+  const cancelarBtn = document.getElementById('cancelarSyncBtn');
+  if(cancelarBtn) cancelarBtn.style.display = 'block';
   if(estadoEl) estadoEl.textContent = `Sincronizando ${total} registros...`;
-  let ok = 0, error = 0;
+  let ok = 0, error = 0, cortadoPorAuth = false;
+
+  async function procesar(spreadsheetId, fechaTexto, tipo, peso){
+    await conTimeout(escribirFilaSheet(spreadsheetId, fechaTexto, tipo, peso), 15000);
+  }
+
   for(const p of pendientesAsistencia){
+    if(syncCancelado) break;
+    if(!cache.driveMapping[p.studentId]) continue;
     try{
-      await escribirFilaSheet(cache.driveMapping[p.studentId].spreadsheetId, fmtDateShort(p.fecha), p.fila.tipo, p.fila.peso);
+      await procesar(cache.driveMapping[p.studentId].spreadsheetId, fmtDateShort(p.fecha), p.fila.tipo, p.fila.peso);
       await setDoc(doc(db,'attendance', docId(p.key)), { driveSynced: true }, { merge: true });
       ok++;
-    }catch(err){ console.error(err); error++; }
+    }catch(err){
+      console.error(err);
+      error++;
+      if(esErrorDeAutenticacion(err)){ cortadoPorAuth = true; break; }
+    }
     if(estadoEl) estadoEl.textContent = `Sincronizando... ${ok+error}/${total}`;
+    await esperar(300);
   }
-  for(const p of pendientesEF){
-    try{
-      const etiqueta = p.tipo === 'saf' ? 'SAF' : 'Ed. fisica';
-      const peso = p.tipo === 'saf' ? '' : 0.5;
-      await escribirFilaSheet(cache.driveMapping[p.studentId].spreadsheetId, fmtDateShort(p.fecha), etiqueta, peso);
-      await setDoc(doc(db,'ef', docId(`${p.fecha}_${p.studentId}`)), { driveSynced: true }, { merge: true });
-      ok++;
-    }catch(err){ console.error(err); error++; }
-    if(estadoEl) estadoEl.textContent = `Sincronizando... ${ok+error}/${total}`;
+  if(!cortadoPorAuth){
+    for(const p of pendientesEF){
+      if(syncCancelado) break;
+      if(!cache.driveMapping[p.studentId]) continue;
+      try{
+        const etiqueta = p.tipo === 'saf' ? 'SAF' : 'Ed. fisica';
+        const peso = p.tipo === 'saf' ? '' : 0.5;
+        await procesar(cache.driveMapping[p.studentId].spreadsheetId, fmtDateShort(p.fecha), etiqueta, peso);
+        await setDoc(doc(db,'ef', docId(`${p.fecha}_${p.studentId}`)), { driveSynced: true }, { merge: true });
+        ok++;
+      }catch(err){
+        console.error(err);
+        error++;
+        if(esErrorDeAutenticacion(err)){ cortadoPorAuth = true; break; }
+      }
+      if(estadoEl) estadoEl.textContent = `Sincronizando... ${ok+error}/${total}`;
+      await esperar(300);
+    }
   }
-  if(estadoEl) estadoEl.textContent = `Listo: ${ok} sincronizados${error?`, ${error} con error (revisá la consola)`:''}.`;
+
+  if(cancelarBtn) cancelarBtn.style.display = 'none';
+  if(estadoEl){
+    if(cortadoPorAuth){
+      estadoEl.innerHTML = `Se cortó: la conexión con Google venció a mitad de camino. Se sincronizaron ${ok} antes de cortarse. Tocá "Reconectar con Google Drive" arriba y después "Sincronizar ahora" de nuevo para seguir con el resto.`;
+    } else if(syncCancelado){
+      estadoEl.textContent = `Cancelado. Se sincronizaron ${ok} antes de parar (${error} con error).`;
+    } else {
+      estadoEl.textContent = `Listo: ${ok} sincronizados${error?`, ${error} con error (revisá la consola)`:''}.`;
+    }
+  }
   render();
 }
 
@@ -2464,6 +2513,7 @@ function renderConexionDrive(){
       <p style="font-size:12.5px;color:var(--ink-soft);margin-bottom:10px;">Cargás la asistencia normal en la app, y cuando quieras mandarla a Drive, entrás acá y tocás sincronizar. Si es la primera vez, marcá primero lo ya cargado como "ya sincronizado" para que no se duplique con lo que ya tenés a mano en el Excel.</p>
       <button class="btn-secondary" id="marcarSyncBtn" style="width:100%;margin-bottom:10px;">Marcar todo lo actual como ya sincronizado</button>
       <button class="btn-primary" id="sincronizarBtn" style="width:100%;">Sincronizar ahora (${totalPendiente} pendiente${totalPendiente!==1?'s':''})</button>
+      <button class="btn-secondary" id="cancelarSyncBtn" style="width:100%;margin-top:8px;display:none;color:var(--stamp);">Cancelar sincronización</button>
       <p id="syncEstado" style="font-size:12.5px;color:var(--ink-soft);margin-top:8px;"></p>
     ` : ''}
   `;
@@ -2484,6 +2534,9 @@ function renderConexionDrive(){
   }
   if(document.getElementById('sincronizarBtn')){
     document.getElementById('sincronizarBtn').addEventListener('click', sincronizarPendientesConDrive);
+  }
+  if(document.getElementById('cancelarSyncBtn')){
+    document.getElementById('cancelarSyncBtn').addEventListener('click', () => { syncCancelado = true; });
   }
 }
 
