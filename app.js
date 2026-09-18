@@ -86,6 +86,7 @@ let cache = {
   viewers: {},
   driveMapping: {},
   diasSinClase: {},
+  students_auth: {},
   entradasEspeciales: {},
   config: { entrada:'07:45', toleranciaMin:15, corteFaltaCompleta:'09:00' }
 };
@@ -198,6 +199,13 @@ function startListeners(){
     const next = {};
     snap.forEach(d => { next[d.id] = d.data(); });
     cache.diasSinClase = next;
+    render();
+  });
+
+  onSnapshot(collection(db,'students_auth'), snap => {
+    const next = {};
+    snap.forEach(d => { next[d.id] = Object.assign({ uid: d.id }, d.data()); });
+    cache.students_auth = next;
     render();
   });
 
@@ -482,7 +490,8 @@ function animateCounts(){
 }
 
 function writeAttendance(key, data){
-  setDoc(doc(db,'attendance',docId(key)), Object.assign({ autor: getUsuario() }, data)).catch(err=>console.error(err));
+  const [fechaK, studentIdK] = key.split('|');
+  setDoc(doc(db,'attendance',docId(key)), Object.assign({ autor: getUsuario(), studentId: studentIdK, fecha: fechaK }, data)).catch(err=>console.error(err));
 }
 
 function markPresente(studentId, fecha, curso){
@@ -779,6 +788,7 @@ function renderHome(){
     <p class="section-label" style="margin-top:22px;">Administración</p>
     <div class="module-list">
       ${moduleRow('users','Profesores','Altas y bajas de cuentas de profesor', 'profesores')}
+      ${moduleRow('users','Cuentas de alumnos','Faltas, notas y contacto de profesores', 'alumnosCuentas')}
       ${moduleRow('users','Acceso de lectura','Rectoría, psicopedagogía, secretaría', 'lectura')}
       ${moduleRow('calendar','Conexión con Drive','Emparejar y sincronizar faltas con Excel', 'conexionDrive')}
     </div>
@@ -1160,6 +1170,7 @@ function resolverMateriaYCursos(){
 function homeRoute(){
   if(userRole === 'teacher') return 'teacherHome';
   if(userRole === 'viewer') return 'viewerHome';
+  if(userRole === 'student') return 'studentHome';
   return 'home';
 }
 
@@ -1443,7 +1454,7 @@ function render(){
 }
 
 function renderInner(){
-  const RUTAS_SOLO_NAPO = ['profesores','profesorNuevo','profesorEditar','lectura','conexionDrive','importar'];
+  const RUTAS_SOLO_NAPO = ['profesores','profesorNuevo','profesorEditar','lectura','conexionDrive','importar','alumnosCuentas'];
   if(userRole==='admin' && getUsuario()!=='Napo' && RUTAS_SOLO_NAPO.includes(currentRoute)){
     currentRoute = 'home';
   }
@@ -1475,6 +1486,9 @@ function renderInner(){
   else if(currentRoute === 'teacherHome') renderTeacherHome();
   else if(currentRoute === 'viewerHome') renderViewerHome();
   else if(currentRoute === 'lectura') renderLectura();
+  else if(currentRoute === 'alumnosCuentas') renderAlumnosCuentas();
+  else if(currentRoute === 'studentHome') renderStudentHome();
+  else if(currentRoute === 'studentProfesores') renderStudentProfesores();
   else if(currentRoute === 'vistaCurso') renderVistaCurso();
   else if(currentRoute === 'vistaCursoMateria') renderVistaCursoMateria();
   else if(currentRoute === 'vistaCursoAlerta') renderVistaCursoAlerta();
@@ -1842,27 +1856,29 @@ function renderResumenAlumno(){
       }
       return `<p style="font-size:13px;color:var(--ink-soft);">Sin autorización activa.</p>`;
     })()}
-    ${userRole!=='viewer' ? `<button class="btn-secondary" id="authBtn" style="width:100%;margin-top:8px;">${(getAutorizaciones()[selectedStudentId]||{}).activa ? 'Cerrar autorización' : 'Agregar autorización'}</button>` : ''}
+    ${(userRole!=='viewer' && userRole!=='student') ? `<button class="btn-secondary" id="authBtn" style="width:100%;margin-top:8px;">${(getAutorizaciones()[selectedStudentId]||{}).activa ? 'Cerrar autorización' : 'Agregar autorización'}</button>` : ''}
 
     <p class="section-label" style="margin-top:16px;">Docencia</p>
     <div class="module-list">
-      <div class="module-row" id="verValoracionesBtn">
+      ${userRole!=='student' ? `<div class="module-row" id="verValoracionesBtn">
         <div class="txt"><p class="title">Valoraciones pedagógicas</p><p class="desc">1er y 3er bimestre, por materia</p></div>
         <span class="chevron">${icon('chevron')}</span>
-      </div>
+      </div>` : ''}
       <div class="module-row" id="verNotasBtn">
         <div class="txt"><p class="title">Notas</p><p class="desc">1er y 2do cuatrimestre</p></div>
         <span class="chevron">${icon('chevron')}</span>
       </div>
     </div>
   `;
-  document.getElementById('backBtn').addEventListener('click', () => { selectedBimestreN = null; navigate('resumen'); });
+  document.getElementById('backBtn').addEventListener('click', () => { selectedBimestreN = null; navigate(userRole==='student' ? 'studentHome' : 'resumen'); });
   attachPillBtns('bim', (v) => { selectedBimestreN = Number(v); render(); });
   document.getElementById('cardFaltasBim').addEventListener('click', () => navigate('detalleFaltasAlumno'));
   if(document.getElementById('authBtn')){
     document.getElementById('authBtn').addEventListener('click', () => gestionarAutorizacion(selectedStudentId));
   }
-  document.getElementById('verValoracionesBtn').addEventListener('click', () => navigate('resumenValoraciones'));
+  if(document.getElementById('verValoracionesBtn')){
+    document.getElementById('verValoracionesBtn').addEventListener('click', () => navigate('resumenValoraciones'));
+  }
   document.getElementById('verNotasBtn').addEventListener('click', () => navigate('resumenNotas'));
 }
 
@@ -2491,6 +2507,63 @@ function renderTeacherHome(){
   document.getElementById('salirProfLink').addEventListener('click', (e) => { e.preventDefault(); signOut(auth); });
 }
 
+function renderStudentHome(){
+  const stamp = fmtDateStamp();
+  $app.innerHTML = `
+    <div class="greeting-row">
+      <div>
+        <p class="hi">Hola</p>
+        <p class="name">${(currentStudentAuth.nombre.split(',')[1]||currentStudentAuth.nombre).trim()}</p>
+      </div>
+      <div class="stamp">
+        <div class="dow">${stamp.dow}</div>
+        <div class="dom">${stamp.dom}</div>
+        <div class="mon">${stamp.mon}</div>
+      </div>
+    </div>
+
+    <div class="module-list">
+      ${moduleRow('chart','Mis faltas y notas','Bimestre, materias y detalle', 'studentResumen')}
+      ${moduleRow('users','Mis profesores','Materia y mail de contacto', 'studentProfesores')}
+    </div>
+
+    <p style="text-align:center;margin-top:18px;">
+      <a href="#" id="cambiarPassLink" style="font-size:12px;color:var(--ink-soft);text-decoration:underline;">Cambiar contraseña</a>
+      &nbsp;·&nbsp;
+      <a href="#" id="salirProfLink" style="font-size:12px;color:var(--ink-soft);text-decoration:underline;">Salir</a>
+    </p>
+  `;
+  document.querySelectorAll('.module-row').forEach(r => r.addEventListener('click', () => {
+    if(r.dataset.route === 'studentResumen'){ selectedStudentId = currentStudentAuth.studentId; navigate('resumenAlumno'); }
+    else navigate(r.dataset.route);
+  }));
+  document.getElementById('cambiarPassLink').addEventListener('click', (e) => { e.preventDefault(); cambiarPasswordProfesor(); });
+  document.getElementById('salirProfLink').addEventListener('click', (e) => { e.preventDefault(); signOut(auth); });
+}
+
+function renderStudentProfesores(){
+  const curso = currentStudentAuth.curso;
+  const profesores = Object.values(cache.teachers).filter(t => (t.cursos||[]).includes(curso) && t.activo!==false)
+    .sort((a,b)=> (a.nombre||'').localeCompare(b.nombre||''));
+
+  const rows = profesores.map(t => `
+    <div class="sancion-item">
+      <p class="folio">${t.nombre}</p>
+      <p class="motivo">${(t.materias||[]).join(', ') || 'sin materia'}</p>
+      <p class="motivo" style="margin-top:2px;"><a href="mailto:${t.email}" style="color:var(--ink);text-decoration:underline;">${t.email}</a></p>
+    </div>
+  `).join('');
+
+  $app.innerHTML = `
+    <div class="appbar" style="padding:0 0 10px;">
+      <button class="back-btn" id="backBtn">${icon('back')}</button>
+      <h1>Mis profesores</h1>
+    </div>
+    ${profesores.length ? `<div class="sancion-list">${rows}</div>` : `<p style="font-size:13px;color:var(--ink-soft);">Todavía no hay profesores cargados para tu curso.</p>`}
+  `;
+  document.getElementById('backBtn').addEventListener('click', () => navigate('studentHome'));
+}
+
 function renderViewerHome(){
   const stamp = fmtDateStamp();
   $app.innerHTML = `
@@ -2557,6 +2630,93 @@ function toggleActivoViewer(uid, activo){
 function borrarViewer(uid, nombre){
   if(!confirm(`¿Borrar el acceso de ${nombre}? No se puede deshacer.`)) return;
   deleteDoc(doc(db,'viewers',uid)).then(() => showToast('Acceso borrado')).catch(err=>console.error(err));
+}
+
+async function crearAlumnoCuenta(){
+  const studentId = document.getElementById('nuevoAlumnoSelect').value;
+  const email = document.getElementById('nuevoAlumnoEmail').value.trim();
+  const pass = document.getElementById('nuevoAlumnoPass').value;
+  const errEl = document.getElementById('nuevoAlumnoError');
+  errEl.textContent = '';
+  if(!studentId){ errEl.textContent = 'Elegí un alumno de la lista.'; return; }
+  if(!email || !pass){ errEl.textContent = 'Completá mail y contraseña.'; return; }
+  if(pass.length < 6){ errEl.textContent = 'La contraseña debe tener al menos 6 caracteres.'; return; }
+  const yaExiste = Object.values(cache.students_auth).some(a => a.studentId === studentId);
+  if(yaExiste){ errEl.textContent = 'Este alumno ya tiene una cuenta creada.'; return; }
+  const student = getStudents().find(s => s.id === studentId);
+  const btn = document.getElementById('crearAlumnoBtn');
+  btn.textContent = 'Creando…';
+  btn.disabled = true;
+  try{
+    const cred = await createUserWithEmailAndPassword(authSecundaria, email, pass);
+    await setDoc(doc(db,'students_auth',cred.user.uid), { studentId, nombre: `${student.apellido}, ${student.nombre}`, curso: student.curso, email, activo: true, creadoPor: getUsuario() });
+    await signOut(authSecundaria);
+    showToast('Cuenta de alumno creada');
+    navigate('alumnosCuentas');
+  }catch(err){
+    console.error(err);
+    errEl.textContent = err.code === 'auth/email-already-in-use' ? 'Ese mail ya tiene una cuenta.' : 'No se pudo crear la cuenta.';
+    btn.textContent = 'Crear cuenta';
+    btn.disabled = false;
+  }
+}
+function toggleActivoAlumnoCuenta(uid, activo){
+  setDoc(doc(db,'students_auth',uid), { activo: !activo }, { merge: true }).catch(err=>console.error(err));
+}
+function borrarAlumnoCuenta(uid, nombre){
+  if(!confirm(`¿Borrar la cuenta de ${nombre}? No se puede deshacer.`)) return;
+  deleteDoc(doc(db,'students_auth',uid)).then(() => showToast('Cuenta borrada')).catch(err=>console.error(err));
+}
+
+function renderAlumnosCuentas(){
+  const cuentas = Object.values(cache.students_auth).sort((a,b)=> (a.nombre||'').localeCompare(b.nombre||''));
+  const filtro = (window.__alumnoFiltro||'').toLowerCase();
+  const visibles = filtro ? cuentas.filter(a => (a.nombre||'').toLowerCase().includes(filtro)) : cuentas;
+  const conCuenta = new Set(cuentas.map(a => a.studentId));
+  const disponibles = getStudents().filter(s => !conCuenta.has(s.id)).sort((a,b)=> Number(a.curso)-Number(b.curso) || a.apellido.localeCompare(b.apellido));
+
+  const rows = visibles.map(a => `
+    <div class="sancion-item">
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;">
+        <div>
+          <p class="folio"><span class="status-dot ${a.activo===false?'off':'on'}"></span><span class="curso-chip c${a.curso}">${a.curso}°</span> ${a.nombre} ${a.activo===false ? '· inactivo' : ''}</p>
+          <p class="motivo">${a.email}</p>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:6px;flex-shrink:0;">
+          <button class="btn-chip" data-toggle="${a.uid}" data-activo="${a.activo!==false}">${a.activo===false ? 'Reactivar' : 'Dar de baja'}</button>
+          <button class="btn-chip danger" data-borrar="${a.uid}" data-nombre="${a.nombre}">Borrar</button>
+        </div>
+      </div>
+    </div>
+  `).join('');
+
+  $app.innerHTML = `
+    <div class="appbar" style="padding:0 0 10px;">
+      <button class="back-btn" id="backBtn">${icon('back')}</button>
+      <h1>Cuentas de alumnos</h1>
+    </div>
+    <input type="text" id="filtroAlumnoCuenta" placeholder="Buscar por nombre..." style="margin-bottom:12px;" value="${window.__alumnoFiltro||''}">
+    <p class="section-label">Cuentas existentes (${visibles.length} de ${cuentas.length})</p>
+    ${visibles.length ? `<div class="sancion-list" style="margin-bottom:18px;">${rows}</div>` : `<p style="font-size:13px;color:var(--ink-soft);margin-bottom:18px;">${cuentas.length ? 'Nadie coincide con esa búsqueda.' : 'Todavía no hay cuentas de alumnos.'}</p>`}
+
+    <p class="section-label">Nueva cuenta</p>
+    <div class="field-row">
+      <label>Alumno/a</label>
+      <select id="nuevoAlumnoSelect">
+        <option value="">-- Elegir --</option>
+        ${disponibles.map(s => `<option value="${s.id}">${s.curso}° A · ${s.apellido}, ${s.nombre}</option>`).join('')}
+      </select>
+    </div>
+    <div class="field-row"><label>Mail</label><input id="nuevoAlumnoEmail" type="email"></div>
+    <div class="field-row"><label>Contraseña</label><input id="nuevoAlumnoPass" type="text" placeholder="mínimo 6 caracteres"></div>
+    <p id="nuevoAlumnoError" style="font-size:12px;color:var(--stamp);min-height:16px;margin:0 0 8px;"></p>
+    <button class="btn-primary" id="crearAlumnoBtn">Crear cuenta</button>
+  `;
+  document.getElementById('backBtn').addEventListener('click', () => navigate('home'));
+  document.getElementById('filtroAlumnoCuenta').addEventListener('input', (e) => { window.__alumnoFiltro = e.target.value; render(); });
+  document.getElementById('crearAlumnoBtn').addEventListener('click', crearAlumnoCuenta);
+  document.querySelectorAll('[data-toggle]').forEach(b => b.addEventListener('click', () => toggleActivoAlumnoCuenta(b.dataset.toggle, b.dataset.activo === 'true')));
+  document.querySelectorAll('[data-borrar]').forEach(b => b.addEventListener('click', () => borrarAlumnoCuenta(b.dataset.borrar, b.dataset.nombre)));
 }
 
 function renderLectura(){
@@ -3017,6 +3177,17 @@ function renderTabbar(){
     document.getElementById('tabAlertas').addEventListener('click', () => navigate('detalleAlertas'));
     return;
   }
+  if(userRole === 'student'){
+    tb.innerHTML = `
+      <button class="tab ${currentRoute==='studentHome'?'active':''}" id="tabHome">${icon('home')}<span>Inicio</span></button>
+      <button class="tab ${currentRoute==='resumenAlumno'||currentRoute==='detalleFaltasAlumno'||currentRoute==='resumenNotas'?'active':''}" id="tabMio">${icon('chart')}<span>Mis datos</span></button>
+      <button class="tab ${currentRoute==='studentProfesores'?'active':''}" id="tabProfes">${icon('users')}<span>Profesores</span></button>
+    `;
+    document.getElementById('tabHome').addEventListener('click', () => navigate('studentHome'));
+    document.getElementById('tabMio').addEventListener('click', () => { selectedStudentId = currentStudentAuth.studentId; navigate('resumenAlumno'); });
+    document.getElementById('tabProfes').addEventListener('click', () => navigate('studentProfesores'));
+    return;
+  }
   tb.innerHTML = `
     <button class="tab ${currentRoute==='home'?'active':''}" id="tabHome">${icon('home')}<span>Inicio</span></button>
     <button class="tab ${currentRoute==='asistencia'?'active':''}" id="tabAsist">${icon('clipboard')}<span>Asistencia</span></button>
@@ -3041,6 +3212,27 @@ function guardarConfigGeneral(){
   setDoc(doc(db,'config','general'), { entrada, toleranciaMin: tolerancia, corteFaltaCompleta: corte })
     .then(() => showToast('Configuración guardada'))
     .catch(err=>console.error(err));
+}
+
+async function migrarStudentIdEnAsistencia(){
+  const pendientes = Object.entries(cache.attendance).filter(([key, rec]) => !rec.studentId);
+  if(pendientes.length === 0){ showToast('Ya está todo migrado'); return; }
+  if(!confirm(`Se van a actualizar ${pendientes.length} registros viejos de asistencia. ¿Confirmás?`)) return;
+  const estadoEl = document.getElementById('migracionEstado');
+  let hechos = 0;
+  for(let i=0; i<pendientes.length; i+=450){
+    const lote = pendientes.slice(i, i+450);
+    const batch = writeBatch(db);
+    lote.forEach(([key]) => {
+      const [fecha, studentId] = key.split('|');
+      batch.set(doc(db,'attendance',docId(key)), { studentId, fecha }, { merge: true });
+    });
+    await batch.commit();
+    hechos += lote.length;
+    if(estadoEl) estadoEl.textContent = `Migrando... ${hechos}/${pendientes.length}`;
+  }
+  if(estadoEl) estadoEl.textContent = `Listo, ${hechos} registros actualizados.`;
+  showToast('Migración terminada');
 }
 
 function renderConfig(){
@@ -3068,6 +3260,15 @@ function renderConfig(){
     </div>
     ` : ''}
 
+    ${esNapo ? `
+    <p class="section-label" style="margin-top:20px;">Mantenimiento</p>
+    <div class="config-card">
+      <p style="font-size:12.5px;color:var(--ink-soft);margin-bottom:10px;">Actualiza los registros viejos de asistencia para que tengan el dato del alumno guardado correctamente (necesario para el acceso de alumnos).</p>
+      <button class="btn-secondary" id="migrarBtn" style="width:100%;">Actualizar registros viejos</button>
+      <p id="migracionEstado" style="font-size:12px;color:var(--ink-soft);margin-top:8px;"></p>
+    </div>
+    ` : ''}
+
     <p class="section-label" style="margin-top:20px;">Acerca de</p>
     <div class="config-card">
       <p class="v">Instituto Superior Porteño</p>
@@ -3082,12 +3283,16 @@ function renderConfig(){
   if(document.getElementById('guardarConfigBtn')){
     document.getElementById('guardarConfigBtn').addEventListener('click', guardarConfigGeneral);
   }
+  if(document.getElementById('migrarBtn')){
+    document.getElementById('migrarBtn').addEventListener('click', migrarStudentIdEnAsistencia);
+  }
 }
 
 function getUsuario(){ return localStorage.getItem('isp_usuario') || ''; }
-let userRole = null; // 'admin' | 'teacher'
+let userRole = null; // 'admin' | 'teacher' | 'viewer' | 'student'
 let currentTeacher = null; // datos del profesor logueado
 let currentViewer = null; // datos de la cuenta de solo lectura logueada
+let currentStudentAuth = null; // datos de la cuenta de alumno logueada (uid, studentId, nombre, curso, email)
 
 function slugify(s){ return String(s).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9]+/g,'-'); }
 
@@ -3225,9 +3430,16 @@ onAuthStateChanged(auth, async (user) => {
           currentViewer = Object.assign({ uid: user.uid }, vdoc.data());
           currentRoute = 'viewerHome';
         } else {
-          userRole = null;
-          currentTeacher = null;
-          currentRoute = 'profesorSinAcceso';
+          const adoc = await getDoc(doc(db,'students_auth',user.uid));
+          if(adoc.exists() && adoc.data().activo !== false){
+            userRole = 'student';
+            currentStudentAuth = Object.assign({ uid: user.uid }, adoc.data());
+            currentRoute = 'studentHome';
+          } else {
+            userRole = null;
+            currentTeacher = null;
+            currentRoute = 'profesorSinAcceso';
+          }
         }
       }
     }catch(e){
