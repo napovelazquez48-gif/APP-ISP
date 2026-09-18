@@ -2393,17 +2393,41 @@ function registrosPendientesDeSync(){
   return { pendientesAsistencia, pendientesEF };
 }
 
-function marcarTodoComoYaSincronizado(){
+async function marcarTodoComoYaSincronizado(){
   if(!confirm('Esto marca todas las faltas/tardanzas ya cargadas hasta ahora como "ya reflejadas en Drive" (porque ya las tenés a mano en el Excel), para que la sincronización de acá en más solo mande lo nuevo. ¿Confirmás?')) return;
-  const ops = [];
-  Object.keys(cache.attendance).forEach(key => {
-    ops.push(setDoc(doc(db,'attendance',docId(key)), { driveSynced: true }, { merge: true }));
-  });
-  Object.keys(cache.ef).forEach(key => {
-    const [fecha, studentId] = key.split('|');
-    ops.push(setDoc(doc(db,'ef', docId(`${fecha}_${studentId}`)), { driveSynced: true }, { merge: true }));
-  });
-  Promise.all(ops).then(() => { showToast('Todo marcado como ya sincronizado'); render(); }).catch(err=>console.error(err));
+  const estadoEl = document.getElementById('syncEstado');
+  const pendientesAtt = Object.entries(cache.attendance).filter(([key, rec]) => !rec.driveSynced);
+  const pendientesEfRaw = Object.entries(cache.ef).filter(([key, rec]) => !rec.driveSynced);
+  const total = pendientesAtt.length + pendientesEfRaw.length;
+  if(total === 0){ if(estadoEl) estadoEl.textContent = 'Ya estaba todo marcado.'; return; }
+  let hechos = 0;
+  try{
+    for(let i=0; i<pendientesAtt.length; i+=450){
+      const lote = pendientesAtt.slice(i, i+450);
+      const batch = writeBatch(db);
+      lote.forEach(([key]) => { batch.set(doc(db,'attendance',docId(key)), { driveSynced: true }, { merge: true }); });
+      await batch.commit();
+      hechos += lote.length;
+      if(estadoEl) estadoEl.textContent = `Marcando... ${hechos}/${total}`;
+    }
+    for(let i=0; i<pendientesEfRaw.length; i+=450){
+      const lote = pendientesEfRaw.slice(i, i+450);
+      const batch = writeBatch(db);
+      lote.forEach(([key]) => {
+        const [fecha, studentId] = key.split('|');
+        batch.set(doc(db,'ef', docId(`${fecha}_${studentId}`)), { driveSynced: true }, { merge: true });
+      });
+      await batch.commit();
+      hechos += lote.length;
+      if(estadoEl) estadoEl.textContent = `Marcando... ${hechos}/${total}`;
+    }
+    if(estadoEl) estadoEl.textContent = `Listo: ${hechos} registros marcados como ya sincronizados.`;
+    showToast('Todo marcado como ya sincronizado');
+    render();
+  }catch(err){
+    console.error(err);
+    if(estadoEl) estadoEl.textContent = `Se cortó en el registro ${hechos}/${total} por un error: ${err.message||err}. Tocá el botón de nuevo para seguir con el resto.`;
+  }
 }
 
 function esperar(ms){ return new Promise(resolve => setTimeout(resolve, ms)); }
