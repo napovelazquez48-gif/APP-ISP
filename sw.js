@@ -1,4 +1,4 @@
-const CACHE_NAME = 'preceptoria-isp-v5';
+const CACHE_NAME = 'preceptoria-isp-v6';
 const LOCAL_ASSETS = [
   './',
   './index.html',
@@ -13,7 +13,8 @@ const CDN_ASSETS = [
   'https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js',
   'https://www.gstatic.com/firebasejs/10.13.0/firebase-auth.js',
   'https://accounts.google.com/gsi/client',
-  'https://apis.google.com/js/api.js'
+  'https://apis.google.com/js/api.js',
+  'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js'
 ];
 
 self.addEventListener('install', (event) => {
