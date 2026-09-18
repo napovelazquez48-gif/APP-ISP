@@ -978,6 +978,7 @@ function attachModuleHandlers(){
 }
 
 function renderAsistencia(){
+  const soloLectura = userRole === 'teacher';
   const students = getStudents().filter(s => s.curso === selectedCurso).sort((a,b)=> a.apellido.localeCompare(b.apellido));
   const att = getAttendance();
   const today = todayISO();
@@ -1012,6 +1013,7 @@ function renderAsistencia(){
     } else {
       metaHtml = '<p class="meta">Sin marcar</p>';
     }
+    if(soloLectura) metaHtml = metaHtml.replace(' data-edit="', ' data-noop="').replace(' data-exent="', ' data-noop2="');
 
     let efHtml = '';
     if(esDiaEF){
@@ -1023,8 +1025,23 @@ function renderAsistencia(){
         const tipo = efRec ? efRec.tipo : null;
         const cls = tipo==='falta' ? 'on-a' : (tipo==='saf' ? 'on-saf' : '');
         const label = tipo==='falta' ? 'EF falta' : (tipo==='saf' ? 'EF SAF' : 'EF');
-        efHtml = `<button class="state-btn ${cls}" style="width:auto;padding:0 10px;" data-ef="${s.id}">${label}</button>`;
+        efHtml = soloLectura
+          ? `<span class="state-btn ${cls}" style="width:auto;padding:0 10px;opacity:${tipo?1:0.4};">${label}</span>`
+          : `<button class="state-btn ${cls}" style="width:auto;padding:0 10px;" data-ef="${s.id}">${label}</button>`;
       }
+    }
+
+    if(soloLectura){
+      return `
+      <div class="student-card">
+        <div class="row">
+          <div style="flex:1">
+            <span class="name">${s.apellido}, ${s.nombre}</span>
+            ${metaHtml}
+          </div>
+          ${efHtml}
+        </div>
+      </div>`;
     }
 
     return `
@@ -1051,7 +1068,7 @@ function renderAsistencia(){
       <h1>Asistencia diaria</h1>
     </div>
     <div class="course-picker">
-      ${cursoBtns(CURSOS)}
+      ${cursoBtns(soloLectura ? cursosDisponibles() : CURSOS)}
       <input type="date" id="fechaSelect" value="${selectedFecha}" max="${maxFechaSeleccionable()}">
     </div>
     <p class="date-label">${fmtDateLong(selectedFecha)} · entrada ${cfg.entrada}, tolerancia ${cfg.toleranciaMin} min</p>
@@ -1060,39 +1077,41 @@ function renderAsistencia(){
       if(especial){
         return `<div class="alert-banner" style="background:var(--sage-bg);margin-bottom:14px;border-left-color:var(--sage);">
           <p class="alert-text" style="color:var(--sage);">Entrada especial hoy: hasta las ${especial.horaTope}${especial.motivo?' · '+especial.motivo:''}</p>
-          <div style="display:flex;gap:8px;margin-top:8px;">
+          ${soloLectura ? '' : `<div style="display:flex;gap:8px;margin-top:8px;">
             <button class="btn-secondary" id="editarEspecialBtn" style="flex:1;font-size:12px;padding:6px;">Editar</button>
             <button class="btn-secondary" id="borrarEspecialBtn" style="flex:1;font-size:12px;padding:6px;color:var(--stamp);">Sacar</button>
-          </div>
+          </div>`}
         </div>`;
       }
-      return `<p style="text-align:right;margin:-8px 0 10px;"><a href="#" id="entradaEspecialLink" style="font-size:12px;color:var(--ink-soft);text-decoration:underline;">+ Entrada especial para este curso hoy</a></p>`;
+      return soloLectura ? '' : `<p style="text-align:right;margin:-8px 0 10px;"><a href="#" id="entradaEspecialLink" style="font-size:12px;color:var(--ink-soft);text-decoration:underline;">+ Entrada especial para este curso hoy</a></p>`;
     })()}
     ${(() => {
       const sinClase = getDiaSinClase(selectedFecha, selectedCurso);
       if(sinClase){
         return `<div class="alert-banner" style="background:var(--gold-bg);margin-bottom:14px;border-left-color:var(--gold);">
           <p class="alert-text" style="color:var(--gold);">Sin clase hoy para este curso · ${sinClase.motivo} — no suma faltas ni afecta el % por materia.</p>
-          <div style="display:flex;gap:8px;margin-top:8px;">
+          ${soloLectura ? '' : `<div style="display:flex;gap:8px;margin-top:8px;">
             <button class="btn-secondary" id="editarSinClaseBtn" style="flex:1;font-size:12px;padding:6px;">Editar</button>
             <button class="btn-secondary" id="borrarSinClaseBtn" style="flex:1;font-size:12px;padding:6px;color:var(--stamp);">Sacar</button>
-          </div>
+          </div>`}
         </div>`;
       }
-      return `<p style="text-align:right;margin:-8px 0 14px;"><a href="#" id="sinClaseLink" style="font-size:12px;color:var(--ink-soft);text-decoration:underline;">+ Día sin clase para este curso (VCF, paro...)</a></p>`;
+      return soloLectura ? '' : `<p style="text-align:right;margin:-8px 0 14px;"><a href="#" id="sinClaseLink" style="font-size:12px;color:var(--ink-soft);text-decoration:underline;">+ Día sin clase para este curso (VCF, paro...)</a></p>`;
     })()}
     ${students.length ? rows : `<div class="empty-state"><h2>Sin alumnos</h2><p>Este curso no tiene alumnos cargados.</p></div>`}
     <div style="height:16px"></div>
   `;
 
-  document.getElementById('backBtn').addEventListener('click', () => navigate('home'));
+  document.getElementById('backBtn').addEventListener('click', () => navigate(soloLectura ? 'teacherHome' : 'home'));
   attachCursoBtns((c) => { selectedCurso = c; render(); });
   document.getElementById('fechaSelect').addEventListener('change', (e) => { selectedFecha = e.target.value; render(); });
-  document.querySelectorAll('[data-p]').forEach(b => b.addEventListener('click', (e) => markPresente(e.target.dataset.p, selectedFecha, selectedCurso)));
-  document.querySelectorAll('[data-a]').forEach(b => b.addEventListener('click', (e) => markAusente(e.target.dataset.a, selectedFecha)));
-  document.querySelectorAll('[data-edit]').forEach(b => b.addEventListener('click', (e) => editHora(e.currentTarget.dataset.edit, selectedFecha, selectedCurso)));
-  document.querySelectorAll('[data-exent]').forEach(b => b.addEventListener('click', (e) => marcarExencion(e.currentTarget.dataset.exent, selectedFecha)));
-  document.querySelectorAll('[data-ef]').forEach(b => b.addEventListener('click', (e) => toggleEF(e.currentTarget.dataset.ef, selectedFecha)));
+  if(!soloLectura){
+    document.querySelectorAll('[data-p]').forEach(b => b.addEventListener('click', (e) => markPresente(e.target.dataset.p, selectedFecha, selectedCurso)));
+    document.querySelectorAll('[data-a]').forEach(b => b.addEventListener('click', (e) => markAusente(e.target.dataset.a, selectedFecha)));
+    document.querySelectorAll('[data-edit]').forEach(b => b.addEventListener('click', (e) => editHora(e.currentTarget.dataset.edit, selectedFecha, selectedCurso)));
+    document.querySelectorAll('[data-exent]').forEach(b => b.addEventListener('click', (e) => marcarExencion(e.currentTarget.dataset.exent, selectedFecha)));
+    document.querySelectorAll('[data-ef]').forEach(b => b.addEventListener('click', (e) => toggleEF(e.currentTarget.dataset.ef, selectedFecha)));
+  }
   if(document.getElementById('entradaEspecialLink')){
     document.getElementById('entradaEspecialLink').addEventListener('click', (e) => { e.preventDefault(); definirEntradaEspecial(selectedFecha, selectedCurso); });
   }
@@ -1457,7 +1476,7 @@ function renderInner(){
   if(userRole==='admin' && getUsuario()!=='Napo' && RUTAS_SOLO_NAPO.includes(currentRoute)){
     currentRoute = 'home';
   }
-  if(currentRoute === 'bienvenida'){ renderBienvenida(); renderTabbar(); return; }
+  if(currentRoute === 'bienvenida'){ currentRoute = 'profesorLogin'; }
   if(currentRoute === 'quien'){ renderQuien(); renderTabbar(); return; }
   if(currentRoute === 'profesorLogin'){ renderProfesorLogin(); renderTabbar(); return; }
   if(currentRoute === 'profesorSinAcceso'){ renderProfesorSinAcceso(); renderTabbar(); return; }
@@ -2492,6 +2511,7 @@ function renderTeacherHome(){
     </div>
 
     <div class="module-list">
+      ${moduleRow('clipboard','Asistencia diaria','Solo consulta, por curso', 'asistencia')}
       ${moduleRow('alert','Sanciones e incidentes','Registro por alumno', 'sanciones')}
       ${moduleRow('file','Valoraciones pedagógicas','Bimestral, por materia', 'valoraciones')}
       ${moduleRow('chart','Notas','Cuatrimestral, escala 1 a 10', 'notas')}
@@ -2524,7 +2544,7 @@ function renderStudentHome(){
       </div>
     </div>
 
-    <div class="module-list">
+    <div class="module-list big">
       ${moduleRow('clipboard','Mis faltas','Bimestre, materias y detalle día por día', 'studentFaltas')}
       ${moduleRow('chart','Mis notas','1er y 2do cuatrimestre', 'studentNotas')}
       ${moduleRow('users','Mis profesores','Materia y mail de contacto', 'studentProfesores')}
@@ -2584,7 +2604,7 @@ function renderViewerHome(){
       </div>
     </div>
 
-    <div class="module-list">
+    <div class="module-list big">
       ${moduleRow('users','Resumen del alumno','Faltas, apercibimientos, valoraciones y notas', 'resumen')}
       ${moduleRow('chart','Vista por curso','Alertas y riesgo de SCP de un vistazo', 'vistaCurso')}
       ${moduleRow('clipboard','Asistencia de hoy','Quiénes están ausentes', 'detalleAsistenciaHoy')}
@@ -3358,28 +3378,12 @@ let currentStudentAuth = null; // datos de la cuenta de alumno logueada (uid, st
 
 function slugify(s){ return String(s).toLowerCase().normalize('NFD').replace(/[\u0300-\u036f]/g,'').replace(/[^a-z0-9]+/g,'-'); }
 
-function renderBienvenida(){
-  $app.innerHTML = `
-    <div style="padding-top:60px;text-align:center;">
-      <img src="icon-192.png" alt="ISP" style="width:76px;height:76px;object-fit:contain;margin:0 auto 18px;display:block;">
-      <h1 style="font-size:19px;margin:0 0 6px;">Instituto Superior Porteño</h1>
-      <p style="font-size:13px;color:var(--ink-soft);margin:0 0 32px;">Bienvenido/a</p>
-      <div style="max-width:280px;margin:0 auto;">
-        <button class="btn-primary" id="btnAlumno" style="width:100%;">Ingresar como alumno/a</button>
-      </div>
-      <p style="margin-top:26px;">
-        <a href="#" id="btnOtro" style="font-size:12.5px;color:var(--ink-soft);text-decoration:underline;">Docente / preceptores / otro acceso</a>
-      </p>
-    </div>
-  `;
-  document.getElementById('btnAlumno').addEventListener('click', () => { currentRoute = 'profesorLogin'; render(); });
-  document.getElementById('btnOtro').addEventListener('click', (e) => { e.preventDefault(); currentRoute = 'profesorLogin'; render(); });
-}
-
 function renderProfesorLogin(){
   $app.innerHTML = `
     <div style="padding-top:60px;text-align:center;">
-      <h1 style="font-size:18px;margin:0 0 20px;">Iniciar sesión</h1>
+      <img src="icon-192.png" alt="ISP" style="width:76px;height:76px;object-fit:contain;margin:0 auto 18px;display:block;">
+      <h1 style="font-size:18px;margin:0 0 6px;">Instituto Superior Porteño</h1>
+      <p style="font-size:13px;color:var(--ink-soft);margin:0 0 20px;">Ingresá con tu mail y contraseña</p>
       <div style="max-width:260px;margin:0 auto;text-align:left;">
         <label style="font-size:12.5px;color:var(--ink-soft);display:block;margin-bottom:4px;">Mail</label>
         <input id="profEmail" type="email" style="width:100%;margin-bottom:12px;" autocomplete="username">
@@ -3388,12 +3392,8 @@ function renderProfesorLogin(){
         <p id="profError" style="font-size:12px;color:var(--stamp);min-height:16px;margin:0 0 10px;"></p>
         <button class="btn-primary" id="profLoginBtn">Ingresar</button>
       </div>
-      <p style="margin-top:18px;">
-        <a href="#" id="volverPinLink" style="font-size:12.5px;color:var(--ink-soft);text-decoration:underline;">Volver</a>
-      </p>
     </div>
   `;
-  document.getElementById('volverPinLink').addEventListener('click', (e) => { e.preventDefault(); currentRoute='bienvenida'; render(); });
   document.getElementById('profLoginBtn').addEventListener('click', () => {
     const email = document.getElementById('profEmail').value.trim();
     const pass = document.getElementById('profPass').value;
@@ -3484,7 +3484,7 @@ onAuthStateChanged(auth, async (user) => {
   } else {
     userRole = null;
     currentTeacher = null;
-    currentRoute = 'bienvenida';
+    currentRoute = 'profesorLogin';
     render();
   }
 });
