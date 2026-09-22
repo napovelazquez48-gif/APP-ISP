@@ -749,6 +749,7 @@ function icon(name){
     run: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><circle cx="14.5" cy="5" r="1.8"/><path d="M9 21l2-5 3 1 3 5M6 14l3-3 2-4 4 2 3-1M9 12L7 9"/></svg>',
     chart: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M4 20V10M11 20V4M18 20v-7"/><path d="M2 20h20"/></svg>',
     trash: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>',
+    check: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>',
   };
   return icons[name] || '';
 }
@@ -767,7 +768,7 @@ function navigate(route, params){
 
 function showToast(msg){
   const t = document.getElementById('toast');
-  t.textContent = msg;
+  t.innerHTML = `${icon('check')}<span>${msg}</span>`;
   t.classList.add('show');
   setTimeout(()=>t.classList.remove('show'), 1800);
 }
@@ -886,7 +887,7 @@ function renderDetalleAsistenciaHoy(){
       <h1>Ausentes hoy</h1>
     </div>
     <p class="date-label">${fmtDateLong()}</p>
-    ${ausentes.length ? `<div class="sancion-list">${rows}</div>` : `<p style="font-size:13px;color:var(--ink-soft);">Nadie marcado como ausente todavía.</p>`}
+    ${ausentes.length ? `<div class="sancion-list">${rows}</div>` : `<p class="empty-inline">Nadie marcado como ausente todavía.</p>`}
   `;
   document.getElementById('backBtn').addEventListener('click', () => navigate(homeRoute()));
 }
@@ -913,7 +914,7 @@ function renderDetalleAlertas(){
       <h1>Alumnos en alerta</h1>
     </div>
     <p class="date-label">${bim.n}° bimestre · 5 o más faltas · por curso</p>
-    ${alertados.length ? `<div class="sancion-list">${rows}</div>` : `<p style="font-size:13px;color:var(--ink-soft);">Nadie llegó a 5 faltas este bimestre.</p>`}
+    ${alertados.length ? `<div class="sancion-list">${rows}</div>` : `<p class="empty-inline">Nadie llegó a 5 faltas este bimestre.</p>`}
   `;
   document.getElementById('backBtn').addEventListener('click', () => navigate(homeRoute()));
 }
@@ -1326,7 +1327,7 @@ function renderSancionDetalle(){
     ` : ''}
 
     <p class="section-label">Historial</p>
-    ${historial.length ? `<div class="sancion-list">${historialHtml}</div>` : `<p style="font-size:13px;color:var(--ink-soft);">Sin registros todavía.</p>`}
+    ${historial.length ? `<div class="sancion-list">${historialHtml}</div>` : `<p class="empty-inline">Sin registros todavía.</p>`}
 
     <p class="section-label" style="margin-top:16px;">Nuevo apercibimiento</p>
     <div style="margin-bottom:10px;">
@@ -1903,7 +1904,7 @@ function renderDetalleFaltasAlumno(){
       <h1>${student.apellido}, ${student.nombre}</h1>
     </div>
     <p class="date-label">${bim.n===0 ? 'Total del año' : bim.n+'° bimestre'} · ${dias.reduce((a,d)=>a+d.w,0)} faltas</p>
-    ${rows ? `<div class="sancion-list">${rows}</div>` : `<p style="font-size:13px;color:var(--ink-soft);">Sin faltas en este período.</p>`}
+    ${rows ? `<div class="sancion-list">${rows}</div>` : `<p class="empty-inline">Sin faltas en este período.</p>`}
   `;
   document.getElementById('backBtn').addEventListener('click', () => navigate('resumenAlumno'));
 }
@@ -1992,12 +1993,12 @@ function renderResumenAlumno(){
     <p class="section-label" style="margin-top:16px;">Apercibimientos</p>
     ${sanciones.length ? `<div class="sancion-list">${sanciones.map(h => `
       <div class="sancion-item"><p class="folio">${ordinal(h.folio)} · ${h.fecha}</p><p class="motivo">${h.motivo}</p></div>
-    `).join('')}</div>` : `<p style="font-size:13px;color:var(--ink-soft);">Sin registros.</p>`}
+    `).join('')}</div>` : `<p class="empty-inline">Sin registros.</p>`}
 
     <p class="section-label" style="margin-top:16px;">Certificados entregados</p>
     ${certs.length ? `<div class="sancion-list">${certs.map(c => `
       <div class="sancion-item"><p class="folio">${fmtDateShort(c.from)} al ${fmtDateShort(c.to)}</p></div>
-    `).join('')}</div>` : `<p style="font-size:13px;color:var(--ink-soft);">Sin certificados cargados.</p>`}
+    `).join('')}</div>` : `<p class="empty-inline">Sin certificados cargados.</p>`}
 
     <p class="section-label" style="margin-top:16px;">Autorización de tardanza</p>
     ${(() => {
@@ -2005,7 +2006,7 @@ function renderResumenAlumno(){
       if(auth && auth.activa){
         return `<div class="config-card"><p class="v">Hasta ${auth.horaTope} · ${auth.motivo}</p><p class="k">Desde ${auth.desde}</p></div>`;
       }
-      return `<p style="font-size:13px;color:var(--ink-soft);">Sin autorización activa.</p>`;
+      return `<p class="empty-inline">Sin autorización activa.</p>`;
     })()}
     ${(userRole!=='viewer' && userRole!=='student') ? `<button class="btn-secondary" id="authBtn" style="width:100%;margin-top:8px;">${(getAutorizaciones()[selectedStudentId]||{}).activa ? 'Cerrar autorización' : 'Agregar autorización'}</button>` : ''}
 
@@ -2065,7 +2066,7 @@ function renderResumenValoraciones(){
     <div class="course-picker">
       ${pillBtnRow('bimResVal', [{value:1,label:'1° bimestre'},{value:3,label:'3° bimestre'}], bim, bimColorClass)}
     </div>
-    ${rows ? `<div class="sancion-list">${rows}</div>` : `<p style="font-size:13px;color:var(--ink-soft);">Sin valoraciones cargadas para este bimestre.</p>`}
+    ${rows ? `<div class="sancion-list">${rows}</div>` : `<p class="empty-inline">Sin valoraciones cargadas para este bimestre.</p>`}
   `;
   document.getElementById('backBtn').addEventListener('click', () => navigate('resumenAlumno'));
   attachPillBtns('bimResVal', (v) => { window.__resumenValBim = Number(v); render(); });
@@ -2271,7 +2272,7 @@ function renderProfesores(){
     <input type="text" id="filtroProfesor" placeholder="Buscar por nombre..." style="margin-bottom:12px;" value="${window.__profesorFiltro||''}">
 
     <p class="section-label">Cuentas existentes (${visibles.length})</p>
-    ${visibles.length ? `<div class="sancion-list">${rows}</div>` : `<p style="font-size:13px;color:var(--ink-soft);">${teachers.length ? 'Nadie coincide con esa búsqueda.' : 'Todavía no hay profesores cargados.'}</p>`}
+    ${visibles.length ? `<div class="sancion-list">${rows}</div>` : `<p class="empty-inline">${teachers.length ? 'Nadie coincide con esa búsqueda.' : 'Todavía no hay profesores cargados.'}</p>`}
   `;
   document.getElementById('backBtn').addEventListener('click', () => navigate('home'));
   document.getElementById('irNuevoBtn').addEventListener('click', () => navigate('profesorNuevo'));
@@ -2799,7 +2800,7 @@ function renderStudentProfesores(){
       <button class="back-btn" id="backBtn">${icon('back')}</button>
       <h1>Mis profesores</h1>
     </div>
-    ${profesores.length ? `<div class="sancion-list">${rows}</div>` : `<p style="font-size:13px;color:var(--ink-soft);">Todavía no hay profesores cargados para tu curso.</p>`}
+    ${profesores.length ? `<div class="sancion-list">${rows}</div>` : `<p class="empty-inline">Todavía no hay profesores cargados para tu curso.</p>`}
   `;
   document.getElementById('backBtn').addEventListener('click', () => navigate('studentHome'));
 }
@@ -3457,7 +3458,7 @@ function renderVistaCurso(){
     <div class="config-card" style="margin-bottom:16px;">${svgTendencia(computeTendenciaCurso(selectedCurso))}</div>
 
     <p class="section-label">Por materia (bajo 85% anual)</p>
-    ${materiaRows ? `<div class="module-list">${materiaRows}</div>` : `<p style="font-size:13px;color:var(--ink-soft);">Ninguna materia tiene alumnos por debajo del 85% en este curso.</p>`}
+    ${materiaRows ? `<div class="module-list">${materiaRows}</div>` : `<p class="empty-inline">Ninguna materia tiene alumnos por debajo del 85% en este curso.</p>`}
   `;
   document.getElementById('backBtn').addEventListener('click', () => navigate(homeRoute()));
   attachCursoBtns((c) => { selectedCurso = c; render(); });
@@ -3516,7 +3517,7 @@ function renderVistaCursoAlerta(){
       <h1>En alerta</h1>
     </div>
     <p class="date-label">${selectedCurso}° A · 5 o más faltas</p>
-    ${rows ? `<div class="module-list">${rows}</div>` : `<p style="font-size:13px;color:var(--ink-soft);">Nadie en alerta en este curso.</p>`}
+    ${rows ? `<div class="module-list">${rows}</div>` : `<p class="empty-inline">Nadie en alerta en este curso.</p>`}
   `;
   document.getElementById('backBtn').addEventListener('click', () => navigate('vistaCurso'));
   document.querySelectorAll('[data-student]').forEach(el => {
@@ -3542,7 +3543,7 @@ function renderVistaCursoSCP(){
       <h1>Riesgo de SCP</h1>
     </div>
     <p class="date-label">${selectedCurso}° A · debajo del 85% anual en al menos una materia</p>
-    ${rows ? `<div class="module-list">${rows}</div>` : `<p style="font-size:13px;color:var(--ink-soft);">Nadie en riesgo en este curso.</p>`}
+    ${rows ? `<div class="module-list">${rows}</div>` : `<p class="empty-inline">Nadie en riesgo en este curso.</p>`}
   `;
   document.getElementById('backBtn').addEventListener('click', () => navigate('vistaCurso'));
   document.querySelectorAll('[data-student]').forEach(el => {
@@ -3673,7 +3674,7 @@ function renderAuditoria(){
       </select>
     </div>
     <p class="info-note">${icon('info')}Muestra apercibimientos, certificados, valoraciones y notas (lo único que guarda fecha y hora de carga). Asistencia diaria no queda registrada acá.</p>
-    ${visibles.length ? `<div class="sancion-list">${rows}</div>` : `<p style="font-size:13px;color:var(--ink-soft);">Sin actividad registrada todavía.</p>`}
+    ${visibles.length ? `<div class="sancion-list">${rows}</div>` : `<p class="empty-inline">Sin actividad registrada todavía.</p>`}
   `;
   document.getElementById('backBtn').addEventListener('click', () => navigate('config'));
   document.getElementById('autorSelect').addEventListener('change', (e) => { window.__auditoriaAutor = e.target.value; render(); });
