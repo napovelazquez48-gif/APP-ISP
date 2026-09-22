@@ -1007,7 +1007,7 @@ function renderImportar(){
 
 function moduleRow(iconName, title, desc, route, disabled){
   return `<div class="module-row ${disabled?'disabled':''}" data-route="${disabled?'':route}">
-    <span class="icon">${icon(iconName)}</span>
+    <span class="icon-chip">${icon(iconName)}</span>
     <div class="txt">
       <p class="title">${title}</p>
       <p class="desc">${desc}</p>
@@ -1675,27 +1675,27 @@ function renderFamiliaAlumno(){
     <p class="section-label">Enviar mail</p>
     <div class="module-list" style="margin-bottom:14px;">
       <div class="module-row" data-tpl="ausencia">
-        <span class="icon">${icon('file')}</span>
+        <span class="icon-chip">${icon('file')}</span>
         <div class="txt"><p class="title">Aviso de inasistencia</p></div>
         <span class="chevron">${icon('chevron')}</span>
       </div>
       <div class="module-row" data-tpl="apercibimiento1">
-        <span class="icon">${icon('file')}</span>
+        <span class="icon-chip">${icon('file')}</span>
         <div class="txt"><p class="title">1er apercibimiento</p></div>
         <span class="chevron">${icon('chevron')}</span>
       </div>
       <div class="module-row" data-tpl="apercibimientoN">
-        <span class="icon">${icon('file')}</span>
+        <span class="icon-chip">${icon('file')}</span>
         <div class="txt"><p class="title">Siguientes apercibimientos</p></div>
         <span class="chevron">${icon('chevron')}</span>
       </div>
       <div class="module-row" data-tpl="cincoInasistencias">
-        <span class="icon">${icon('file')}</span>
+        <span class="icon-chip">${icon('file')}</span>
         <div class="txt"><p class="title">Seguimiento por inasistencias</p></div>
         <span class="chevron">${icon('chevron')}</span>
       </div>
       <div class="module-row" id="mailLibreBtn">
-        <span class="icon">${icon('users')}</span>
+        <span class="icon-chip">${icon('users')}</span>
         <div class="txt"><p class="title">Mensaje libre</p></div>
         <span class="chevron">${icon('chevron')}</span>
       </div>
@@ -3746,17 +3746,17 @@ function slugify(s){ return String(s).toLowerCase().normalize('NFD').replace(/[\
 
 function renderProfesorLogin(){
   $app.innerHTML = `
-    <div style="padding-top:60px;text-align:center;">
-      <img src="icon-192.png" alt="ISP" style="width:76px;height:76px;object-fit:contain;margin:0 auto 18px;display:block;">
-      <h1 style="font-size:18px;margin:0 0 6px;">Instituto Superior Porteño</h1>
-      <p style="font-size:13px;color:var(--ink-soft);margin:0 0 20px;">Ingresá con tu mail y contraseña</p>
-      <div style="max-width:260px;margin:0 auto;text-align:left;">
+    <div style="padding-top:44px;text-align:center;">
+      <img src="icon-192.png" alt="ISP" style="width:60px;height:60px;object-fit:contain;margin:0 auto 14px;display:block;">
+      <h1 style="font-size:17px;margin:0 0 20px;">Instituto Superior Porteño</h1>
+      <div style="max-width:280px;margin:0 auto;border:1px solid var(--border);border-radius:14px;padding:26px 22px;background:var(--card);box-shadow:0 1px 2px rgba(31,42,58,0.05), 0 8px 20px rgba(31,42,58,0.06);text-align:left;">
+        <p style="font-size:12.5px;color:var(--ink-soft);margin:0 0 16px;text-align:center;">Ingresá con tu mail y contraseña</p>
         <label style="font-size:12.5px;color:var(--ink-soft);display:block;margin-bottom:4px;">Mail</label>
         <input id="profEmail" type="email" style="width:100%;margin-bottom:12px;" autocomplete="username">
         <label style="font-size:12.5px;color:var(--ink-soft);display:block;margin-bottom:4px;">Contraseña</label>
         <input id="profPass" type="password" style="width:100%;margin-bottom:6px;" autocomplete="current-password">
         <p id="profError" style="font-size:12px;color:var(--stamp);min-height:16px;margin:0 0 10px;"></p>
-        <button class="btn-primary" id="profLoginBtn">Ingresar</button>
+        <button class="btn-primary" id="profLoginBtn" style="width:100%;">Ingresar</button>
       </div>
     </div>
   `;
