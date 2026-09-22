@@ -196,11 +196,11 @@ main.fade-in{animation:screenFadeIn 0.22s ease;}
   display:flex;align-items:center;justify-content:center;
   background:rgba(var(--ruled-rgb),0.07);
 }
-.icon-chip .icon{width:20px;height:20px;color:var(--ink);}
+.icon-chip svg{width:20px;height:20px;color:var(--ink);}
 
 .module-list.big .module-row{padding:26px 18px;gap:16px;}
 .module-list.big .icon-chip{width:46px;height:46px;border-radius:13px;}
-.module-list.big .icon-chip .icon{width:24px;height:24px;}
+.module-list.big .icon-chip svg{width:24px;height:24px;}
 .module-list.big .title{font-size:17px;font-weight:600;}
 .module-list.big .desc{font-size:13px;margin-top:5px;}
 .module-list.big .chevron{width:19px;height:19px;}
