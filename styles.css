@@ -132,6 +132,23 @@ main{
 }
 #loadingScreen.hidden{opacity:0;pointer-events:none;}
 
+.modal-overlay{
+  position:fixed;inset:0;z-index:600;
+  background:rgba(23,28,35,0.5);
+  display:flex;align-items:center;justify-content:center;padding:24px;
+  opacity:0;pointer-events:none;transition:opacity .18s;
+}
+.modal-overlay.show{opacity:1;pointer-events:auto;}
+.modal-box{
+  background:var(--card);border-radius:14px;padding:22px 20px;max-width:320px;width:100%;
+  box-shadow:0 12px 32px rgba(0,0,0,0.25);
+  transform:scale(0.96);transition:transform .18s;
+}
+.modal-overlay.show .modal-box{transform:scale(1);}
+.modal-msg{font-size:14px;color:var(--ink);line-height:1.5;margin:0 0 18px;white-space:pre-line;}
+.modal-btns{display:flex;gap:10px;}
+.modal-btns button{flex:1;}
+
 /* Transición suave al cambiar de pantalla */
 main.fade-in{animation:screenFadeIn 0.22s ease;}
 @keyframes screenFadeIn{
@@ -344,7 +361,10 @@ main.fade-in{animation:screenFadeIn 0.22s ease;}
 input,select,textarea{
   font-family:'IBM Plex Sans',sans-serif;font-size:14px;
   padding:9px 10px;border-radius:9px;border:1px solid var(--border);
-  background:#fff;color:var(--ink);width:100%;
+  background:var(--card);color:var(--ink);width:100%;
+}
+input:focus,select:focus,textarea:focus{
+  outline:none;border-color:var(--ink);box-shadow:0 0 0 3px rgba(31,42,58,0.12);
 }
 
 .info-note{

@@ -432,8 +432,8 @@ function definirEntradaEspecial(fecha, curso){
   setDoc(doc(db,'entradasEspeciales', docId(`${fecha}_${curso}`)), { fecha, curso, horaTope, motivo: motivo||'', autor: getUsuario() })
     .catch(err=>console.error(err));
 }
-function borrarEntradaEspecial(fecha, curso){
-  if(!confirm('¿Sacar la entrada especial de este curso para este día?')) return;
+async function borrarEntradaEspecial(fecha, curso){
+  if(!(await customConfirm('¿Sacar la entrada especial de este curso para este día?'))) return;
   deleteDoc(doc(db,'entradasEspeciales', docId(`${fecha}_${curso}`))).catch(err=>console.error(err));
 }
 
@@ -447,8 +447,8 @@ function definirDiaSinClase(fecha, curso){
   setDoc(doc(db,'diasSinClase', docId(`${fecha}_${curso}`)), { fecha, curso, motivo: motivo.trim(), autor: getUsuario() })
     .catch(err=>console.error(err));
 }
-function borrarDiaSinClase(fecha, curso){
-  if(!confirm('¿Sacar la marca de "día sin clase" de este curso para este día?')) return;
+async function borrarDiaSinClase(fecha, curso){
+  if(!(await customConfirm('¿Sacar la marca de "día sin clase" de este curso para este día?'))) return;
   deleteDoc(doc(db,'diasSinClase', docId(`${fecha}_${curso}`))).catch(err=>console.error(err));
 }
 
@@ -764,6 +764,31 @@ function navigate(route, params){
   if(params && params.curso) selectedCurso = params.curso;
   render();
   window.scrollTo(0,0);
+}
+
+function customConfirm(msg, opciones){
+  opciones = opciones || {};
+  const textoSi = opciones.textoSi || 'Confirmar';
+  const peligro = opciones.peligro || false;
+  return new Promise(resolve => {
+    const overlay = document.getElementById('modalOverlay');
+    document.getElementById('modalMsg').textContent = msg;
+    document.getElementById('modalBtns').innerHTML = `
+      <button class="btn-secondary" id="modalCancelBtn">Cancelar</button>
+      <button class="btn-primary" id="modalOkBtn" style="${peligro?'background:var(--stamp);':''}">${textoSi}</button>
+    `;
+    function cerrar(resultado){
+      overlay.classList.remove('show');
+      document.getElementById('modalOkBtn').removeEventListener('click', onOk);
+      document.getElementById('modalCancelBtn').removeEventListener('click', onCancel);
+      resolve(resultado);
+    }
+    function onOk(){ cerrar(true); }
+    function onCancel(){ cerrar(false); }
+    document.getElementById('modalOkBtn').addEventListener('click', onOk);
+    document.getElementById('modalCancelBtn').addEventListener('click', onCancel);
+    overlay.classList.add('show');
+  });
 }
 
 function showToast(msg){
@@ -1274,8 +1299,8 @@ function renderSancionesLista(){
   });
 }
 
-function borrarApercibimiento(id){
-  if(!confirm('¿Borrar este apercibimiento? No se puede deshacer.')) return;
+async function borrarApercibimiento(id){
+  if(!(await customConfirm('¿Borrar este apercibimiento? No se puede deshacer.', {peligro:true, textoSi:'Borrar'}))) return;
   deleteDoc(doc(db,'sanciones',id)).catch(err=>console.error(err));
 }
 
@@ -2234,8 +2259,8 @@ function renderProfesorEditar(){
 
 let selectedProfesorUid = null;
 
-function borrarProfesor(uid, nombre){
-  if(!confirm(`¿Borrar la cuenta de ${nombre}? No se puede deshacer. El mail y contraseña quedan sin efecto (no van a poder entrar más), pero si querés reusar ese mail para otra cuenta después, avisame.`)) return;
+async function borrarProfesor(uid, nombre){
+  if(!(await customConfirm(`¿Borrar la cuenta de ${nombre}? No se puede deshacer. El mail y contraseña quedan sin efecto (no van a poder entrar más), pero si querés reusar ese mail para otra cuenta después, avisame.`, {peligro:true, textoSi:'Borrar'}))) return;
   deleteDoc(doc(db,'teachers',uid)).then(() => showToast('Profesor/a borrado')).catch(err=>console.error(err));
 }
 
@@ -2487,7 +2512,7 @@ function registrosPendientesDeSync(){
 }
 
 async function marcarTodoComoYaSincronizado(){
-  if(!confirm('Esto marca todas las faltas/tardanzas ya cargadas hasta ahora como "ya reflejadas en Drive" (porque ya las tenés a mano en el Excel), para que la sincronización de acá en más solo mande lo nuevo. ¿Confirmás?')) return;
+  if(!(await customConfirm('Esto marca todas las faltas/tardanzas ya cargadas hasta ahora como "ya reflejadas en Drive" (porque ya las tenés a mano en el Excel), para que la sincronización de acá en más solo mande lo nuevo. ¿Confirmás?'))) return;
   const estadoEl = document.getElementById('syncEstado');
   const pendientesAtt = Object.entries(cache.attendance).filter(([key, rec]) => !rec.driveSynced);
   const pendientesEfRaw = Object.entries(cache.ef).filter(([key, rec]) => !rec.driveSynced);
@@ -2869,8 +2894,8 @@ async function crearViewer(){
 function toggleActivoViewer(uid, activo){
   setDoc(doc(db,'viewers',uid), { activo: !activo }, { merge: true }).catch(err=>console.error(err));
 }
-function borrarViewer(uid, nombre){
-  if(!confirm(`¿Borrar el acceso de ${nombre}? No se puede deshacer.`)) return;
+async function borrarViewer(uid, nombre){
+  if(!(await customConfirm(`¿Borrar el acceso de ${nombre}? No se puede deshacer.`, {peligro:true, textoSi:'Borrar'}))) return;
   deleteDoc(doc(db,'viewers',uid)).then(() => showToast('Acceso borrado')).catch(err=>console.error(err));
 }
 
@@ -2905,15 +2930,15 @@ async function crearAlumnoCuenta(){
 function toggleActivoAlumnoCuenta(uid, activo){
   setDoc(doc(db,'students_auth',uid), { activo: !activo }, { merge: true }).catch(err=>console.error(err));
 }
-function borrarAlumnoCuenta(uid, nombre){
-  if(!confirm(`¿Borrar la cuenta de ${nombre}? No se puede deshacer.`)) return;
+async function borrarAlumnoCuenta(uid, nombre){
+  if(!(await customConfirm(`¿Borrar la cuenta de ${nombre}? No se puede deshacer.`, {peligro:true, textoSi:'Borrar'}))) return;
   deleteDoc(doc(db,'students_auth',uid)).then(() => showToast('Cuenta borrada')).catch(err=>console.error(err));
 }
 
 async function crearCuentasMasivo(){
   const pendientes = window.__cargaMasivaPendiente || [];
   if(pendientes.length === 0) return;
-  if(!confirm(`Se van a crear ${pendientes.length} cuentas con la contraseña genérica. ¿Confirmás?`)) return;
+  if(!(await customConfirm(`Se van a crear ${pendientes.length} cuentas con la contraseña genérica. ¿Confirmás?`))) return;
   const estadoEl = document.getElementById('masivoEstado');
   let ok = 0, error = 0;
   for(const a of pendientes){
@@ -3616,7 +3641,7 @@ function guardarConfigGeneral(){
 async function migrarStudentIdEnAsistencia(){
   const pendientes = Object.entries(cache.attendance).filter(([key, rec]) => !rec.studentId);
   if(pendientes.length === 0){ showToast('Ya está todo migrado'); return; }
-  if(!confirm(`Se van a actualizar ${pendientes.length} registros viejos de asistencia. ¿Confirmás?`)) return;
+  if(!(await customConfirm(`Se van a actualizar ${pendientes.length} registros viejos de asistencia. ¿Confirmás?`))) return;
   const estadoEl = document.getElementById('migracionEstado');
   let hechos = 0;
   for(let i=0; i<pendientes.length; i+=450){
