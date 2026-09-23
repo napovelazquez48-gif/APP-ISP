@@ -1661,12 +1661,28 @@ function renderJustificativoAlumno(){
 
 const APP_START_TIME = Date.now();
 
+let lastFocusedInput = null;
+document.addEventListener('input', (e) => {
+  if(e.target && e.target.id && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA')){
+    lastFocusedInput = { id: e.target.id, start: e.target.selectionStart, end: e.target.selectionEnd };
+  }
+});
+
 function render(){
   renderInner();
   if($app){
     $app.classList.remove('fade-in');
     void $app.offsetWidth; // reinicia la animación en cada pantalla
     $app.classList.add('fade-in');
+  }
+  if(lastFocusedInput){
+    const el = document.getElementById(lastFocusedInput.id);
+    if(el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA')){
+      el.focus();
+      if(typeof lastFocusedInput.start === 'number'){
+        try{ el.setSelectionRange(lastFocusedInput.start, lastFocusedInput.end); }catch(err){}
+      }
+    }
   }
   const loading = document.getElementById('loadingScreen');
   if(loading && !loading.classList.contains('hidden')){
