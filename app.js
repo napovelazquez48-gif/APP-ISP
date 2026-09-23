@@ -84,6 +84,8 @@ let cache = {
   notas: {},
   viewers: {},
   driveMapping: {},
+  tramites: {},
+  entregas: {},
   diasSinClase: {},
   students_auth: {},
   entradasEspeciales: {},
@@ -191,6 +193,20 @@ function startListeners(){
     const next = {};
     snap.forEach(d => { next[d.id] = d.data(); });
     cache.driveMapping = next;
+    render();
+  });
+
+  onSnapshot(collection(db,'tramites'), snap => {
+    const next = {};
+    snap.forEach(d => { next[d.id] = Object.assign({ id: d.id }, d.data()); });
+    cache.tramites = next;
+    render();
+  });
+
+  onSnapshot(collection(db,'entregas'), snap => {
+    const next = {};
+    snap.forEach(d => { next[d.id] = d.data(); });
+    cache.entregas = next;
     render();
   });
 
@@ -901,6 +917,7 @@ function renderHome(){
       ${moduleRow('clipboard','Asistencia diaria','Presente, ausente, tardanza', 'asistencia')}
       ${moduleRow('alert','Sanciones e incidentes','Registro por alumno', 'sanciones')}
       ${moduleRow('file','Justificativos médicos','Certificados y fechas', 'justificativos')}
+      ${moduleRow('file','Entregas y trámites','Autorizaciones, plata, fichas médicas, aptos...', 'tramites')}
       ${moduleRow('calendar','Horarios y suplencias','Grilla por curso y división', 'horarios')}
       ${moduleRow('users','Familias','Contacto de padres y tutores', 'familias')}
       ${moduleRow('chart','Resumen del alumno','Faltas, apercibimientos y certificados', 'resumen')}
@@ -1645,6 +1662,9 @@ function renderInner(){
   else if(currentRoute === 'notas') renderNotasLista();
   else if(currentRoute === 'config') renderConfig();
   else if(currentRoute === 'auditoria') renderAuditoria();
+  else if(currentRoute === 'tramites') renderTramites();
+  else if(currentRoute === 'tramiteNuevo') renderTramiteNuevo();
+  else if(currentRoute === 'tramiteDetalle') renderTramiteDetalle();
   else if(currentRoute === 'vistaGeneral') renderVistaGeneral();
   renderTabbar();
 }
@@ -1861,6 +1881,7 @@ function subjectsAfectadasEnDia(studentId, iso){
 }
 
 let selectedBimestreBoletin = 0;
+let selectedTramiteId = null;
 
 function renderBoletinAlumno(){
   const student = getStudents().find(s => s.id === selectedStudentId);
@@ -3762,6 +3783,175 @@ function renderAuditoria(){
   `;
   document.getElementById('backBtn').addEventListener('click', () => goBack('config'));
   document.getElementById('autorSelect').addEventListener('change', (e) => { window.__auditoriaAutor = e.target.value; render(); });
+}
+
+// ---------- Entregas y trámites ----------
+function getTramites(){ return cache.tramites; }
+function entregaKey(tramiteId, studentId, itemKey){ return docId(`${tramiteId}_${studentId}_${itemKey}`); }
+function getEntrega(tramiteId, studentId, itemKey){ return cache.entregas[entregaKey(tramiteId, studentId, itemKey)]; }
+
+async function toggleEntrega(tramiteId, studentId, itemKey){
+  const key = entregaKey(tramiteId, studentId, itemKey);
+  const actual = cache.entregas[key];
+  const ref = doc(db,'entregas',key);
+  if(!actual){
+    setDoc(ref, { entregado: true, fecha: todayISO(), autor: getUsuario() }).catch(err=>console.error(err));
+  } else if(actual.entregado){
+    setDoc(ref, { exento: true, entregado: false, fecha: todayISO(), autor: getUsuario() }).catch(err=>console.error(err));
+  } else {
+    deleteDoc(ref).catch(err=>console.error(err));
+  }
+}
+
+async function crearTramite(){
+  const nombre = document.getElementById('tramiteNombre').value.trim();
+  const itemsRaw = document.getElementById('tramiteItems').value.trim();
+  const fechaLimite = document.getElementById('tramiteFecha').value;
+  const cursos = Array.from(document.querySelectorAll('.tramite-curso:checked')).map(c => c.value);
+  const errEl = document.getElementById('tramiteError');
+  errEl.textContent = '';
+  if(!nombre || !itemsRaw || cursos.length===0){
+    errEl.textContent = 'Completá nombre, al menos un ítem a entregar, y un curso.';
+    return;
+  }
+  const items = itemsRaw.split(',').map(s=>s.trim()).filter(Boolean).map(label => ({ key: slugify(label), label }));
+  await addDoc(collection(db,'tramites'), { nombre, items, cursos, fechaLimite: fechaLimite||null, autor: getUsuario(), createdAt: Date.now() });
+  showToast('Trámite creado');
+  navigate('tramites');
+}
+
+async function borrarTramite(id, nombre){
+  if(!(await customConfirm(`¿Borrar "${nombre}" y todo lo registrado ahí? No se puede deshacer.`, {peligro:true, textoSi:'Borrar'}))) return;
+  deleteDoc(doc(db,'tramites',id)).then(() => showToast('Trámite borrado')).catch(err=>console.error(err));
+}
+
+function renderTramites(){
+  const tramites = Object.values(getTramites()).sort((a,b)=> (b.createdAt||0)-(a.createdAt||0));
+  const rows = tramites.map(t => {
+    const students = getStudents().filter(s => t.cursos.includes(s.curso));
+    let pendientes = 0;
+    students.forEach(s => {
+      t.items.forEach(it => {
+        const e = getEntrega(t.id, s.id, it.key);
+        if(!e || (!e.entregado && !e.exento)) pendientes++;
+      });
+    });
+    return `
+    <div class="module-row" data-tramite="${t.id}">
+      <span class="icon-chip">${icon('file')}</span>
+      <div class="txt">
+        <p class="title">${t.nombre}</p>
+        <p class="desc">${t.cursos.map(c=>c+'°A').join(', ')} · ${t.items.map(i=>i.label).join(' + ')}${t.fechaLimite?' · hasta '+fmtDateShort(t.fechaLimite):''}</p>
+      </div>
+      <span class="badge-soon" style="background:${pendientes>0?'var(--stamp-bg)':'var(--sage-bg)'};color:${pendientes>0?'var(--stamp)':'var(--sage)'};">${pendientes} pend.</span>
+      <span class="chevron">${icon('chevron')}</span>
+    </div>`;
+  }).join('');
+
+  $app.innerHTML = `
+    <div class="appbar" style="padding:0 0 10px;">
+      <button class="back-btn" id="backBtn">${icon('back')}</button>
+      <h1>Entregas y trámites</h1>
+    </div>
+    <p class="info-note" style="margin-top:0;">${icon('info')}Para cualquier cosa que los alumnos te tengan que entregar (autorizaciones, dinero, fichas médicas, aptos...) y quieras llevar el control de quién ya te la dio.</p>
+    <button class="btn-primary" id="nuevoTramiteBtn" style="width:100%;margin-bottom:16px;">+ Nuevo trámite</button>
+    <p class="section-label">Activos</p>
+    ${tramites.length ? `<div class="module-list">${rows}</div>` : `<p class="empty-inline">Todavía no armaste ningún trámite.</p>`}
+  `;
+  document.getElementById('backBtn').addEventListener('click', () => goBack('home'));
+  document.getElementById('nuevoTramiteBtn').addEventListener('click', () => navigate('tramiteNuevo'));
+  document.querySelectorAll('[data-tramite]').forEach(el => {
+    el.addEventListener('click', () => { selectedTramiteId = el.dataset.tramite; navigate('tramiteDetalle'); });
+  });
+}
+
+function renderTramiteNuevo(){
+  $app.innerHTML = `
+    <div class="appbar" style="padding:0 0 10px;">
+      <button class="back-btn" id="backBtn">${icon('back')}</button>
+      <h1>Nuevo trámite</h1>
+    </div>
+    <div class="field-row"><label>Nombre</label><input id="tramiteNombre" type="text" placeholder="Ej: Salida Museo del Holocausto"></div>
+    <div class="field-row"><label>Qué entregan</label><input id="tramiteItems" type="text" placeholder="Ej: Autorización, Dinero"></div>
+    <p style="font-size:11.5px;color:var(--ink-soft);margin:-8px 0 12px;">Separá con comas si son varias cosas distintas (ej: autorización y dinero por separado).</p>
+    <div class="field-row"><label>Fecha límite (opcional)</label><input id="tramiteFecha" type="date"></div>
+    <p style="font-size:12.5px;color:var(--ink-soft);margin:10px 0 6px;">Cursos que participan</p>
+    <div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:16px;">
+      ${CURSOS.map(c => `<label class="curso-check-label"><input type="checkbox" class="tramite-curso" value="${c}"> <span class="curso-dot c${c}"></span>${c}° A</label>`).join('')}
+    </div>
+    <p id="tramiteError" style="font-size:12px;color:var(--stamp);min-height:16px;margin:0 0 8px;"></p>
+    <button class="btn-primary" id="crearTramiteBtn" style="width:100%;">Crear trámite</button>
+  `;
+  document.getElementById('backBtn').addEventListener('click', () => goBack('tramites'));
+  document.getElementById('crearTramiteBtn').addEventListener('click', crearTramite);
+}
+
+async function importarEntregasMasivo(tramiteId, data){
+  const alumnos = data.alumnos || [];
+  const ops = [];
+  alumnos.forEach(a => {
+    Object.entries(a.items||{}).forEach(([itemKey, estado]) => {
+      const key = entregaKey(tramiteId, a.studentId, itemKey);
+      if(estado === 'entregado') ops.push(setDoc(doc(db,'entregas',key), { entregado: true, fecha: todayISO(), autor: getUsuario() }));
+      else if(estado === 'exento') ops.push(setDoc(doc(db,'entregas',key), { exento: true, entregado: false, fecha: todayISO(), autor: getUsuario() }));
+    });
+  });
+  await Promise.all(ops);
+  showToast(`${ops.length} registros importados`);
+  render();
+}
+
+function renderTramiteDetalle(){
+  const t = getTramites()[selectedTramiteId];
+  if(!t){ navigate('tramites'); return; }
+  const cursos = t.cursos;
+  if(!cursos.includes(selectedCurso)) selectedCurso = cursos[0];
+  const students = getStudents().filter(s => s.curso === selectedCurso).sort((a,b)=> a.apellido.localeCompare(b.apellido));
+
+  const rows = students.map(s => {
+    const itemBtns = t.items.map(it => {
+      const e = getEntrega(t.id, s.id, it.key);
+      const cls = e && e.entregado ? 'on-p' : (e && e.exento ? 'on-saf' : '');
+      const label = e && e.entregado ? `${it.label} ✓` : (e && e.exento ? `${it.label} (exento)` : it.label);
+      return `<button class="state-btn ${cls}" style="width:auto;padding:0 10px;flex:1;" data-item="${it.key}" data-student="${s.id}">${label}</button>`;
+    }).join('');
+    return `
+      <div class="student-card">
+        <div class="row">
+          <span class="name" style="flex:1;">${s.apellido}, ${s.nombre}</span>
+        </div>
+        <div class="btn-group" style="width:100%;margin-top:6px;">${itemBtns}</div>
+      </div>`;
+  }).join('');
+
+  $app.innerHTML = `
+    <div class="appbar" style="padding:0 0 10px;">
+      <button class="back-btn" id="backBtn">${icon('back')}</button>
+      <h1>${t.nombre}</h1>
+    </div>
+    <div class="course-picker">${cursoBtns(cursos)}</div>
+    <p class="date-label">${t.fechaLimite ? 'Hasta el '+fmtDateShort(t.fechaLimite) : 'Sin fecha límite'} · tocá un botón para marcar entregado, tocá de nuevo para exento, y una tercera vez para sacarlo</p>
+    ${students.length ? `<div>${rows}</div>` : `<p class="empty-inline">Este curso no tiene alumnos cargados.</p>`}
+    <p class="section-label" style="margin-top:18px;">Carga masiva (opcional)</p>
+    <input type="file" id="tramiteImportInput" accept="application/json" style="margin-bottom:10px;">
+    <button class="btn-secondary" id="borrarTramiteBtn" style="width:100%;margin-top:6px;color:var(--stamp);">Borrar este trámite</button>
+  `;
+  document.getElementById('backBtn').addEventListener('click', () => goBack('tramites'));
+  attachCursoBtns((c) => { selectedCurso = c; render(); });
+  document.querySelectorAll('[data-item]').forEach(b => {
+    b.addEventListener('click', () => toggleEntrega(t.id, b.dataset.student, b.dataset.item));
+  });
+  document.getElementById('borrarTramiteBtn').addEventListener('click', () => borrarTramite(t.id, t.nombre));
+  document.getElementById('tramiteImportInput').addEventListener('change', (e) => {
+    const file = e.target.files[0];
+    if(!file) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      try{ importarEntregasMasivo(t.id, JSON.parse(reader.result)); }
+      catch(err){ customAlert('No pude leer ese archivo.'); }
+    };
+    reader.readAsText(file);
+  });
 }
 
 function renderConfig(){
