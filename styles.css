@@ -132,6 +132,18 @@ main{
 }
 #loadingScreen.hidden{opacity:0;pointer-events:none;}
 
+.skeleton-wrap{width:100%;max-width:340px;padding:0 24px;margin-top:8px;}
+.skeleton-bar{
+  border-radius:12px;margin-bottom:10px;
+  background:linear-gradient(90deg, var(--paper-2) 25%, var(--border) 37%, var(--paper-2) 63%);
+  background-size:400% 100%;
+  animation:shimmer 1.6s ease-in-out infinite;
+}
+@keyframes shimmer{
+  0%{background-position:100% 50%;}
+  100%{background-position:0% 50%;}
+}
+
 .modal-overlay{
   position:fixed;inset:0;z-index:600;
   background:rgba(23,28,35,0.5);
@@ -207,6 +219,8 @@ main.fade-in{animation:screenFadeIn 0.22s ease;}
 .progress-row{display:flex;align-items:center;gap:8px;padding:0 15px 12px;}
 .progress-bar{flex:1;height:5px;border-radius:3px;background:var(--paper-2);overflow:hidden;}
 .progress-fill{height:100%;background:var(--sage);border-radius:3px;transition:width .3s;}
+.progress-fill.complete{background:var(--gold);}
+.progress-row.complete-row .progress-label::after{content:' ✓';color:var(--gold);}
 .progress-label{font-size:11px;color:var(--ink-soft);flex-shrink:0;min-width:40px;text-align:right;}
 .module-row.disabled{cursor:default;opacity:0.45;}
 
@@ -346,7 +360,8 @@ main.fade-in{animation:screenFadeIn 0.22s ease;}
 .hour-list{display:flex;flex-direction:column;gap:8px;}
 .hour-block{background:var(--card);border:0.5px solid var(--border);border-radius:var(--radius-sm);padding:12px 14px;}
 .hour-head{display:flex;gap:12px;margin-bottom:2px;}
-.hour-label{font-size:11.5px;color:var(--ink-soft);width:52px;flex-shrink:0;padding-top:1px;}
+.hour-label{font-size:11.5px;color:var(--ink-soft);width:58px;flex-shrink:0;padding-top:1px;line-height:1.5;}
+.hour-time{font-size:9.5px;color:var(--ink-soft);opacity:0.75;}
 .hour-info{flex:1;}
 .hour-info .subject{font-size:14px;font-weight:500;margin:0;}
 .hour-info .submeta{font-size:11px;color:var(--ink-soft);margin:2px 0 0;}

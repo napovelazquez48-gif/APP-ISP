@@ -597,6 +597,25 @@ async function gestionarAutorizacion(studentId){
 
 // ---------- Horarios y suplencias ----------
 
+const HORA_TIEMPOS = {
+  1: ['07:45','08:25'], 2: ['08:25','09:05'],
+  3: ['09:20','10:00'], 4: ['10:00','10:40'],
+  5: ['10:55','11:35'], 6: ['11:35','12:15'],
+  7: ['12:20','13:00'], 8: ['13:00','13:40'],
+};
+const EF_HORARIO = [
+  { cursos: ['1','2','3'], inicio: '14:20', fin: '15:20' },
+  { cursos: ['4','5'], inicio: '15:25', fin: '16:25' },
+];
+
+function horaBlockLabel(startHour, endHour){
+  const t1 = HORA_TIEMPOS[startHour];
+  const t2 = HORA_TIEMPOS[endHour];
+  const horaTexto = startHour === endHour ? `${startHour}ª hs` : `${startHour}-${endHour}ª hs`;
+  const tiempoTexto = (t1 && t2) ? `${t1[0]} a ${t2[1]}` : '';
+  return { horaTexto, tiempoTexto };
+}
+
 function buildBlocks(dayEntries){
   const blocks = [];
   dayEntries.forEach(entry => {
@@ -649,9 +668,7 @@ function renderHorarios(){
   const dateKey = todayISO();
 
   const rows = blocks.map(b => {
-    const hourLabel = b.startHour === b.endHour
-      ? `${b.startHour}ª hs`
-      : `${b.startHour}-${b.endHour}ª hs`;
+    const { horaTexto, tiempoTexto } = horaBlockLabel(b.startHour, b.endHour);
     const subKey = `${dateKey}|${selectedCurso}|${selectedDia}|${b.startHour}`;
     const isShared = b.teachers.length > 1;
 
@@ -670,7 +687,7 @@ function renderHorarios(){
     return `
       <div class="hour-block ${isShared?'shared':''}">
         <div class="hour-head">
-          <span class="hour-label">${hourLabel}</span>
+          <span class="hour-label">${horaTexto}${tiempoTexto?`<br><span class="hour-time">${tiempoTexto}</span>`:''}</span>
           <div class="hour-info">
             <p class="subject">${b.subject}</p>
             ${isShared ? '<p class="submeta">Grupo compartido</p>' : ''}
@@ -679,6 +696,17 @@ function renderHorarios(){
         <div class="teacher-list">${teacherRows}</div>
       </div>`;
   }).join('');
+
+  const efBloque = (selectedDia === 'martes' || selectedDia === 'jueves')
+    ? EF_HORARIO.find(b => b.cursos.includes(selectedCurso))
+    : null;
+  const efRow = efBloque ? `
+    <div class="hour-block">
+      <div class="hour-head">
+        <span class="hour-label">Ed. Física<br><span class="hour-time">${efBloque.inicio} a ${efBloque.fin}</span></span>
+        <div class="hour-info"><p class="subject">Educación Física</p></div>
+      </div>
+    </div>` : '';
 
   $app.innerHTML = `
     <div class="appbar" style="padding:0 0 10px;">
@@ -689,7 +717,7 @@ function renderHorarios(){
       ${cursoBtns(CURSOS)}
       ${pillBtnRow('dia', DIAS.map(d => ({value:d, label:DIA_LABEL[d].slice(0,3)})), selectedDia)}
     </div>
-    ${blocks.length ? `<div class="hour-list">${rows}</div>` : `<div class="empty-state"><h2>Sin clases</h2><p>No hay horario cargado para este día.</p></div>`}
+    ${(blocks.length || efRow) ? `<div class="hour-list">${rows}${efRow}</div>` : `<div class="empty-state"><h2>Sin clases</h2><p>No hay horario cargado para este día.</p></div>`}
   `;
 
   document.getElementById('backBtn').addEventListener('click', () => goBack('home'));
@@ -714,7 +742,7 @@ function renderStudentHorario(){
   const dateKey = todayISO();
 
   const rows = blocks.map(b => {
-    const hourLabel = b.startHour === b.endHour ? `${b.startHour}ª hs` : `${b.startHour}-${b.endHour}ª hs`;
+    const { horaTexto, tiempoTexto } = horaBlockLabel(b.startHour, b.endHour);
     const subKey = `${dateKey}|${curso}|${window.__studentDia}|${b.startHour}`;
     const isShared = b.teachers.length > 1;
     const teacherRows = b.teachers.map(t => {
@@ -725,7 +753,7 @@ function renderStudentHorario(){
     return `
       <div class="hour-block ${isShared?'shared':''}">
         <div class="hour-head">
-          <span class="hour-label">${hourLabel}</span>
+          <span class="hour-label">${horaTexto}${tiempoTexto?`<br><span class="hour-time">${tiempoTexto}</span>`:''}</span>
           <div class="hour-info">
             <p class="subject">${b.subject}</p>
             ${isShared ? '<p class="submeta">Grupo compartido</p>' : ''}
@@ -735,6 +763,17 @@ function renderStudentHorario(){
       </div>`;
   }).join('');
 
+  const efBloque = (window.__studentDia === 'martes' || window.__studentDia === 'jueves')
+    ? EF_HORARIO.find(b => b.cursos.includes(curso))
+    : null;
+  const efRow = efBloque ? `
+    <div class="hour-block">
+      <div class="hour-head">
+        <span class="hour-label">Ed. Física<br><span class="hour-time">${efBloque.inicio} a ${efBloque.fin}</span></span>
+        <div class="hour-info"><p class="subject">Educación Física</p></div>
+      </div>
+    </div>` : '';
+
   $app.innerHTML = `
     <div class="appbar" style="padding:0 0 10px;">
       <button class="back-btn" id="backBtn">${icon('back')}</button>
@@ -743,7 +782,7 @@ function renderStudentHorario(){
     <div class="course-picker">
       ${pillBtnRow('diaAlumno', DIAS.map(d => ({value:d, label:DIA_LABEL[d].slice(0,3)})), window.__studentDia)}
     </div>
-    ${blocks.length ? `<div class="hour-list">${rows}</div>` : `<div class="empty-state"><h2>Sin clases</h2><p>No hay horario cargado para este día.</p></div>`}
+    ${(blocks.length || efRow) ? `<div class="hour-list">${rows}${efRow}</div>` : `<div class="empty-state"><h2>Sin clases</h2><p>No hay horario cargado para este día.</p></div>`}
   `;
   document.getElementById('backBtn').addEventListener('click', () => goBack('studentHome'));
   attachPillBtns('diaAlumno', (d) => { window.__studentDia = d; render(); });
@@ -1686,6 +1725,7 @@ function renderInner(){
   else if(currentRoute === 'tramites') renderTramites();
   else if(currentRoute === 'tramiteNuevo') renderTramiteNuevo();
   else if(currentRoute === 'tramiteDetalle') renderTramiteDetalle();
+  else if(currentRoute === 'tramiteImprimir') renderTramiteImprimir();
   else if(currentRoute === 'vistaGeneral') renderVistaGeneral();
   renderTabbar();
 }
@@ -1838,7 +1878,9 @@ function renderFamiliaAlumno(){
 function renderResumenLista(){
   const cursos = cursosDisponibles();
   if(!cursos.includes(selectedCurso)) selectedCurso = cursos[0];
-  const students = getStudents().filter(s => s.curso === selectedCurso).sort((a,b)=> a.apellido.localeCompare(b.apellido));
+  const filtro = (window.__resumenFiltro||'').toLowerCase();
+  let students = getStudents().filter(s => s.curso === selectedCurso).sort((a,b)=> a.apellido.localeCompare(b.apellido));
+  if(filtro) students = students.filter(s => `${s.apellido} ${s.nombre}`.toLowerCase().includes(filtro));
   const weights = computeAbsenceWeights();
   const rows = students.map(s => {
     const w = weights[s.id] || 0;
@@ -1860,10 +1902,12 @@ function renderResumenLista(){
     <div class="course-picker">
       ${cursoBtns(cursos)}
     </div>
-    <div class="module-list">${rows}</div>
+    <input type="text" id="filtroResumen" placeholder="Buscar por nombre..." style="margin-bottom:12px;" value="${window.__resumenFiltro||''}">
+    ${students.length ? `<div class="module-list">${rows}</div>` : `<p class="empty-inline">Nadie coincide con esa búsqueda.</p>`}
   `;
   document.getElementById('backBtn').addEventListener('click', () => goBack(homeRoute()));
   attachCursoBtns((c) => { selectedCurso = c; render(); });
+  document.getElementById('filtroResumen').addEventListener('input', (e) => { window.__resumenFiltro = e.target.value; render(); });
   document.querySelectorAll('[data-student]').forEach(el => {
     el.addEventListener('click', () => { selectedStudentId = el.dataset.student; navigate('resumenAlumno'); });
   });
@@ -3874,8 +3918,8 @@ function renderTramites(){
         <span class="badge-soon" style="background:${pendientes>0?'var(--stamp-bg)':'var(--sage-bg)'};color:${pendientes>0?'var(--stamp)':'var(--sage)'};">${pendientes} pend.</span>
         <span class="chevron">${icon('chevron')}</span>
       </div>
-      <div class="progress-row">
-        <div class="progress-bar"><div class="progress-fill" style="width:${pct}%;"></div></div>
+      <div class="progress-row ${pct===100?'complete-row':''}">
+        <div class="progress-bar"><div class="progress-fill ${pct===100?'complete':''}" style="width:${pct}%;"></div></div>
         <span class="progress-label">${hechos}/${total}</span>
       </div>
     </div>`;
@@ -3934,6 +3978,45 @@ async function importarEntregasMasivo(tramiteId, data){
   render();
 }
 
+function renderTramiteImprimir(){
+  const t = getTramites()[selectedTramiteId];
+  if(!t){ navigate('tramites'); return; }
+  const students = getStudents().filter(s => t.cursos.includes(s.curso)).sort((a,b)=> Number(a.curso)-Number(b.curso) || a.apellido.localeCompare(b.apellido));
+
+  const rows = students.map(s => {
+    const celdas = t.items.map(it => {
+      const e = getEntrega(t.id, s.id, it.key);
+      const txt = e && e.entregado ? '✓' : (e && e.exento ? 'Exento' : '—');
+      return `<td style="text-align:center;">${txt}</td>`;
+    }).join('');
+    return `<tr><td>${s.curso}°A</td><td>${s.apellido}, ${s.nombre}</td>${celdas}</tr>`;
+  }).join('');
+
+  $app.innerHTML = `
+    <div class="appbar no-print" style="padding:0 0 10px;">
+      <button class="back-btn" id="backBtn">${icon('back')}</button>
+      <h1>Imprimir lista</h1>
+    </div>
+    <button class="btn-primary no-print" id="imprimirBtn" style="width:100%;margin-bottom:16px;">Imprimir / Guardar como PDF</button>
+    <div class="boletin-sheet">
+      <div class="boletin-head">
+        <img src="icon-192.png" alt="ISP">
+        <div>
+          <p class="boletin-title">Instituto Superior Porteño</p>
+          <p class="boletin-sub">${t.nombre}${t.fechaLimite?' · hasta '+fmtDateShort(t.fechaLimite):''}</p>
+        </div>
+      </div>
+      <table class="boletin-table">
+        <tr><th>Curso</th><th>Alumno</th>${t.items.map(i=>`<th>${i.label}</th>`).join('')}</tr>
+        ${rows}
+      </table>
+      <p class="boletin-footer">Generado el ${fmtDateLong(todayISO())}</p>
+    </div>
+  `;
+  document.getElementById('backBtn').addEventListener('click', () => goBack('tramiteDetalle'));
+  document.getElementById('imprimirBtn').addEventListener('click', () => window.print());
+}
+
 function renderTramiteDetalle(){
   const t = getTramites()[selectedTramiteId];
   if(!t){ navigate('tramites'); return; }
@@ -3965,6 +4048,7 @@ function renderTramiteDetalle(){
     <div class="course-picker">${cursoBtns(cursos)}</div>
     <p class="date-label">${t.fechaLimite ? 'Hasta el '+fmtDateShort(t.fechaLimite) : 'Sin fecha límite'} · tocá un botón para marcar entregado, tocá de nuevo para exento, y una tercera vez para sacarlo</p>
     ${students.length ? `<div>${rows}</div>` : `<p class="empty-inline">Este curso no tiene alumnos cargados.</p>`}
+    <button class="btn-secondary no-print" id="imprimirTramiteBtn" style="width:100%;margin-top:16px;">${icon('file')} Ver lista para imprimir / PDF</button>
     <p class="section-label" style="margin-top:18px;">Carga masiva (opcional)</p>
     <input type="file" id="tramiteImportInput" accept="application/json" style="margin-bottom:10px;">
     <button class="btn-secondary" id="borrarTramiteBtn" style="width:100%;margin-top:6px;color:var(--stamp);">Borrar este trámite</button>
@@ -3975,6 +4059,7 @@ function renderTramiteDetalle(){
     b.addEventListener('click', () => toggleEntrega(t.id, b.dataset.student, b.dataset.item));
   });
   document.getElementById('borrarTramiteBtn').addEventListener('click', () => borrarTramite(t.id, t.nombre));
+  document.getElementById('imprimirTramiteBtn').addEventListener('click', () => navigate('tramiteImprimir'));
   document.getElementById('tramiteImportInput').addEventListener('change', (e) => {
     const file = e.target.files[0];
     if(!file) return;
