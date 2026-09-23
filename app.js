@@ -751,6 +751,8 @@ function renderStudentHorario(){
 
 function icon(name){
   const icons = {
+    money: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><rect x="2" y="6" width="20" height="12" rx="2"/><circle cx="12" cy="12" r="3"/><path d="M6 10v.01M18 14v.01"/></svg>',
+    heart: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M20.8 8.6c0-3-2.2-5.1-5-5.1-1.6 0-3.1.8-3.8 2.1-.7-1.3-2.2-2.1-3.8-2.1-2.8 0-5 2.1-5 5.1 0 5.6 8.8 10.4 8.8 10.4s8.8-4.8 8.8-10.4z"/></svg>',
     clipboard: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><rect x="6" y="4" width="12" height="17" rx="2"/><path d="M9 4V3a1 1 0 011-1h4a1 1 0 011 1v1"/><path d="M9 11h6M9 15h4"/></svg>',
     alert: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M12 3l10 18H2L12 3z"/><path d="M12 10v4M12 17h.01"/></svg>',
     file: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M14 2H7a2 2 0 00-2 2v16a2 2 0 002 2h10a2 2 0 002-2V8z"/><path d="M14 2v6h6"/></svg>',
@@ -902,7 +904,7 @@ function renderHome(){
       </div>
     </div>
 
-    <div class="stat-grid">
+    <div class="stat-grid" style="${Object.keys(getTramites()).length ? 'grid-template-columns:1fr 1fr 1fr;' : ''}">
       <div class="stat-card" id="cardAsistenciaHoy" style="cursor:pointer;">
         <p class="label">Asistencia hoy</p>
         <p class="value"><span class="count-num" data-target="${presentCount}">0</span><span class="sub"> / ${totalMarked || 0}</span></p>
@@ -911,6 +913,22 @@ function renderHome(){
         <p class="label">Alumnos en alerta</p>
         <p class="value"><span class="count-num" data-target="${alertCount}">0</span></p>
       </div>
+      ${(() => {
+        const tramites = Object.values(getTramites());
+        if(!tramites.length) return '';
+        let pend = 0;
+        tramites.forEach(t => {
+          const students = getStudents().filter(s => t.cursos.includes(s.curso));
+          students.forEach(s => t.items.forEach(it => {
+            const e = getEntrega(t.id, s.id, it.key);
+            if(!e || (!e.entregado && !e.exento)) pend++;
+          }));
+        });
+        return `<div class="stat-card ${pend>0?'alert':''}" id="cardTramites" style="cursor:pointer;">
+          <p class="label">Entregas pendientes</p>
+          <p class="value"><span class="count-num" data-target="${pend}">0</span></p>
+        </div>`;
+      })()}
     </div>
 
     <div class="module-list">
@@ -949,6 +967,9 @@ function renderHome(){
   attachModuleHandlers();
   document.getElementById('cardAsistenciaHoy').addEventListener('click', () => navigate('detalleAsistenciaHoy'));
   document.getElementById('cardAlertas').addEventListener('click', () => navigate('detalleAlertas'));
+  if(document.getElementById('cardTramites')){
+    document.getElementById('cardTramites').addEventListener('click', () => navigate('tramites'));
+  }
   animateCounts();
   if(document.getElementById('importarLink')){
     document.getElementById('importarLink').addEventListener('click', (e) => { e.preventDefault(); navigate('importar'); });
@@ -3829,22 +3850,34 @@ function renderTramites(){
   const tramites = Object.values(getTramites()).sort((a,b)=> (b.createdAt||0)-(a.createdAt||0));
   const rows = tramites.map(t => {
     const students = getStudents().filter(s => t.cursos.includes(s.curso));
-    let pendientes = 0;
+    let pendientes = 0, total = 0;
     students.forEach(s => {
       t.items.forEach(it => {
+        total++;
         const e = getEntrega(t.id, s.id, it.key);
         if(!e || (!e.entregado && !e.exento)) pendientes++;
       });
     });
+    const hechos = total - pendientes;
+    const pct = total ? Math.round((hechos/total)*100) : 0;
+    const tipoIcon = t.items.some(i => /dinero|plata|pago/i.test(i.label)) ? 'money'
+      : t.items.some(i => /ficha|apto|m[eé]dic/i.test(i.label)) ? 'heart'
+      : 'file';
     return `
-    <div class="module-row" data-tramite="${t.id}">
-      <span class="icon-chip">${icon('file')}</span>
-      <div class="txt">
-        <p class="title">${t.nombre}</p>
-        <p class="desc">${t.cursos.map(c=>c+'°A').join(', ')} · ${t.items.map(i=>i.label).join(' + ')}${t.fechaLimite?' · hasta '+fmtDateShort(t.fechaLimite):''}</p>
+    <div class="tramite-card" data-tramite="${t.id}">
+      <div class="module-row" style="border-bottom:none;padding:14px 15px 8px;">
+        <span class="icon-chip">${icon(tipoIcon)}</span>
+        <div class="txt">
+          <p class="title">${t.nombre}</p>
+          <p class="desc">${t.cursos.map(c=>c+'°A').join(', ')} · ${t.items.map(i=>i.label).join(' + ')}${t.fechaLimite?' · hasta '+fmtDateShort(t.fechaLimite):''}</p>
+        </div>
+        <span class="badge-soon" style="background:${pendientes>0?'var(--stamp-bg)':'var(--sage-bg)'};color:${pendientes>0?'var(--stamp)':'var(--sage)'};">${pendientes} pend.</span>
+        <span class="chevron">${icon('chevron')}</span>
       </div>
-      <span class="badge-soon" style="background:${pendientes>0?'var(--stamp-bg)':'var(--sage-bg)'};color:${pendientes>0?'var(--stamp)':'var(--sage)'};">${pendientes} pend.</span>
-      <span class="chevron">${icon('chevron')}</span>
+      <div class="progress-row">
+        <div class="progress-bar"><div class="progress-fill" style="width:${pct}%;"></div></div>
+        <span class="progress-label">${hechos}/${total}</span>
+      </div>
     </div>`;
   }).join('');
 
