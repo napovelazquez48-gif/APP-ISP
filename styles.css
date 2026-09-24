@@ -519,4 +519,7 @@ textarea{resize:vertical;}
   main{background-image:none;padding:0;}
   #app{box-shadow:none;}
   .boletin-sheet{border:none;padding:0;}
+  .boletin-page{break-after:page;}
+  .boletin-page:last-child{break-after:auto;}
 }
+.boletin-page{margin-bottom:24px;}

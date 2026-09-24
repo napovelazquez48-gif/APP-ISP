@@ -226,12 +226,24 @@ function startListeners(){
 
   const configRef = doc(db,'config','general');
   onSnapshot(configRef, d => {
-    if(d.exists()) cache.config = d.data();
+    if(d.exists()){
+      cache.config = d.data();
+      aplicarConfigDinamica(cache.config);
+    }
     render();
   });
   getDoc(configRef).then(d => {
     if(!d.exists()) setDoc(configRef, cache.config).catch(()=>{});
   }).catch(()=>{});
+}
+
+function aplicarConfigDinamica(cfg){
+  if(cfg.bimestres && cfg.bimestres.length === 4) BIMESTRES = cfg.bimestres;
+  if(cfg.feriados) FERIADOS_2026 = new Set(cfg.feriados);
+  if(typeof cfg.umbralAlerta === 'number') UMBRAL_ALERTA = cfg.umbralAlerta;
+  if(typeof cfg.umbralSCP === 'number') UMBRAL_SCP = cfg.umbralSCP;
+  if(cfg.horaTiempos) HORA_TIEMPOS = cfg.horaTiempos;
+  if(cfg.efHorario) EF_HORARIO = cfg.efHorario;
 }
 
 function getStudents(){ return SEED_STUDENTS; }
@@ -240,14 +252,14 @@ function getAttendance(){ return cache.attendance; }
 function getEF(){ return cache.ef; }
 
 // ---------- Bimestres 2026 ----------
-const BIMESTRES = [
+let BIMESTRES = [
   { n: 1, from: '2026-03-02', to: '2026-05-07' },
   { n: 2, from: '2026-05-08', to: '2026-07-17' },
   { n: 3, from: '2026-08-03', to: '2026-10-02' },
   { n: 4, from: '2026-10-05', to: '2026-12-03' },
 ];
 // Feriados y días sin clase 2026, según el almanaque oficial del colegio
-const FERIADOS_2026 = new Set([
+let FERIADOS_2026 = new Set([
   '2026-03-23', // día no laborable turístico (puente)
   '2026-03-24', // Día Nacional de la Memoria
   '2026-04-02', // Malvinas + Jueves Santo
@@ -391,7 +403,7 @@ function computeFechaAlerta(studentId, range){
   let acumulado = 0;
   for(const ev of eventos){
     acumulado += ev.w;
-    if(acumulado >= 5) return ev.fecha;
+    if(acumulado >= UMBRAL_ALERTA) return ev.fecha;
   }
   return null;
 }
@@ -597,13 +609,13 @@ async function gestionarAutorizacion(studentId){
 
 // ---------- Horarios y suplencias ----------
 
-const HORA_TIEMPOS = {
+let HORA_TIEMPOS = {
   1: ['07:45','08:25'], 2: ['08:25','09:05'],
   3: ['09:20','10:00'], 4: ['10:00','10:40'],
   5: ['10:55','11:35'], 6: ['11:35','12:15'],
   7: ['12:20','13:00'], 8: ['13:00','13:40'],
 };
-const EF_HORARIO = [
+let EF_HORARIO = [
   { cursos: ['1','2','3'], inicio: '14:20', fin: '15:20' },
   { cursos: ['4','5'], inicio: '15:25', fin: '16:25' },
 ];
@@ -718,6 +730,7 @@ function renderHorarios(){
       ${pillBtnRow('dia', DIAS.map(d => ({value:d, label:DIA_LABEL[d].slice(0,3)})), selectedDia)}
     </div>
     ${(blocks.length || efRow) ? `<div class="hour-list">${rows}${efRow}</div>` : `<div class="empty-state"><h2>Sin clases</h2><p>No hay horario cargado para este día.</p></div>`}
+    <button class="btn-secondary" id="ausentismoBtn" style="width:100%;margin-top:16px;">Ver ausentismo docente</button>
   `;
 
   document.getElementById('backBtn').addEventListener('click', () => goBack('home'));
@@ -726,6 +739,33 @@ function renderHorarios(){
   document.querySelectorAll('.teacher-line').forEach(el => {
     el.addEventListener('click', () => toggleSuplencia(el.dataset.subkey, el.dataset.teacher));
   });
+  document.getElementById('ausentismoBtn').addEventListener('click', () => navigate('ausentismoDocente'));
+}
+
+function renderAusentismoDocente(){
+  const conteo = {};
+  Object.values(cache.substitutions).forEach(porProfesor => {
+    Object.keys(porProfesor).forEach(nombre => {
+      conteo[nombre] = (conteo[nombre]||0) + 1;
+    });
+  });
+  const lista = Object.entries(conteo).sort((a,b)=> b[1]-a[1]);
+  const rows = lista.map(([nombre, veces]) => `
+    <div class="sancion-item">
+      <p class="folio">${nombre}</p>
+      <p class="motivo">${veces} ${veces===1?'ausencia registrada':'ausencias registradas'}</p>
+    </div>
+  `).join('');
+
+  $app.innerHTML = `
+    <div class="appbar" style="padding:0 0 10px;">
+      <button class="back-btn" id="backBtn">${icon('back')}</button>
+      <h1>Ausentismo docente</h1>
+    </div>
+    <p class="info-note" style="margin-top:0;">${icon('info')}Cuenta las veces que marcaste a cada profesor/a como ausente en "Horarios y suplencias", desde que empezaste a usar la app.</p>
+    ${lista.length ? `<div class="sancion-list">${rows}</div>` : `<p class="empty-inline">Todavía no marcaste ninguna ausencia docente.</p>`}
+  `;
+  document.getElementById('backBtn').addEventListener('click', () => goBack('horarios'));
 }
 
 // ---------- Rendering ----------
@@ -924,7 +964,7 @@ function renderHome(){
 
   // Alert: students with >=5 weighted absences (tardanza=0.5, falta completa=1, Ed. Física=0.5)
   const weights = computeAbsenceWeights();
-  const alertCount = Object.values(weights).filter(c => c >= 5).length;
+  const alertCount = Object.values(weights).filter(c => c >= UMBRAL_ALERTA).length;
 
   const stamp = fmtDateStamp();
   const horaActual = new Date().getHours();
@@ -970,12 +1010,30 @@ function renderHome(){
       })()}
     </div>
 
+    </div>
+
+    ${(() => {
+      const hoy = todayISO();
+      const en5dias = new Date(); en5dias.setDate(en5dias.getDate()+5);
+      const limite = localISODate(en5dias);
+      const proximos = Object.values(getTramites()).filter(t => {
+        if(!t.fechaLimite || t.fechaLimite < hoy || t.fechaLimite > limite) return false;
+        const students = getStudents().filter(s => t.cursos.includes(s.curso));
+        return students.some(s => t.items.some(it => { const e = getEntrega(t.id, s.id, it.key); return !e || (!e.entregado && !e.exento); }));
+      });
+      if(!proximos.length) return '';
+      return `<div class="alert-banner" style="background:var(--gold-bg);border-left-color:var(--gold);">
+        <p class="alert-text" style="color:var(--gold);">${proximos.map(t => `"${t.nombre}" vence el ${fmtDateShort(t.fechaLimite)} y todavía hay pendientes`).join('<br>')}</p>
+      </div>`;
+    })()}
+
     <div class="module-list">
       ${moduleRow('clipboard','Asistencia diaria','Presente, ausente, tardanza', 'asistencia')}
       ${moduleRow('alert','Sanciones e incidentes','Registro por alumno', 'sanciones')}
       ${moduleRow('file','Justificativos médicos','Certificados y fechas', 'justificativos')}
       ${moduleRow('file','Entregas y trámites','Autorizaciones, plata, fichas médicas, aptos...', 'tramites')}
       ${moduleRow('calendar','Horarios y suplencias','Grilla por curso y división', 'horarios')}
+      ${moduleRow('calendar','Calendario del ciclo','Bimestres y feriados', 'calendarioCiclo')}
       ${moduleRow('users','Familias','Contacto de padres y tutores', 'familias')}
       ${moduleRow('chart','Resumen del alumno','Faltas, apercibimientos y certificados', 'resumen')}
       ${moduleRow('chart','Vista por curso','Alertas y riesgo de SCP de un vistazo', 'vistaCurso')}
@@ -1054,7 +1112,7 @@ function renderDetalleAlertas(){
   const students = getStudents();
   const weights = computeAbsenceWeights();
   const bim = bimestreActual();
-  const alertados = students.filter(s => (weights[s.id]||0) >= 5)
+  const alertados = students.filter(s => (weights[s.id]||0) >= UMBRAL_ALERTA)
     .map(s => Object.assign({}, s, { fechaAlerta: computeFechaAlerta(s.id, bim) }))
     .sort((a,b)=> (Number(a.curso)-Number(b.curso)) || ((weights[b.id]||0)-(weights[a.id]||0)));
 
@@ -1659,6 +1717,8 @@ function renderJustificativoAlumno(){
   updatePreview();
 }
 
+let UMBRAL_ALERTA = 5;
+let UMBRAL_SCP = 0.85;
 const APP_START_TIME = Date.now();
 
 let lastFocusedInput = null;
@@ -1713,6 +1773,9 @@ function renderInner(){
   else if(currentRoute === 'resumenAlumno') renderResumenAlumno();
   else if(currentRoute === 'detalleFaltasAlumno') renderDetalleFaltasAlumno();
   else if(currentRoute === 'boletinAlumno') renderBoletinAlumno();
+  else if(currentRoute === 'boletinCurso') renderBoletinCurso();
+  else if(currentRoute === 'compararBimestres') renderCompararBimestres();
+  else if(currentRoute === 'ausentismoDocente') renderAusentismoDocente();
   else if(currentRoute === 'resumenValoraciones') renderResumenValoraciones();
   else if(currentRoute === 'resumenNotas') renderResumenNotas();
   else if(currentRoute === 'importar') renderImportar();
@@ -1737,6 +1800,8 @@ function renderInner(){
   else if(currentRoute === 'valoracionAlumno') renderValoracionAlumno();
   else if(currentRoute === 'notas') renderNotasLista();
   else if(currentRoute === 'config') renderConfig();
+  else if(currentRoute === 'configAvanzada') renderConfigAvanzada();
+  else if(currentRoute === 'calendarioCiclo') renderCalendarioCiclo();
   else if(currentRoute === 'auditoria') renderAuditoria();
   else if(currentRoute === 'tramites') renderTramites();
   else if(currentRoute === 'tramiteNuevo') renderTramiteNuevo();
@@ -1905,7 +1970,7 @@ function renderResumenLista(){
         <p class="title">${s.apellido}, ${s.nombre}</p>
         <p class="desc">${w} falta${w!==1?'s':''} en el bimestre</p>
       </div>
-      ${w>=5 ? `<span class="badge-soon" style="background:var(--stamp-bg);color:var(--stamp);">${w}</span>` : ''}
+      ${w>=UMBRAL_ALERTA ? `<span class="badge-soon" style="background:var(--stamp-bg);color:var(--stamp);">${w}</span>` : ''}
       <span class="chevron">${icon('chevron')}</span>
     </div>`;
   }).join('');
@@ -1920,6 +1985,7 @@ function renderResumenLista(){
     </div>
     <input type="text" id="filtroResumen" placeholder="Buscar por nombre..." style="margin-bottom:12px;" value="${window.__resumenFiltro||''}">
     ${students.length ? `<div class="module-list">${rows}</div>` : `<p class="empty-inline">Nadie coincide con esa búsqueda.</p>`}
+    ${userRole==='admin' ? `<button class="btn-secondary" id="boletinesCursoBtn" style="width:100%;margin-top:14px;">${icon('file')} Ver boletines de todo el curso para imprimir</button>` : ''}
   `;
   document.getElementById('backBtn').addEventListener('click', () => goBack(homeRoute()));
   attachCursoBtns((c) => { selectedCurso = c; render(); });
@@ -1927,6 +1993,9 @@ function renderResumenLista(){
   document.querySelectorAll('[data-student]').forEach(el => {
     el.addEventListener('click', () => { selectedStudentId = el.dataset.student; navigate('resumenAlumno'); });
   });
+  if(document.getElementById('boletinesCursoBtn')){
+    document.getElementById('boletinesCursoBtn').addEventListener('click', () => navigate('boletinCurso'));
+  }
 }
 
 let selectedBimestreN = null;
@@ -1964,9 +2033,8 @@ function subjectsAfectadasEnDia(studentId, iso){
 let selectedBimestreBoletin = 0;
 let selectedTramiteId = null;
 
-function renderBoletinAlumno(){
-  const student = getStudents().find(s => s.id === selectedStudentId);
-  const bimN = selectedBimestreBoletin || 0;
+function boletinSheetHTML(studentId, bimN){
+  const student = getStudents().find(s => s.id === studentId);
   const bim = bimN === 0
     ? { n:0, from: BIMESTRES[0].from, to: BIMESTRES[BIMESTRES.length-1].to }
     : BIMESTRES.find(b => b.n === bimN);
@@ -1974,7 +2042,7 @@ function renderBoletinAlumno(){
   let presentes=0, tardes=0, ausentes=0, justificadas=0;
   Object.entries(att).forEach(([key, rec]) => {
     const [fecha, sid] = key.split('|');
-    if(sid !== selectedStudentId || fecha < bim.from || fecha > bim.to) return;
+    if(sid !== studentId || fecha < bim.from || fecha > bim.to) return;
     if(rec.exencion) return;
     else if(rec.estado==='P') presentes++;
     else if(rec.estado==='T') tardes++;
@@ -1982,16 +2050,16 @@ function renderBoletinAlumno(){
     else if(rec.estado==='J') justificadas++;
   });
   const weights = computeAbsenceWeights(bim);
-  const weight = weights[selectedStudentId] || 0;
+  const weight = weights[studentId] || 0;
 
   const anioCompleto = { from: BIMESTRES[0].from, to: BIMESTRES[BIMESTRES.length-1].to };
-  const materias = computeMateriaStats(selectedStudentId, anioCompleto);
+  const materias = computeMateriaStats(studentId, anioCompleto);
   const materiaRows = Object.entries(materias).sort((a,b)=>a[0].localeCompare(b[0])).map(([subj, s]) => {
     const pct = s.total>0 ? Math.round((1 - s.faltas/s.total)*1000)/10 : 100;
-    return `<tr><td>${subj}</td><td style="text-align:center;">${s.faltas}/${s.total}</td><td style="text-align:center;">${pct}%${pct<85?' · SCP':''}</td></tr>`;
+    return `<tr><td>${subj}</td><td style="text-align:center;">${s.faltas}/${s.total}</td><td style="text-align:center;">${pct}%${pct<UMBRAL_SCP*100?' · SCP':''}</td></tr>`;
   }).join('');
 
-  const notas = Object.values(cache.notas).filter(n => n.studentId === selectedStudentId);
+  const notas = Object.values(cache.notas).filter(n => n.studentId === studentId);
   const notaMaterias = [...new Set(notas.map(n=>n.materia))].sort();
   const notaRows = notaMaterias.map(m => {
     const n1 = notas.find(n=>n.materia===m && n.cuatrimestre===1);
@@ -1999,18 +2067,9 @@ function renderBoletinAlumno(){
     return `<tr><td>${m}</td><td style="text-align:center;">${n1?n1.nota:'—'}</td><td style="text-align:center;">${n2?n2.nota:'—'}</td></tr>`;
   }).join('');
 
-  const sanciones = (getSanciones()[selectedStudentId] || []).slice().reverse();
+  const sanciones = (getSanciones()[studentId] || []).slice().reverse();
 
-  $app.innerHTML = `
-    <div class="appbar no-print" style="padding:0 0 10px;">
-      <button class="back-btn" id="backBtn">${icon('back')}</button>
-      <h1>Boletín</h1>
-    </div>
-    <div class="course-picker no-print">
-      ${pillBtnRow('bimBoletin', [...BIMESTRES.map(b => ({value:b.n, label:b.n+'°'})), {value:0, label:'Año'}], bim.n, bimColorClass)}
-    </div>
-    <button class="btn-primary no-print" id="imprimirBtn" style="width:100%;margin-bottom:16px;">Imprimir / Guardar como PDF</button>
-
+  return `
     <div class="boletin-sheet">
       <div class="boletin-head">
         <img src="icon-192.png" alt="ISP">
@@ -2038,11 +2097,102 @@ function renderBoletinAlumno(){
       ${sanciones.length ? `<table class="boletin-table">${sanciones.map(h=>`<tr><td>${ordinal(h.folio)}</td><td>${h.fecha}</td><td>${h.motivo}</td></tr>`).join('')}</table>` : '<p style="font-size:12px;">Sin registros.</p>'}
 
       <p class="boletin-footer">Generado el ${fmtDateLong(todayISO())}</p>
+    </div>`;
+}
+
+function renderBoletinAlumno(){
+  const bimN = selectedBimestreBoletin || 0;
+  $app.innerHTML = `
+    <div class="appbar no-print" style="padding:0 0 10px;">
+      <button class="back-btn" id="backBtn">${icon('back')}</button>
+      <h1>Boletín</h1>
     </div>
+    <div class="course-picker no-print">
+      ${pillBtnRow('bimBoletin', [...BIMESTRES.map(b => ({value:b.n, label:b.n+'°'})), {value:0, label:'Año'}], bimN, bimColorClass)}
+    </div>
+    <button class="btn-primary no-print" id="imprimirBtn" style="width:100%;margin-bottom:16px;">Imprimir / Guardar como PDF</button>
+    ${boletinSheetHTML(selectedStudentId, bimN)}
   `;
   document.getElementById('backBtn').addEventListener('click', () => goBack('resumenAlumno'));
   document.getElementById('imprimirBtn').addEventListener('click', () => window.print());
   attachPillBtns('bimBoletin', (v) => { selectedBimestreBoletin = Number(v); render(); });
+}
+
+function renderBoletinCurso(){
+  const bimN = window.__boletinCursoBim || 0;
+  const students = getStudents().filter(s => s.curso === selectedCurso).sort((a,b)=> a.apellido.localeCompare(b.apellido));
+  $app.innerHTML = `
+    <div class="appbar no-print" style="padding:0 0 10px;">
+      <button class="back-btn" id="backBtn">${icon('back')}</button>
+      <h1>Boletines de ${selectedCurso}° A</h1>
+    </div>
+    <div class="course-picker no-print">
+      ${pillBtnRow('bimBoletinCurso', [...BIMESTRES.map(b => ({value:b.n, label:b.n+'°'})), {value:0, label:'Año'}], bimN, bimColorClass)}
+    </div>
+    <button class="btn-primary no-print" id="imprimirBtn" style="width:100%;margin-bottom:16px;">Imprimir / Guardar como PDF (${students.length} boletines)</button>
+    ${students.map(s => `<div class="boletin-page">${boletinSheetHTML(s.id, bimN)}</div>`).join('')}
+  `;
+  document.getElementById('backBtn').addEventListener('click', () => goBack('resumen'));
+  document.getElementById('imprimirBtn').addEventListener('click', () => window.print());
+  attachPillBtns('bimBoletinCurso', (v) => { window.__boletinCursoBim = Number(v); render(); });
+}
+
+function statsDeBimestre(studentId, bim){
+  const att = getAttendance();
+  let presentes=0, tardes=0, ausentes=0, justificadas=0;
+  Object.entries(att).forEach(([key, rec]) => {
+    const [fecha, sid] = key.split('|');
+    if(sid !== studentId || fecha < bim.from || fecha > bim.to || rec.exencion) return;
+    if(rec.estado==='P') presentes++;
+    else if(rec.estado==='T') tardes++;
+    else if(rec.estado==='A') ausentes++;
+    else if(rec.estado==='J') justificadas++;
+  });
+  const weights = computeAbsenceWeights(bim);
+  return { presentes, tardes, ausentes, justificadas, ponderadas: weights[studentId] || 0 };
+}
+
+function renderCompararBimestres(){
+  const student = getStudents().find(s => s.id === selectedStudentId);
+  window.__compA = window.__compA || 1;
+  window.__compB = window.__compB || 3;
+  const bimA = BIMESTRES.find(b => b.n === window.__compA);
+  const bimB = BIMESTRES.find(b => b.n === window.__compB);
+  const statsA = statsDeBimestre(selectedStudentId, bimA);
+  const statsB = statsDeBimestre(selectedStudentId, bimB);
+
+  const filas = [
+    ['Presentes', statsA.presentes, statsB.presentes],
+    ['Tardes', statsA.tardes, statsB.tardes],
+    ['Ausentes', statsA.ausentes, statsB.ausentes],
+    ['Justificadas', statsA.justificadas, statsB.justificadas],
+    ['Faltas ponderadas', statsA.ponderadas, statsB.ponderadas],
+  ];
+  const rows = filas.map(([label, a, b]) => {
+    const dif = b - a;
+    const flecha = dif > 0 ? `<span style="color:var(--stamp);">▲ +${dif}</span>` : (dif < 0 ? `<span style="color:var(--sage);">▼ ${dif}</span>` : '—');
+    return `<tr><td>${label}</td><td style="text-align:center;">${a}</td><td style="text-align:center;">${b}</td><td style="text-align:center;">${flecha}</td></tr>`;
+  }).join('');
+
+  $app.innerHTML = `
+    <div class="appbar" style="padding:0 0 10px;">
+      <button class="back-btn" id="backBtn">${icon('back')}</button>
+      <h1>${student.apellido}, ${student.nombre}</h1>
+    </div>
+    <p class="section-label">Bimestre A</p>
+    <div class="course-picker">${pillBtnRow('compA', BIMESTRES.map(b => ({value:b.n, label:b.n+'° bim.'})), window.__compA, bimColorClass)}</div>
+    <p class="section-label">Bimestre B</p>
+    <div class="course-picker">${pillBtnRow('compB', BIMESTRES.map(b => ({value:b.n, label:b.n+'° bim.'})), window.__compB, bimColorClass)}</div>
+    <div class="config-card" style="margin-top:16px;">
+      <table class="boletin-table">
+        <tr><th></th><th style="text-align:center;">${window.__compA}° bim.</th><th style="text-align:center;">${window.__compB}° bim.</th><th style="text-align:center;">Cambio</th></tr>
+        ${rows}
+      </table>
+    </div>
+  `;
+  document.getElementById('backBtn').addEventListener('click', () => goBack('resumenAlumno'));
+  attachPillBtns('compA', (v) => { window.__compA = Number(v); render(); });
+  attachPillBtns('compB', (v) => { window.__compB = Number(v); render(); });
 }
 
 function renderDetalleFaltasAlumno(){
@@ -2124,7 +2274,7 @@ function renderResumenAlumno(){
   const materiaRows = Object.entries(materias).sort((a,b)=>a[0].localeCompare(b[0])).map(([subj, s]) => {
     const pct = s.total>0 ? (1 - s.faltas/s.total) : 1;
     const pctDisplay = Math.round(pct*1000)/10;
-    const scp = pct < 0.85;
+    const scp = pct < UMBRAL_SCP;
     return `<div class="materia-row ${scp?'scp':''}">
       <span class="materia-name">${subj}</span>
       <span class="materia-detail">${s.faltas}/${s.total}</span>
@@ -2146,7 +2296,7 @@ function renderResumenAlumno(){
     </div>
 
     <div class="stat-grid">
-      <div class="stat-card ${weight>=5?'alert':''}" id="cardFaltasBim" style="cursor:pointer;">
+      <div class="stat-card ${weight>=UMBRAL_ALERTA?'alert':''}" id="cardFaltasBim" style="cursor:pointer;">
         <p class="label">${bim.n===0 ? 'Faltas del año' : 'Faltas del bimestre'}</p>
         <p class="value">${weight}</p>
       </div>
@@ -2157,6 +2307,7 @@ function renderResumenAlumno(){
     </div>
 
     ${userRole!=='student' ? `<button class="btn-secondary" id="verBoletinBtn" style="width:100%;margin-bottom:6px;"><span class="btn-icon-fix">${icon('file')}</span> Ver boletín para imprimir / PDF</button>` : ''}
+    <button class="btn-secondary" id="compararBimBtn" style="width:100%;margin-bottom:6px;"><span class="btn-icon-fix">${icon('chart')}</span> Comparar bimestres</button>
 
     <p class="section-label">Detalle de asistencia (${bim.n===0?'año completo':'este bimestre'})</p>
     <div class="config-card" style="display:flex;flex-wrap:wrap;gap:14px;">
@@ -2216,6 +2367,7 @@ function renderResumenAlumno(){
   if(document.getElementById('verBoletinBtn')){
     document.getElementById('verBoletinBtn').addEventListener('click', () => { selectedBimestreBoletin = bim.n; navigate('boletinAlumno'); });
   }
+  document.getElementById('compararBimBtn').addEventListener('click', () => navigate('compararBimestres'));
   if(document.getElementById('authBtn')){
     document.getElementById('authBtn').addEventListener('click', () => gestionarAutorizacion(selectedStudentId));
   }
@@ -3426,6 +3578,25 @@ function renderValoracionAlumno(){
 }
 
 // ---------- Notas cuatrimestrales ----------
+function exportarNotasCurso(curso){
+  const students = getStudents().filter(s => s.curso === curso).sort((a,b)=> a.apellido.localeCompare(b.apellido));
+  const materiasCurso = materiasDeCurso(curso);
+  const filas = students.map(s => {
+    const fila = { Apellido: s.apellido, Nombre: s.nombre };
+    materiasCurso.forEach(m => {
+      const n1 = Object.values(cache.notas).find(n => n.studentId===s.id && n.materia===m && n.cuatrimestre===1);
+      const n2 = Object.values(cache.notas).find(n => n.studentId===s.id && n.materia===m && n.cuatrimestre===2);
+      fila[`${m} (1°)`] = n1 ? n1.nota : '';
+      fila[`${m} (2°)`] = n2 ? n2.nota : '';
+    });
+    return fila;
+  });
+  const ws = XLSX.utils.json_to_sheet(filas);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, `${curso}° A`);
+  XLSX.writeFile(wb, `Notas_${curso}A_${todayISO()}.xlsx`);
+}
+
 function renderNotasLista(){
   const { materia, cursosOpciones: cursos } = resolverMateriaYCursos();
   window.__notaCuatri = window.__notaCuatri || 1;
@@ -3458,10 +3629,14 @@ function renderNotasLista(){
     </div>
     ${rows}
     <p class="info-note">${icon('info')}Se guarda solo al salir del campo (tocá afuera después de escribir la nota).</p>
+    ${userRole==='admin' ? `<button class="btn-secondary" id="exportarNotasBtn" style="width:100%;margin-top:14px;">${icon('file')} Exportar notas de ${selectedCurso}° A a Excel</button>` : ''}
   `;
   document.getElementById('backBtn').addEventListener('click', () => goBack(homeRoute()));
   attachCursoBtns((c) => { selectedCurso = c; render(); });
   attachPillBtns('cuatri', (v) => { window.__notaCuatri = Number(v); render(); });
+  if(document.getElementById('exportarNotasBtn')){
+    document.getElementById('exportarNotasBtn').addEventListener('click', () => exportarNotasCurso(selectedCurso));
+  }
   if(document.getElementById('materiaSelect')){
     document.getElementById('materiaSelect').addEventListener('change', (e) => { window.__materiaSel = e.target.value; render(); });
   }
@@ -3482,6 +3657,15 @@ function renderNotasLista(){
 // ---------- Vista rápida por curso ----------
 let selectedMateriaRiesgo = null;
 
+function exportarVistaGeneral(){
+  const porCurso = CURSOS.map(c => Object.assign({ curso: c }, computeVistaCurso(c)));
+  const filas = porCurso.map(c => ({ Curso: c.curso+'°A', Alumnos: c.total, 'En alerta': c.enAlerta, 'Riesgo SCP': c.conSCP }));
+  const ws = XLSX.utils.json_to_sheet(filas);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, 'Vista general');
+  XLSX.writeFile(wb, `Vista_general_ISP_${todayISO()}.xlsx`);
+}
+
 function renderVistaGeneral(){
   const porCurso = CURSOS.map(c => Object.assign({ curso: c }, computeVistaCurso(c)));
   const totalAlumnos = porCurso.reduce((s,c)=>s+c.total, 0);
@@ -3501,7 +3685,7 @@ function renderVistaGeneral(){
   `).join('');
 
   $app.innerHTML = `
-    <div class="appbar" style="padding:0 0 10px;">
+    <div class="appbar no-print" style="padding:0 0 10px;">
       <button class="back-btn" id="backBtn">${icon('back')}</button>
       <h1>Vista general del colegio</h1>
     </div>
@@ -3512,11 +3696,19 @@ function renderVistaGeneral(){
     </div>
     <p class="section-label">Por curso</p>
     <div class="module-list">${rows}</div>
+    ${userRole==='admin' ? `<button class="btn-secondary no-print" id="exportarGeneralBtn" style="width:100%;margin-top:14px;">${icon('file')} Exportar a Excel</button>
+    <button class="btn-secondary no-print" id="imprimirGeneralBtn" style="width:100%;margin-top:8px;">Imprimir / Guardar como PDF</button>` : ''}
   `;
   document.getElementById('backBtn').addEventListener('click', () => goBack(homeRoute()));
   document.querySelectorAll('[data-curso]').forEach(el => {
     el.addEventListener('click', () => { selectedCurso = el.dataset.curso; navigate('vistaCurso'); });
   });
+  if(document.getElementById('exportarGeneralBtn')){
+    document.getElementById('exportarGeneralBtn').addEventListener('click', exportarVistaGeneral);
+  }
+  if(document.getElementById('imprimirGeneralBtn')){
+    document.getElementById('imprimirGeneralBtn').addEventListener('click', () => window.print());
+  }
 }
 
 function computeVistaCurso(curso){
@@ -3530,11 +3722,11 @@ function computeVistaCurso(curso){
 
   students.forEach(s => {
     const w = weights[s.id] || 0;
-    if(w >= 5) alertaList.push({ id: s.id, nombre: `${s.apellido}, ${s.nombre}`, valor: w, fechaAlerta: computeFechaAlerta(s.id, bimestreActual()) });
+    if(w >= UMBRAL_ALERTA) alertaList.push({ id: s.id, nombre: `${s.apellido}, ${s.nombre}`, valor: w, fechaAlerta: computeFechaAlerta(s.id, bimestreActual()) });
     const stats = computeMateriaStats(s.id, anioCompleto);
     Object.entries(stats).forEach(([materia, st]) => {
       const pct = st.total>0 ? (1 - st.faltas/st.total) : 1;
-      if(pct < 0.85){
+      if(pct < UMBRAL_SCP){
         const pctR = Math.round(pct*1000)/10;
         if(!porMateria[materia]) porMateria[materia] = [];
         porMateria[materia].push({ id: s.id, nombre: `${s.apellido}, ${s.nombre}`, pct: pctR });
@@ -3548,6 +3740,42 @@ function computeVistaCurso(curso){
   const scpList = Object.values(scpMap).sort((a,b)=> a.nombre.localeCompare(b.nombre));
 
   return { total: students.length, enAlerta: alertaList.length, conSCP: scpList.length, alertaList, scpList, porMateria };
+}
+
+function descargarRespaldoCompleto(){
+  const wb = XLSX.utils.book_new();
+  const students = getStudents();
+  const nombreDe = (id) => { const s = students.find(x=>x.id===id); return s ? `${s.apellido}, ${s.nombre}` : id; };
+
+  const hojaAsistencia = Object.entries(cache.attendance).map(([key, r]) => {
+    const [fecha, sid] = key.split('|');
+    return { Fecha: fecha, Alumno: nombreDe(sid), Estado: r.estado, Hora: r.hora||'', Exencion: r.exencion||'', Autor: r.autor||'' };
+  });
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(hojaAsistencia), 'Asistencia');
+
+  const hojaNotas = Object.values(cache.notas).map(n => ({
+    Alumno: nombreDe(n.studentId), Curso: n.curso+'°A', Materia: n.materia, Cuatrimestre: n.cuatrimestre, Nota: n.nota, Autor: n.autor||''
+  }));
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(hojaNotas), 'Notas');
+
+  const hojaSanciones = [];
+  Object.entries(getSanciones()).forEach(([sid, lista]) => {
+    lista.forEach(s => hojaSanciones.push({ Alumno: nombreDe(sid), Fecha: s.fecha, Motivo: s.motivo, Autor: s.autor||'' }));
+  });
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(hojaSanciones), 'Sanciones');
+
+  const hojaTramites = [];
+  Object.values(getTramites()).forEach(t => {
+    getStudents().filter(s => t.cursos.includes(s.curso)).forEach(s => {
+      t.items.forEach(it => {
+        const e = getEntrega(t.id, s.id, it.key);
+        hojaTramites.push({ Tramite: t.nombre, Alumno: `${s.apellido}, ${s.nombre}`, Curso: s.curso+'°A', Item: it.label, Estado: e ? (e.entregado?'Entregado':(e.exento?'Exento':'')) : 'Pendiente' });
+      });
+    });
+  });
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(hojaTramites), 'Tramites');
+
+  XLSX.writeFile(wb, `Respaldo_ISP_${todayISO()}.xlsx`);
 }
 
 function exportarAsistenciaCurso(curso){
@@ -3583,8 +3811,27 @@ function computeTendenciaCurso(curso){
     const weights = computeAbsenceWeights(bim);
     const total = students.reduce((sum, s) => sum + (weights[s.id]||0), 0);
     const promedio = students.length ? Math.round((total / students.length)*10)/10 : 0;
-    return { n: bim.n, promedio };
+    return { label: bim.n+'°', promedio };
   });
+}
+
+function computeTendenciaDiaSemana(curso){
+  const students = getStudents().filter(s => s.curso === curso);
+  const att = getAttendance();
+  const porDia = { lunes:0, martes:0, miercoles:0, jueves:0, viernes:0 };
+  const idsCurso = new Set(students.map(s=>s.id));
+  Object.entries(att).forEach(([key, rec]) => {
+    const [fecha, sid] = key.split('|');
+    if(!idsCurso.has(sid) || rec.exencion) return;
+    const dia = diaKeyFor(fecha);
+    if(!dia || !(dia in porDia)) return;
+    if(rec.estado==='A') porDia[dia] += 1;
+    else if(rec.estado==='T') porDia[dia] += 0.5;
+  });
+  const labels = { lunes:'Lun', martes:'Mar', miercoles:'Mié', jueves:'Jue', viernes:'Vie' };
+  return Object.entries(porDia).map(([dia, total]) => ({
+    label: labels[dia], promedio: students.length ? Math.round((total/students.length)*100)/100 : 0
+  }));
 }
 
 function svgTendencia(datos){
@@ -3596,7 +3843,7 @@ function svgTendencia(datos){
     const x = padL + i*barW + barW*0.2;
     const y = h - padB - barH;
     return `<rect x="${x}" y="${y}" width="${barW*0.6}" height="${barH}" rx="3" fill="var(--sage)"/>
-      <text x="${x+barW*0.3}" y="${h-padB+18}" text-anchor="middle" font-size="12" fill="var(--ink-soft)">${d.n}°</text>
+      <text x="${x+barW*0.3}" y="${h-padB+18}" text-anchor="middle" font-size="12" fill="var(--ink-soft)">${d.label}</text>
       <text x="${x+barW*0.3}" y="${y-9}" text-anchor="middle" font-family="'Source Serif 4',serif" font-size="16" font-weight="700" fill="var(--ink)">${d.promedio}</text>`;
   }).join('');
   return `<svg viewBox="0 0 ${w} ${h}" style="width:100%;height:auto;display:block;">
@@ -3642,6 +3889,9 @@ function renderVistaCurso(){
 
     <p class="section-label">Faltas promedio por alumno, por bimestre</p>
     <div class="config-card" style="margin-bottom:16px;">${svgTendencia(computeTendenciaCurso(selectedCurso))}</div>
+
+    <p class="section-label">Faltas ponderadas por alumno, por día de la semana (ciclo lectivo)</p>
+    <div class="config-card" style="margin-bottom:16px;">${svgTendencia(computeTendenciaDiaSemana(selectedCurso))}</div>
 
     <p class="section-label">Por materia (bajo 85% anual)</p>
     ${materiaRows ? `<div class="module-list">${materiaRows}</div>` : `<p class="empty-inline">Ninguna materia tiene alumnos por debajo del 85% en este curso.</p>`}
@@ -3818,6 +4068,30 @@ async function migrarStudentIdEnAsistencia(){
   }
   if(estadoEl) estadoEl.textContent = `Listo, ${hechos} registros actualizados.`;
   showToast('Migración terminada');
+}
+
+function renderCalendarioCiclo(){
+  const feriados = [...FERIADOS_2026].sort();
+  $app.innerHTML = `
+    <div class="appbar" style="padding:0 0 10px;">
+      <button class="back-btn" id="backBtn">${icon('back')}</button>
+      <h1>Calendario del ciclo</h1>
+    </div>
+    <p class="section-label">Bimestres</p>
+    <div class="sancion-list" style="margin-bottom:18px;">
+      ${BIMESTRES.map(b => `
+        <div class="sancion-item">
+          <p class="folio"><span class="curso-dot c${b.n}"></span>${b.n}° bimestre</p>
+          <p class="motivo">${fmtDateLong(b.from)} al ${fmtDateLong(b.to)}</p>
+        </div>
+      `).join('')}
+    </div>
+    <p class="section-label">Feriados y días sin clase (${feriados.length})</p>
+    <div class="sancion-list">
+      ${feriados.map(f => `<div class="sancion-item"><p class="folio">${fmtDateLong(f)}</p></div>`).join('')}
+    </div>
+  `;
+  document.getElementById('backBtn').addEventListener('click', () => goBack(homeRoute()));
 }
 
 function renderAuditoria(){
@@ -4088,6 +4362,89 @@ function renderTramiteDetalle(){
   });
 }
 
+async function guardarConfigAvanzada(){
+  const feriadosRaw = document.getElementById('cfgFeriados').value.trim();
+  const feriados = feriadosRaw.split(/[\n,]/).map(s=>s.trim()).filter(Boolean);
+  const malFormados = feriados.filter(f => !/^\d{4}-\d{2}-\d{2}$/.test(f));
+  if(malFormados.length){ await customAlert('Estas fechas no tienen el formato AAAA-MM-DD: ' + malFormados.join(', ')); return; }
+
+  const bimestres = [1,2,3,4].map(n => ({
+    n, from: document.getElementById(`bimFrom${n}`).value, to: document.getElementById(`bimTo${n}`).value
+  }));
+  if(bimestres.some(b => !b.from || !b.to)){ await customAlert('Completá las 4 fechas de inicio y fin de bimestre.'); return; }
+
+  const umbralAlerta = Number(document.getElementById('cfgUmbralAlerta').value);
+  const umbralSCPpct = Number(document.getElementById('cfgUmbralSCP').value);
+  if(isNaN(umbralAlerta) || isNaN(umbralSCPpct)){ await customAlert('Revisá los umbrales, tienen que ser números.'); return; }
+
+  const horaTiempos = {};
+  for(let h=1; h<=8; h++){
+    horaTiempos[h] = [document.getElementById(`horaIni${h}`).value, document.getElementById(`horaFin${h}`).value];
+  }
+  const efHorario = EF_HORARIO.map((b,i) => ({
+    cursos: b.cursos, inicio: document.getElementById(`efIni${i}`).value, fin: document.getElementById(`efFin${i}`).value
+  }));
+
+  await setDoc(doc(db,'config','general'), {
+    feriados, bimestres, umbralAlerta, umbralSCP: umbralSCPpct/100, horaTiempos, efHorario
+  }, { merge: true });
+  showToast('Configuración guardada');
+  navigate('config');
+}
+
+function renderConfigAvanzada(){
+  const feriadosTexto = [...FERIADOS_2026].sort().join('\n');
+  $app.innerHTML = `
+    <div class="appbar" style="padding:0 0 10px;">
+      <button class="back-btn" id="backBtn">${icon('back')}</button>
+      <h1>Configuración avanzada</h1>
+    </div>
+
+    <p class="section-label">Bimestres del ciclo lectivo</p>
+    <div class="config-card">
+      ${BIMESTRES.map(b => `
+        <p style="font-size:12.5px;font-weight:600;margin:${b.n>1?'14px':'0'} 0 6px;">${b.n}° bimestre</p>
+        <div class="field-row"><label>Desde</label><input id="bimFrom${b.n}" type="date" value="${b.from}"></div>
+        <div class="field-row"><label>Hasta</label><input id="bimTo${b.n}" type="date" value="${b.to}"></div>
+      `).join('')}
+    </div>
+
+    <p class="section-label" style="margin-top:20px;">Feriados y días sin clase</p>
+    <div class="config-card">
+      <textarea id="cfgFeriados" rows="6" placeholder="Una fecha por línea, formato AAAA-MM-DD">${feriadosTexto}</textarea>
+      <p style="font-size:11.5px;color:var(--ink-soft);margin:8px 0 0;">Se usan para no contar esos días como clase en el % de asistencia por materia.</p>
+    </div>
+
+    <p class="section-label" style="margin-top:20px;">Umbrales</p>
+    <div class="config-card">
+      <div class="field-row"><label>Faltas para "alerta"</label><input id="cfgUmbralAlerta" type="number" value="${UMBRAL_ALERTA}"></div>
+      <div class="field-row"><label>% mínimo (SCP)</label><input id="cfgUmbralSCP" type="number" value="${Math.round(UMBRAL_SCP*100)}"></div>
+      <p style="font-size:11.5px;color:var(--ink-soft);margin:8px 0 0;">Por debajo de ese % anual en una materia, se marca como riesgo de SCP.</p>
+    </div>
+
+    <p class="section-label" style="margin-top:20px;">Horarios de las horas de clase</p>
+    <div class="config-card">
+      ${[1,2,3,4,5,6,7,8].map(h => `
+        <div class="field-row"><label>${h}ª hora</label>
+          <input id="horaIni${h}" type="time" value="${HORA_TIEMPOS[h][0]}" style="flex:1;">
+          <input id="horaFin${h}" type="time" value="${HORA_TIEMPOS[h][1]}" style="flex:1;">
+        </div>
+      `).join('')}
+      <p style="font-size:12.5px;font-weight:600;margin:14px 0 6px;">Educación Física (martes y jueves)</p>
+      ${EF_HORARIO.map((b,i) => `
+        <div class="field-row"><label>${b.cursos.map(c=>c+'°').join('/')}</label>
+          <input id="efIni${i}" type="time" value="${b.inicio}" style="flex:1;">
+          <input id="efFin${i}" type="time" value="${b.fin}" style="flex:1;">
+        </div>
+      `).join('')}
+    </div>
+
+    <button class="btn-primary" id="guardarAvanzadaBtn" style="width:100%;margin:18px 0 30px;">Guardar todo</button>
+  `;
+  document.getElementById('backBtn').addEventListener('click', () => goBack('config'));
+  document.getElementById('guardarAvanzadaBtn').addEventListener('click', guardarConfigAvanzada);
+}
+
 function renderConfig(){
   const cfg = getConfig();
   const esNapo = getUsuario()==='Napo';
@@ -4121,6 +4478,8 @@ function renderConfig(){
       <p id="migracionEstado" style="font-size:12px;color:var(--ink-soft);margin-top:8px;"></p>
     </div>
     <button class="btn-secondary" id="irAuditoriaBtn" style="width:100%;margin-top:10px;">Ver registro de actividad</button>
+    <button class="btn-secondary" id="irAvanzadaBtn" style="width:100%;margin-top:10px;">Feriados, bimestres, horarios y umbrales</button>
+    <button class="btn-secondary" id="irRespaldoBtn" style="width:100%;margin-top:10px;">Descargar respaldo completo (Excel)</button>
     ` : ''}
 
     <p class="section-label" style="margin-top:20px;">Acerca de</p>
@@ -4142,6 +4501,12 @@ function renderConfig(){
   }
   if(document.getElementById('irAuditoriaBtn')){
     document.getElementById('irAuditoriaBtn').addEventListener('click', () => navigate('auditoria'));
+  }
+  if(document.getElementById('irAvanzadaBtn')){
+    document.getElementById('irAvanzadaBtn').addEventListener('click', () => navigate('configAvanzada'));
+  }
+  if(document.getElementById('irRespaldoBtn')){
+    document.getElementById('irRespaldoBtn').addEventListener('click', descargarRespaldoCompleto);
   }
 }
 
