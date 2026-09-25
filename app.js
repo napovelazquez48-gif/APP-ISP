@@ -699,9 +699,10 @@ function renderHorarios(){
     return `
       <div class="hour-block ${isShared?'shared':''}">
         <div class="hour-head">
-          <span class="hour-label">${horaTexto}${tiempoTexto?`<br><span class="hour-time">${tiempoTexto}</span>`:''}</span>
+          <span class="hour-label">${horaTexto}</span>
           <div class="hour-info">
             <p class="subject">${b.subject}</p>
+            ${tiempoTexto ? `<p class="hour-time-wide">${tiempoTexto}</p>` : ''}
             ${isShared ? '<p class="submeta">Grupo compartido</p>' : ''}
           </div>
         </div>
@@ -715,8 +716,11 @@ function renderHorarios(){
   const efRow = efBloque ? `
     <div class="hour-block">
       <div class="hour-head">
-        <span class="hour-label">Ed. Física<br><span class="hour-time">${efBloque.inicio} a ${efBloque.fin}</span></span>
-        <div class="hour-info"><p class="subject">Educación Física</p></div>
+        <span class="hour-label">Ed. Física</span>
+        <div class="hour-info">
+          <p class="subject">Educación Física</p>
+          <p class="hour-time-wide">${efBloque.inicio} a ${efBloque.fin}</p>
+        </div>
       </div>
     </div>` : '';
 
@@ -793,9 +797,10 @@ function renderStudentHorario(){
     return `
       <div class="hour-block ${isShared?'shared':''}">
         <div class="hour-head">
-          <span class="hour-label">${horaTexto}${tiempoTexto?`<br><span class="hour-time">${tiempoTexto}</span>`:''}</span>
+          <span class="hour-label">${horaTexto}</span>
           <div class="hour-info">
             <p class="subject">${b.subject}</p>
+            ${tiempoTexto ? `<p class="hour-time-wide">${tiempoTexto}</p>` : ''}
             ${isShared ? '<p class="submeta">Grupo compartido</p>' : ''}
           </div>
         </div>
@@ -809,8 +814,11 @@ function renderStudentHorario(){
   const efRow = efBloque ? `
     <div class="hour-block">
       <div class="hour-head">
-        <span class="hour-label">Ed. Física<br><span class="hour-time">${efBloque.inicio} a ${efBloque.fin}</span></span>
-        <div class="hour-info"><p class="subject">Educación Física</p></div>
+        <span class="hour-label">Ed. Física</span>
+        <div class="hour-info">
+          <p class="subject">Educación Física</p>
+          <p class="hour-time-wide">${efBloque.inicio} a ${efBloque.fin}</p>
+        </div>
       </div>
     </div>` : '';
 

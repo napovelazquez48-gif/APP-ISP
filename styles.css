@@ -360,8 +360,8 @@ main.fade-in{animation:screenFadeIn 0.22s ease;}
 .hour-list{display:flex;flex-direction:column;gap:8px;}
 .hour-block{background:var(--card);border:0.5px solid var(--border);border-radius:var(--radius-sm);padding:12px 14px;}
 .hour-head{display:flex;gap:12px;margin-bottom:2px;}
-.hour-label{font-size:11.5px;color:var(--ink-soft);width:58px;flex-shrink:0;padding-top:1px;line-height:1.5;}
-.hour-time{font-size:9.5px;color:var(--ink-soft);opacity:0.75;}
+.hour-label{font-size:11px;color:var(--ink-soft);width:44px;flex-shrink:0;padding-top:1px;line-height:1.3;}
+.hour-time-wide{font-size:11px;color:var(--ink-soft);margin:1px 0 0;}
 .hour-info{flex:1;}
 .hour-info .subject{font-size:14px;font-weight:500;margin:0;}
 .hour-info .submeta{font-size:11px;color:var(--ink-soft);margin:2px 0 0;}
