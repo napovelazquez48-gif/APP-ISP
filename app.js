@@ -4370,6 +4370,41 @@ function renderTramiteDetalle(){
   });
 }
 
+async function importarNotasMasivo(data){
+  const notas = data.notas || [];
+  if(!notas.length){ await customAlert('El archivo no tiene notas para importar.'); return; }
+  const confirmado = await customConfirm(`Esto borra TODAS las notas actuales cargadas en la app y las reemplaza por las ${notas.length} de este archivo. ¿Confirmás?`, { peligro: true, textoSi: 'Borrar y reemplazar' });
+  if(!confirmado) return;
+
+  const estadoEl = document.getElementById('notasImportEstado');
+  const existentes = Object.keys(cache.notas);
+  let hechos = 0;
+  const total = existentes.length + notas.length;
+
+  for(let i=0; i<existentes.length; i+=450){
+    const lote = existentes.slice(i, i+450);
+    const batch = writeBatch(db);
+    lote.forEach(key => batch.delete(doc(db,'notas',key)));
+    await batch.commit();
+    hechos += lote.length;
+    if(estadoEl) estadoEl.textContent = `Borrando notas viejas... ${hechos}/${total}`;
+  }
+  for(let i=0; i<notas.length; i+=450){
+    const lote = notas.slice(i, i+450);
+    const batch = writeBatch(db);
+    lote.forEach(n => {
+      const key = docId(`${n.studentId}_${n.cuatrimestre}_${slugify(n.materia)}`);
+      batch.set(doc(db,'notas',key), { studentId: n.studentId, curso: n.curso, materia: n.materia, cuatrimestre: n.cuatrimestre, nota: n.nota, autor: getUsuario(), updatedAt: Date.now() });
+    });
+    await batch.commit();
+    hechos += lote.length;
+    if(estadoEl) estadoEl.textContent = `Cargando notas nuevas... ${hechos}/${total}`;
+  }
+  if(estadoEl) estadoEl.textContent = `Listo: ${notas.length} notas cargadas.`;
+  showToast('Notas importadas');
+  render();
+}
+
 async function guardarConfigAvanzada(){
   const feriadosRaw = document.getElementById('cfgFeriados').value.trim();
   const feriados = feriadosRaw.split(/[\n,]/).map(s=>s.trim()).filter(Boolean);
@@ -4488,6 +4523,11 @@ function renderConfig(){
     <button class="btn-secondary" id="irAuditoriaBtn" style="width:100%;margin-top:10px;">Ver registro de actividad</button>
     <button class="btn-secondary" id="irAvanzadaBtn" style="width:100%;margin-top:10px;">Feriados, bimestres, horarios y umbrales</button>
     <button class="btn-secondary" id="irRespaldoBtn" style="width:100%;margin-top:10px;">Descargar respaldo completo (Excel)</button>
+    <div class="config-card" style="margin-top:16px;">
+      <p style="font-size:12.5px;color:var(--ink-soft);margin-bottom:10px;">Importar notas desde un archivo (reemplaza TODAS las notas actuales).</p>
+      <input type="file" id="notasImportInput" accept="application/json" style="margin-bottom:10px;">
+      <p id="notasImportEstado" style="font-size:12px;color:var(--ink-soft);"></p>
+    </div>
     ` : ''}
 
     <p class="section-label" style="margin-top:20px;">Acerca de</p>
@@ -4515,6 +4555,18 @@ function renderConfig(){
   }
   if(document.getElementById('irRespaldoBtn')){
     document.getElementById('irRespaldoBtn').addEventListener('click', descargarRespaldoCompleto);
+  }
+  if(document.getElementById('notasImportInput')){
+    document.getElementById('notasImportInput').addEventListener('change', (e) => {
+      const file = e.target.files[0];
+      if(!file) return;
+      const reader = new FileReader();
+      reader.onload = () => {
+        try{ importarNotasMasivo(JSON.parse(reader.result)); }
+        catch(err){ customAlert('No pude leer ese archivo.'); }
+      };
+      reader.readAsText(file);
+    });
   }
 }
 
