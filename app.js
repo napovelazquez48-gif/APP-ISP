@@ -1730,19 +1730,22 @@ let UMBRAL_SCP = 0.85;
 const APP_START_TIME = Date.now();
 
 let lastFocusedInput = null;
+let skipFadeNext = false;
 document.addEventListener('input', (e) => {
   if(e.target && e.target.id && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA')){
     lastFocusedInput = { id: e.target.id, start: e.target.selectionStart, end: e.target.selectionEnd };
+    skipFadeNext = true;
   }
 });
 
 function render(){
   renderInner();
-  if($app){
+  if($app && !skipFadeNext){
     $app.classList.remove('fade-in');
     void $app.offsetWidth; // reinicia la animación en cada pantalla
     $app.classList.add('fade-in');
   }
+  skipFadeNext = false;
   if(lastFocusedInput){
     const el = document.getElementById(lastFocusedInput.id);
     if(el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA')){
