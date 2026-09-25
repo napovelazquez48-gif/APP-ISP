@@ -467,6 +467,16 @@ textarea{resize:vertical;}
 .materia-row.scp{background:var(--stamp-bg);}
 .materia-row.scp .materia-pct{color:var(--stamp);font-weight:600;}
 
+/* Notas (boletín por cuatrimestre) */
+.nota-row{display:flex;align-items:center;gap:8px;padding:10px 14px;border-bottom:0.5px solid var(--border);font-size:13px;}
+.nota-row:last-child{border-bottom:none;}
+.nota-row.nota-head{font-weight:600;color:var(--ink-soft);font-size:11.5px;border-bottom:1px solid var(--border);padding:0 14px 8px;margin-top:16px;}
+.nota-materia{flex:1;font-weight:500;}
+.nota-row.nota-head .nota-materia{font-weight:600;}
+.nota-valor{width:70px;text-align:right;font-family:'Source Serif 4',serif;font-weight:600;font-size:15px;color:var(--ink);}
+.nota-row.nota-head .nota-valor{font-family:'IBM Plex Sans',sans-serif;font-weight:600;font-size:11.5px;}
+.nota-valor.baja{color:var(--stamp);}
+
 .dia-falta-row{display:flex;align-items:center;gap:8px;padding:8px 14px;border-bottom:0.5px solid var(--border);font-size:12px;}
 .dia-falta-row:last-child{border-bottom:none;}
 .dia-falta-fecha{width:60px;color:var(--ink-soft);flex-shrink:0;}

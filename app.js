@@ -2426,13 +2426,20 @@ function renderResumenNotas(){
   const propias = Object.values(cache.notas).filter(n => n.studentId === selectedStudentId);
   const materias = [...new Set(propias.map(n => n.materia))].sort();
 
+  const n1s = propias.filter(n => n.cuatrimestre===1).map(n=>n.nota);
+  const n2s = propias.filter(n => n.cuatrimestre===2).map(n=>n.nota);
+  const promedio = (arr) => arr.length ? Math.round((arr.reduce((a,b)=>a+b,0)/arr.length)*100)/100 : null;
+  const prom1 = promedio(n1s);
+  const prom2 = promedio(n2s);
+  const promAnual = promedio([...n1s, ...n2s]);
+
   const rows = materias.map(m => {
     const n1 = propias.find(n => n.materia===m && n.cuatrimestre===1);
     const n2 = propias.find(n => n.materia===m && n.cuatrimestre===2);
-    return `<div class="materia-row">
-      <span class="materia-name">${m}</span>
-      <span class="materia-detail">${n1 ? n1.nota : '—'}</span>
-      <span class="materia-pct">${n2 ? n2.nota : '—'}</span>
+    return `<div class="nota-row">
+      <span class="nota-materia">${m}</span>
+      <span class="nota-valor ${n1 && n1.nota<6?'baja':''}">${n1 ? n1.nota : '—'}</span>
+      <span class="nota-valor ${n2 && n2.nota<6?'baja':''}">${n2 ? n2.nota : '—'}</span>
     </div>`;
   }).join('');
 
@@ -2441,12 +2448,17 @@ function renderResumenNotas(){
       <button class="back-btn" id="backBtn">${icon('back')}</button>
       <h1>${student.apellido}, ${student.nombre}</h1>
     </div>
-    <div class="materia-row" style="font-weight:600;color:var(--ink-soft);font-size:11.5px;border-bottom:1px solid var(--border);">
-      <span class="materia-name">Materia</span>
-      <span class="materia-detail">1° cuatri.</span>
-      <span class="materia-pct">2° cuatri.</span>
+    <div class="stat-grid" style="grid-template-columns:1fr 1fr 1fr;">
+      <div class="stat-card"><p class="label">1° cuatri.</p><p class="value">${prom1 ?? '—'}</p></div>
+      <div class="stat-card"><p class="label">2° cuatri.</p><p class="value">${prom2 ?? '—'}</p></div>
+      <div class="stat-card"><p class="label">Anual</p><p class="value">${promAnual ?? '—'}</p></div>
     </div>
-    ${materias.length ? `<div class="sancion-list">${rows}</div>` : `<p style="font-size:13px;color:var(--ink-soft);margin-top:10px;">Sin notas cargadas todavía.</p>`}
+    <div class="nota-row nota-head">
+      <span class="nota-materia">Materia</span>
+      <span class="nota-valor">1° cuatri.</span>
+      <span class="nota-valor">2° cuatri.</span>
+    </div>
+    ${materias.length ? `<div class="sancion-list">${rows}</div>` : `<p class="empty-inline">Sin notas cargadas todavía.</p>`}
   `;
   document.getElementById('backBtn').addEventListener('click', () => goBack(userRole==='student' ? 'studentHome' : 'resumenAlumno'));
 }
