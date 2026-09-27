@@ -1783,8 +1783,6 @@ function renderInner(){
   else if(currentRoute === 'resumen') renderResumenLista();
   else if(currentRoute === 'resumenAlumno') renderResumenAlumno();
   else if(currentRoute === 'detalleFaltasAlumno') renderDetalleFaltasAlumno();
-  else if(currentRoute === 'boletinAlumno') renderBoletinAlumno();
-  else if(currentRoute === 'boletinCurso') renderBoletinCurso();
   else if(currentRoute === 'compararBimestres') renderCompararBimestres();
   else if(currentRoute === 'ausentismoDocente') renderAusentismoDocente();
   else if(currentRoute === 'resumenValoraciones') renderResumenValoraciones();
@@ -1996,8 +1994,7 @@ function renderResumenLista(){
     </div>
     <input type="text" id="filtroResumen" placeholder="Buscar por nombre..." style="margin-bottom:12px;" value="${window.__resumenFiltro||''}">
     ${students.length ? `<div class="module-list">${rows}</div>` : `<p class="empty-inline">Nadie coincide con esa búsqueda.</p>`}
-    ${userRole==='admin' ? `<button class="btn-secondary" id="boletinesCursoBtn" style="width:100%;margin-top:14px;">${icon('file')} Ver boletines de todo el curso para imprimir</button>
-    <button class="btn-secondary" id="boletinesOficialesCursoBtn" style="width:100%;margin-top:8px;">${icon('file')} Descargar boletines oficiales del curso (PDF)</button>
+    ${userRole==='admin' ? `<button class="btn-secondary" id="boletinesOficialesCursoBtn" style="width:100%;margin-top:14px;">${icon('file')} Descargar boletines oficiales del curso (PDF)</button>
     <button class="btn-secondary" id="boletinesOficialesTodosBtn" style="width:100%;margin-top:8px;">${icon('file')} Descargar boletines oficiales de TODO el colegio (PDF)</button>` : ''}
   `;
   document.getElementById('backBtn').addEventListener('click', () => goBack(homeRoute()));
@@ -2006,9 +2003,6 @@ function renderResumenLista(){
   document.querySelectorAll('[data-student]').forEach(el => {
     el.addEventListener('click', () => { selectedStudentId = el.dataset.student; navigate('resumenAlumno'); });
   });
-  if(document.getElementById('boletinesCursoBtn')){
-    document.getElementById('boletinesCursoBtn').addEventListener('click', () => navigate('boletinCurso'));
-  }
   if(document.getElementById('boletinesOficialesCursoBtn')){
     document.getElementById('boletinesOficialesCursoBtn').addEventListener('click', () => generarBoletinesCurso(selectedCurso));
   }
@@ -2052,112 +2046,7 @@ function subjectsAfectadasEnDia(studentId, iso){
   return affected;
 }
 
-let selectedBimestreBoletin = 0;
 let selectedTramiteId = null;
-
-function boletinSheetHTML(studentId, bimN){
-  const student = getStudents().find(s => s.id === studentId);
-  const bim = bimN === 0
-    ? { n:0, from: BIMESTRES[0].from, to: BIMESTRES[BIMESTRES.length-1].to }
-    : BIMESTRES.find(b => b.n === bimN);
-  const att = getAttendance();
-  let presentes=0, tardes=0, ausentes=0, justificadas=0;
-  Object.entries(att).forEach(([key, rec]) => {
-    const [fecha, sid] = key.split('|');
-    if(sid !== studentId || fecha < bim.from || fecha > bim.to) return;
-    if(rec.exencion) return;
-    else if(rec.estado==='P') presentes++;
-    else if(rec.estado==='T') tardes++;
-    else if(rec.estado==='A') ausentes++;
-    else if(rec.estado==='J') justificadas++;
-  });
-  const weights = computeAbsenceWeights(bim);
-  const weight = weights[studentId] || 0;
-
-  const anioCompleto = { from: BIMESTRES[0].from, to: BIMESTRES[BIMESTRES.length-1].to };
-  const materias = computeMateriaStats(studentId, anioCompleto);
-  const materiaRows = Object.entries(materias).sort((a,b)=>a[0].localeCompare(b[0])).map(([subj, s]) => {
-    const pct = s.total>0 ? Math.round((1 - s.faltas/s.total)*1000)/10 : 100;
-    return `<tr><td>${subj}</td><td style="text-align:center;">${s.faltas}/${s.total}</td><td style="text-align:center;">${pct}%${pct<UMBRAL_SCP*100?' · SCP':''}</td></tr>`;
-  }).join('');
-
-  const notas = Object.values(cache.notas).filter(n => n.studentId === studentId);
-  const notaMaterias = [...new Set(notas.map(n=>n.materia))].sort();
-  const notaRows = notaMaterias.map(m => {
-    const n1 = notas.find(n=>n.materia===m && n.cuatrimestre===1);
-    const n2 = notas.find(n=>n.materia===m && n.cuatrimestre===2);
-    return `<tr><td>${m}</td><td style="text-align:center;">${n1?n1.nota:'—'}</td><td style="text-align:center;">${n2?n2.nota:'—'}</td></tr>`;
-  }).join('');
-
-  const sanciones = (getSanciones()[studentId] || []).slice().reverse();
-
-  return `
-    <div class="boletin-sheet">
-      <div class="boletin-head">
-        <img src="icon-192.png" alt="ISP">
-        <div>
-          <p class="boletin-title">Instituto Superior Porteño</p>
-          <p class="boletin-sub">Boletín · ${bim.n===0?'Ciclo lectivo 2026':bim.n+'° bimestre 2026'}</p>
-        </div>
-      </div>
-      <p class="boletin-alumno">${student.apellido}, ${student.nombre} — ${student.curso}° A</p>
-
-      <p class="boletin-section">Asistencia</p>
-      <table class="boletin-table">
-        <tr><td>Presentes</td><td>${presentes}</td><td>Tardes</td><td>${tardes}</td></tr>
-        <tr><td>Ausentes</td><td>${ausentes}</td><td>Justificadas</td><td>${justificadas}</td></tr>
-        <tr><td colspan="3"><b>Faltas ponderadas del período</b></td><td><b>${weight}</b></td></tr>
-      </table>
-
-      <p class="boletin-section">Asistencia por materia (ciclo lectivo)</p>
-      <table class="boletin-table"><tr><th>Materia</th><th>Faltas</th><th>%</th></tr>${materiaRows || '<tr><td colspan="3">Sin datos</td></tr>'}</table>
-
-      <p class="boletin-section">Notas</p>
-      <table class="boletin-table"><tr><th>Materia</th><th>1° cuatri.</th><th>2° cuatri.</th></tr>${notaRows || '<tr><td colspan="3">Sin notas cargadas</td></tr>'}</table>
-
-      <p class="boletin-section">Apercibimientos</p>
-      ${sanciones.length ? `<table class="boletin-table">${sanciones.map(h=>`<tr><td>${ordinal(h.folio)}</td><td>${h.fecha}</td><td>${h.motivo}</td></tr>`).join('')}</table>` : '<p style="font-size:12px;">Sin registros.</p>'}
-
-      <p class="boletin-footer">Generado el ${fmtDateLong(todayISO())}</p>
-    </div>`;
-}
-
-function renderBoletinAlumno(){
-  const bimN = selectedBimestreBoletin || 0;
-  $app.innerHTML = `
-    <div class="appbar no-print" style="padding:0 0 10px;">
-      <button class="back-btn" id="backBtn">${icon('back')}</button>
-      <h1>Boletín</h1>
-    </div>
-    <div class="course-picker no-print">
-      ${pillBtnRow('bimBoletin', [...BIMESTRES.map(b => ({value:b.n, label:b.n+'°'})), {value:0, label:'Año'}], bimN, bimColorClass)}
-    </div>
-    <button class="btn-primary no-print" id="imprimirBtn" style="width:100%;margin-bottom:16px;">Imprimir / Guardar como PDF</button>
-    ${boletinSheetHTML(selectedStudentId, bimN)}
-  `;
-  document.getElementById('backBtn').addEventListener('click', () => goBack('resumenAlumno'));
-  document.getElementById('imprimirBtn').addEventListener('click', () => window.print());
-  attachPillBtns('bimBoletin', (v) => { selectedBimestreBoletin = Number(v); render(); });
-}
-
-function renderBoletinCurso(){
-  const bimN = window.__boletinCursoBim || 0;
-  const students = getStudents().filter(s => s.curso === selectedCurso).sort((a,b)=> a.apellido.localeCompare(b.apellido));
-  $app.innerHTML = `
-    <div class="appbar no-print" style="padding:0 0 10px;">
-      <button class="back-btn" id="backBtn">${icon('back')}</button>
-      <h1>Boletines de ${selectedCurso}° A</h1>
-    </div>
-    <div class="course-picker no-print">
-      ${pillBtnRow('bimBoletinCurso', [...BIMESTRES.map(b => ({value:b.n, label:b.n+'°'})), {value:0, label:'Año'}], bimN, bimColorClass)}
-    </div>
-    <button class="btn-primary no-print" id="imprimirBtn" style="width:100%;margin-bottom:16px;">Imprimir / Guardar como PDF (${students.length} boletines)</button>
-    ${students.map(s => `<div class="boletin-page">${boletinSheetHTML(s.id, bimN)}</div>`).join('')}
-  `;
-  document.getElementById('backBtn').addEventListener('click', () => goBack('resumen'));
-  document.getElementById('imprimirBtn').addEventListener('click', () => window.print());
-  attachPillBtns('bimBoletinCurso', (v) => { window.__boletinCursoBim = Number(v); render(); });
-}
 
 function statsDeBimestre(studentId, bim){
   const att = getAttendance();
@@ -2328,7 +2217,6 @@ function renderResumenAlumno(){
       </div>
     </div>
 
-    ${userRole!=='student' ? `<button class="btn-secondary" id="verBoletinBtn" style="width:100%;margin-bottom:6px;"><span class="btn-icon-fix">${icon('file')}</span> Ver boletín para imprimir / PDF</button>` : ''}
     <button class="btn-secondary" id="compararBimBtn" style="width:100%;margin-bottom:6px;"><span class="btn-icon-fix">${icon('chart')}</span> Comparar bimestres</button>
 
     <p class="section-label">Detalle de asistencia (${bim.n===0?'año completo':'este bimestre'})</p>
@@ -2386,9 +2274,6 @@ function renderResumenAlumno(){
   });
   attachPillBtns('bim', (v) => { selectedBimestreN = Number(v); render(); });
   document.getElementById('cardFaltasBim').addEventListener('click', () => navigate('detalleFaltasAlumno'));
-  if(document.getElementById('verBoletinBtn')){
-    document.getElementById('verBoletinBtn').addEventListener('click', () => { selectedBimestreBoletin = bim.n; navigate('boletinAlumno'); });
-  }
   document.getElementById('compararBimBtn').addEventListener('click', () => navigate('compararBimestres'));
   if(document.getElementById('authBtn')){
     document.getElementById('authBtn').addEventListener('click', () => gestionarAutorizacion(selectedStudentId));
@@ -3657,7 +3542,7 @@ function dibujarBoletinEnDoc(doc, studentId){
   doc.setLineWidth(0.3);
   const headH1 = 5, headH2 = 9;
   doc.rect(colX[0], y, usableW, headH1+headH2, 'FD');
-  doc.line(colX[0], y+headH1, colX[4], y+headH1);
+  doc.line(colX[1], y+headH1, colX[4], y+headH1);
   for(let i=1;i<5;i++) doc.line(colX[i], y+ (i===1?0:headH1), colX[i], y+headH1+headH2);
   doc.setFont('helvetica','bold'); doc.setFontSize(8);
   doc.text('ASIGNATURAS', (colX[0]+colX[1])/2, y+headH1+headH2/2+3, { align:'center' });
