@@ -3501,7 +3501,15 @@ function renderValoracionAlumno(){
 }
 
 // ---------- Notas cuatrimestrales ----------
-function dibujarBoletinEnDoc(doc, studentId){
+const MATERIAS_BOLETIN = {
+  '1': ['Matemática','Lengua y Literatura','Inglés','Educación Física','Biología','Historia','Geografía','Form.Etica y Cdad.','Ed. Tecnológica','Artes','EDI: Metodo.Estudio'],
+  '2': ['Matemática','Lengua y Literatura','Inglés','Educación Física','Biología','Historia','Geografía','Form.Etica y Cdad.','Ed. Tecnológica','Artes','EDI: Escritura'],
+  '3': ['Matemática','Lengua y Literatura','Inglés','Educación Física','Biología','Historia','Geografía','Form.Etica y Cdad.','Tecnologías Info.','Economía','Físico Química','EDI: Comprehension','Int. Cs. Soc. y Hum.'],
+  '4': ['Matemática','Lengua y Literatura','Inglés','Educación Física','Arte','Historia','Geografía','Form.Etica y Cdad.','Tecnologías Info.','Fisica','EDI: Metodologia','Psicología','Antropología Cult.','Sociología'],
+  '5': ['Matemática','Lengua y Literatura','Inglés','Educación Física','Filosofía','Química','EDI- Tesina','Geo.Amb. y Política','Sociedad y Estado','Historia Cult. Latino.','Proyecto','Historia Orientada','Tecno. Info. Orienta'],
+};
+
+function dibujarBoletinEnDoc(doc, studentId, copia){
   const student = getStudents().find(s => s.id === studentId);
   const pageW = 210, marginX = 18;
   const usableW = pageW - marginX*2;
@@ -3556,7 +3564,7 @@ function dibujarBoletinEnDoc(doc, studentId){
   y += headH1+headH2;
 
   const notas = Object.values(cache.notas).filter(n => n.studentId === studentId);
-  const materias = materiasDeCurso(student.curso);
+  const materias = MATERIAS_BOLETIN[student.curso] || materiasDeCurso(student.curso);
   const weights = computeAbsenceWeights({ from: BIMESTRES[0].from, to: BIMESTRES[BIMESTRES.length-1].to });
   const inasistencias = weights[studentId] || 0;
   const apercibimientos = (getSanciones()[studentId] || []).length;
@@ -3570,7 +3578,7 @@ function dibujarBoletinEnDoc(doc, studentId){
   filas.forEach(([nombre, n]) => {
     const wrapped = doc.splitTextToSize(nombre, 60);
     const rowH = Math.max(7, 3 + wrapped.length*3.6);
-    if(y + rowH > 280){ doc.addPage(); y = 20; }
+    if(y + rowH > 270){ doc.addPage(); y = 20; }
     doc.setLineWidth(0.3);
     doc.rect(colX[0], y, usableW, rowH);
     for(let i=1;i<5;i++) doc.line(colX[i], y, colX[i], y+rowH);
@@ -3581,24 +3589,28 @@ function dibujarBoletinEnDoc(doc, studentId){
     y += rowH;
   });
 
-  y += 20;
-  if(y > 260){ doc.addPage(); y = 30; }
+  const finalY = y;
+  let firmaY = finalY + 20;
+  if(firmaY > 260){ doc.addPage(); firmaY = 30; }
   doc.setFont('helvetica','normal'); doc.setFontSize(8.5);
-  doc.text(`Fecha de Emision: ${fmtDateShort(todayISO())}`, marginX, y);
-  doc.line(marginX+70, y-1, marginX+150, y-1);
-  doc.text('Firma del Padre / Madre / Tutor', marginX+110, y+3, { align:'center' });
+  doc.text(`Fecha de Emision: ${fmtDateShort(todayISO())}`, marginX, firmaY);
+  doc.line(marginX+70, firmaY-1, marginX+150, firmaY-1);
+  doc.text('Firma del Padre / Madre / Tutor', marginX+110, firmaY+3, { align:'center' });
 
   doc.setFontSize(8.5);
   doc.text('Montañeses  1936', marginX, 285);
   doc.text('(C1428AQD) Ciudad Autónoma de Buenos Aires', pageW/2+10, 285, { align:'center' });
-  doc.text('Copia para el Colegio', pageW-10, 200, { align:'center', angle: 90 });
+  doc.setFontSize(8);
+  doc.text(`Copia para el ${copia}`, pageW-8, 265, { align:'center', angle: 90 });
 }
 
 function generarBoletinOficialPDF(studentId){
   const student = getStudents().find(s => s.id === studentId);
   const { jsPDF } = window.jspdf;
   const doc = new jsPDF({ unit: 'mm', format: 'a4' });
-  dibujarBoletinEnDoc(doc, studentId);
+  dibujarBoletinEnDoc(doc, studentId, 'Alumno');
+  doc.addPage();
+  dibujarBoletinEnDoc(doc, studentId, 'Colegio');
   doc.save(`Boletin_${student.apellido}_${student.nombre}_${student.curso}A.pdf`);
 }
 
@@ -3609,7 +3621,9 @@ function generarBoletinesCurso(curso){
   const doc = new jsPDF({ unit: 'mm', format: 'a4' });
   students.forEach((s, i) => {
     if(i > 0) doc.addPage();
-    dibujarBoletinEnDoc(doc, s.id);
+    dibujarBoletinEnDoc(doc, s.id, 'Alumno');
+    doc.addPage();
+    dibujarBoletinEnDoc(doc, s.id, 'Colegio');
   });
   doc.save(`Boletines_${curso}A_${todayISO()}.pdf`);
 }
@@ -3620,7 +3634,9 @@ function generarBoletinesTodos(){
   const doc = new jsPDF({ unit: 'mm', format: 'a4' });
   students.forEach((s, i) => {
     if(i > 0) doc.addPage();
-    dibujarBoletinEnDoc(doc, s.id);
+    dibujarBoletinEnDoc(doc, s.id, 'Alumno');
+    doc.addPage();
+    dibujarBoletinEnDoc(doc, s.id, 'Colegio');
   });
   doc.save(`Boletines_ISP_${todayISO()}.pdf`);
 }
