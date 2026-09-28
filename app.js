@@ -1045,7 +1045,7 @@ function notifStatusBannerHtml(){
   }
   if(Notification.permission === 'granted') return '';
   return `<div class="aviso-banner nuevo" style="flex-direction:column;align-items:stretch;">
-    <div style="display:flex;gap:8px;">${icon('calendar')}<span>Activá las notificaciones para enterarte de exámenes y excursiones aunque no tengas la app abierta.</span></div>
+    <div style="display:flex;gap:8px;">${icon('calendar')}<span>Activá las notificaciones para enterarte de exámenes, TPs y otros eventos aunque no tengas la app abierta.</span></div>
     <button class="btn-primary" id="activarNotifBtn" style="margin-top:8px;">Activar notificaciones</button>
   </div>`;
 }
@@ -1133,7 +1133,7 @@ function renderHome(){
       ${moduleRow('file','Entregas y trámites','Autorizaciones, plata, fichas médicas, aptos...', 'tramites')}
       ${moduleRow('calendar','Horarios y suplencias','Grilla por curso y división', 'horarios')}
       ${moduleRow('calendar','Calendario del ciclo','Bimestres y feriados', 'calendarioCiclo')}
-      ${moduleRow('calendar','Agenda','Exámenes, recuperatorios y excursiones por curso', 'agenda')}
+      ${moduleRow('calendar','Agenda','Exámenes, recuperatorios, TPs y más, por curso', 'agenda')}
       ${moduleRow('users','Familias','Contacto de padres y tutores', 'familias')}
       ${moduleRow('chart','Resumen del alumno','Faltas, apercibimientos y certificados', 'resumen')}
       ${moduleRow('chart','Vista por curso','Alertas y riesgo de SCP de un vistazo', 'vistaCurso')}
@@ -3100,7 +3100,7 @@ function renderTeacherHome(){
       ${moduleRow('file','Valoraciones pedagógicas','Bimestral, por materia', 'valoraciones')}
       ${moduleRow('chart','Notas','Cuatrimestral, escala 1 a 10', 'notas')}
       ${moduleRow('users','Resumen del alumno','Faltas, apercibimientos y certificados', 'resumen')}
-      ${moduleRow('calendar','Agenda','Exámenes, recuperatorios y excursiones', 'agenda')}
+      ${moduleRow('calendar','Agenda','Exámenes, recuperatorios, TPs y más', 'agenda')}
     </div>
 
     <p style="text-align:center;margin-top:18px;">
@@ -3137,7 +3137,7 @@ function renderStudentHome(){
       ${moduleRow('clipboard','Mis faltas','Bimestre, materias y detalle día por día', 'studentFaltas')}
       ${moduleRow('chart','Mis notas','1er y 2do cuatrimestre', 'studentNotas')}
       ${moduleRow('calendar','Mi horario','Materias y profesores por día', 'studentHorario')}
-      ${moduleRow('calendar','Mi agenda','Exámenes, recuperatorios y excursiones', 'studentAgenda')}
+      ${moduleRow('calendar','Mi agenda','Exámenes, recuperatorios, TPs y más', 'studentAgenda')}
       ${moduleRow('users','Mis profesores','Materia y mail de contacto', 'studentProfesores')}
     </div>
 
@@ -4343,9 +4343,15 @@ function fmtDiasHasta(dias){
   if(dias === 1) return 'Mañana';
   return `En ${dias} días`;
 }
-const EVENTO_TIPOS = { examen:'Examen', recuperatorio:'Recuperatorio', excursion:'Excursión / salida', otro:'Otro' };
+const EVENTO_TIPOS = { examen:'Examen', recuperatorio:'Recuperatorio', tp:'Entrega de TP', otro:'Otro' };
 function eventoIcon(tipo){
-  return tipo==='examen' ? 'file' : tipo==='recuperatorio' ? 'clock' : tipo==='excursion' ? 'run' : 'calendar';
+  return tipo==='examen' ? 'file' : tipo==='recuperatorio' ? 'clock' : tipo==='tp' ? 'clipboard' : 'calendar';
+}
+// Arma el título solo a partir del tipo y la materia (no hace falta escribirlo a mano,
+// salvo que sea "Otro"). Ej: tipo=examen, materia=Matemática -> "Examen de Matemática".
+function tituloAutomatico(tipo, materia){
+  const label = EVENTO_TIPOS[tipo] || 'Evento';
+  return materia ? `${label} de ${materia}` : label;
 }
 
 function getTramites(){ return cache.tramites; }
@@ -4838,26 +4844,29 @@ function cursosAgendaDisponibles(){
   return userRole === 'teacher' ? (currentTeacher.cursos||[]) : CURSOS;
 }
 
+const MESES_CORTOS = ['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic'];
+
+// Tarjeta compartida entre la agenda del preceptor/profesor y la del alumno.
+function filaAgenda(e, clickeable){
+  const d = new Date(e.fecha+'T12:00:00');
+  const dias = diasHasta(e.fecha);
+  const urgente = dias <= 1;
+  return `<div class="agenda-item" ${clickeable ? `data-evento="${e.id}"` : ''}>
+    <div class="agenda-date ${e.tipo}"><p class="dom">${d.getDate()}</p><p class="mon">${MESES_CORTOS[d.getMonth()]}</p></div>
+    <div class="txt" style="flex:1;min-width:0;">
+      <p class="title">${e.titulo}</p>
+      <p class="agenda-materia">${e.materia || 'Todas las materias'}${e.detalle ? ' · '+e.detalle : ''}</p>
+    </div>
+    <span class="badge-dias ${urgente?'urgente':''}">${fmtDiasHasta(dias)}</span>
+  </div>`;
+}
+
 function renderAgenda(){
   const cursos = cursosAgendaDisponibles();
   if(!cursos.includes(selectedCurso)) selectedCurso = cursos[0];
   const todos = eventosDeCurso(selectedCurso);
   const proximos = todos.filter(e => diasHasta(e.fecha) >= 0);
   const pasados = todos.filter(e => diasHasta(e.fecha) < 0).reverse();
-
-  function fila(e){
-    const d = new Date(e.fecha+'T12:00:00');
-    const meses = ['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic'];
-    return `<div class="agenda-item" data-evento="${e.id}">
-      <span class="icon-chip">${icon(eventoIcon(e.tipo))}</span>
-      <div class="agenda-date"><p class="dom">${d.getDate()}</p><p class="mon">${meses[d.getMonth()]}</p></div>
-      <div class="txt" style="flex:1;">
-        <p class="title">${e.titulo}</p>
-        <p class="desc">${EVENTO_TIPOS[e.tipo]||'Otro'}${e.materia?' · '+e.materia:' · Todas las materias'} · ${fmtDiasHasta(diasHasta(e.fecha))}</p>
-      </div>
-      <span class="chevron">${icon('chevron')}</span>
-    </div>`;
-  }
 
   $app.innerHTML = `
     <div class="appbar" style="padding:0 0 10px;">
@@ -4867,8 +4876,8 @@ function renderAgenda(){
     <div class="course-picker">${cursoBtns(cursos)}</div>
     <button class="btn-primary" id="nuevoEventoBtn" style="width:100%;margin:4px 0 16px;">+ Nuevo evento</button>
     <p class="section-label">Próximos</p>
-    ${proximos.length ? proximos.map(fila).join('') : `<p class="empty-inline">No hay eventos próximos para este curso.</p>`}
-    ${pasados.length ? `<p class="section-label" style="margin-top:18px;">Pasados</p>${pasados.map(fila).join('')}` : ''}
+    ${proximos.length ? proximos.map(e=>filaAgenda(e,true)).join('') : `<p class="empty-inline">No hay eventos próximos para este curso.</p>`}
+    ${pasados.length ? `<p class="section-label" style="margin-top:18px;">Pasados</p>${pasados.map(e=>filaAgenda(e,true)).join('')}` : ''}
   `;
   document.getElementById('backBtn').addEventListener('click', () => goBack(homeRoute()));
   attachCursoBtns((c) => { selectedCurso = c; render(); });
@@ -4890,7 +4899,6 @@ function renderAgendaNuevo(){
     </div>
     <p style="font-size:12.5px;color:var(--ink-soft);margin:0 0 6px;">Curso</p>
     <div class="course-picker" style="margin-bottom:14px;">${cursoBtns(cursos)}</div>
-    <div class="field-row"><label>Título</label><input id="eventoTitulo" type="text" placeholder="Ej: Examen de Matemática"></div>
     <div class="field-row"><label>Tipo</label>
       <select id="eventoTipo">${Object.entries(EVENTO_TIPOS).map(([k,v])=>`<option value="${k}">${v}</option>`).join('')}</select>
     </div>
@@ -4900,6 +4908,7 @@ function renderAgendaNuevo(){
         ${materiasOpciones.map(m => `<option value="${m}">${m}</option>`).join('')}
       </select>
     </div>
+    <div class="field-row" id="eventoTituloRow" style="display:none;"><label>Título</label><input id="eventoTitulo" type="text" placeholder="Ej: Excursión al museo"></div>
     <div class="field-row"><label>Fecha</label><input id="eventoFecha" type="date" value="${todayISO()}"></div>
     <div class="field-row"><label>Detalle (opcional)</label><textarea id="eventoDetalle" rows="3" placeholder="Info adicional para los alumnos"></textarea></div>
     <p id="eventoError" style="font-size:12px;color:var(--stamp);min-height:16px;margin:0 0 8px;"></p>
@@ -4907,18 +4916,27 @@ function renderAgendaNuevo(){
   `;
   document.getElementById('backBtn').addEventListener('click', () => goBack('agenda'));
   attachCursoBtns((c) => { selectedCurso = c; render(); });
+  document.getElementById('eventoTipo').addEventListener('change', (e) => {
+    document.getElementById('eventoTituloRow').style.display = e.target.value === 'otro' ? 'flex' : 'none';
+  });
   document.getElementById('crearEventoBtn').addEventListener('click', crearEvento);
 }
 
 async function crearEvento(){
-  const titulo = document.getElementById('eventoTitulo').value.trim();
   const tipo = document.getElementById('eventoTipo').value;
   const materia = document.getElementById('eventoMateria').value;
   const fecha = document.getElementById('eventoFecha').value;
   const detalle = document.getElementById('eventoDetalle').value.trim();
   const errEl = document.getElementById('eventoError');
   errEl.textContent = '';
-  if(!titulo || !fecha){ errEl.textContent = 'Completá al menos el título y la fecha.'; return; }
+  let titulo;
+  if(tipo === 'otro'){
+    titulo = document.getElementById('eventoTitulo').value.trim();
+    if(!titulo){ errEl.textContent = 'Escribí un título para el evento.'; return; }
+  } else {
+    titulo = tituloAutomatico(tipo, materia);
+  }
+  if(!fecha){ errEl.textContent = 'Elegí una fecha.'; return; }
   const payload = {
     curso: selectedCurso, materia, titulo, tipo, fecha, detalle,
     autor: userRole==='teacher' ? currentTeacher.nombre : getUsuario(),
@@ -4996,28 +5014,14 @@ function renderStudentAgenda(){
   const eventos = eventosDeCurso(currentStudentAuth.curso).filter(e => diasHasta(e.fecha) >= 0);
   const pasados = eventosDeCurso(currentStudentAuth.curso).filter(e => diasHasta(e.fecha) < 0).reverse();
 
-  function fila(e){
-    const d = new Date(e.fecha+'T12:00:00');
-    const meses = ['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic'];
-    return `<div class="agenda-item">
-      <span class="icon-chip">${icon(eventoIcon(e.tipo))}</span>
-      <div class="agenda-date"><p class="dom">${d.getDate()}</p><p class="mon">${meses[d.getMonth()]}</p></div>
-      <div class="txt" style="flex:1;">
-        <p class="title">${e.titulo}</p>
-        <p class="desc">${EVENTO_TIPOS[e.tipo]||'Otro'}${e.materia?' · '+e.materia:' · Todas las materias'} · ${fmtDiasHasta(diasHasta(e.fecha))}</p>
-        ${e.detalle ? `<p class="desc">${e.detalle}</p>` : ''}
-      </div>
-    </div>`;
-  }
-
   $app.innerHTML = `
     <div class="appbar" style="padding:0 0 10px;">
       <button class="back-btn" id="backBtn">${icon('back')}</button>
       <h1>Mi agenda</h1>
     </div>
     <p class="section-label">Próximos</p>
-    ${eventos.length ? eventos.map(fila).join('') : `<p class="empty-inline">No hay eventos próximos cargados para tu curso.</p>`}
-    ${pasados.length ? `<p class="section-label" style="margin-top:18px;">Pasados</p>${pasados.map(fila).join('')}` : ''}
+    ${eventos.length ? eventos.map(e=>filaAgenda(e,false)).join('') : `<p class="empty-inline">No hay eventos próximos cargados para tu curso.</p>`}
+    ${pasados.length ? `<p class="section-label" style="margin-top:18px;">Pasados</p>${pasados.map(e=>filaAgenda(e,false)).join('')}` : ''}
   `;
   document.getElementById('backBtn').addEventListener('click', () => goBack('studentHome'));
 }

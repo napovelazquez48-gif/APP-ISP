@@ -378,13 +378,26 @@ main.fade-in{animation:screenFadeIn 0.22s ease;}
 
 .agenda-item{
   background:var(--card);border:0.5px solid var(--border);border-radius:var(--radius-sm);
-  padding:12px 14px;margin-bottom:8px;display:flex;align-items:center;gap:12px;cursor:pointer;
+  padding:10px 12px;margin-bottom:8px;display:flex;align-items:center;gap:12px;cursor:pointer;
+  box-shadow:0 1px 2px rgba(31,42,58,0.04);
 }
 .agenda-date{
-  flex-shrink:0;width:42px;text-align:center;
+  flex-shrink:0;width:46px;text-align:center;border-radius:10px;padding:6px 0 5px;background:var(--paper-2);
 }
-.agenda-date .dom{font-size:17px;font-weight:700;line-height:1.1;}
-.agenda-date .mon{font-size:10px;color:var(--ink-soft);text-transform:uppercase;}
+.agenda-date .dom{font-size:18px;font-weight:700;line-height:1.1;}
+.agenda-date .mon{font-size:10px;color:var(--ink-soft);text-transform:uppercase;letter-spacing:0.3px;}
+.agenda-date.examen{background:var(--stamp-bg);}
+.agenda-date.examen .dom{color:var(--stamp);}
+.agenda-date.recuperatorio{background:var(--gold-bg);}
+.agenda-date.recuperatorio .dom{color:var(--gold);}
+.agenda-date.tp{background:var(--sage-bg);}
+.agenda-date.tp .dom{color:var(--sage);}
+.agenda-item .badge-dias{
+  flex-shrink:0;font-size:10.5px;font-weight:600;padding:3px 9px;border-radius:20px;
+  background:var(--paper-2);color:var(--ink-soft);white-space:nowrap;
+}
+.agenda-item .badge-dias.urgente{background:var(--stamp-bg);color:var(--stamp);}
+.agenda-item .agenda-materia{font-size:11px;color:var(--ink-soft);margin:1px 0 0;}
 
 /* Horarios */
 .hour-list{display:flex;flex-direction:column;gap:8px;}
