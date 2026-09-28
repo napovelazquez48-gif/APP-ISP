@@ -582,7 +582,7 @@ async function editHora(studentId, fecha, curso){
   const cfg = getConfig();
   const key = `${fecha}|${studentId}`;
   const current = cache.attendance[key] && cache.attendance[key].hora ? cache.attendance[key].hora : cfg.entrada;
-  const nueva = await customPrompt('Hora de llegada (HH:MM):', current);
+  const nueva = await customPrompt('Hora de llegada (HH:MM):', current, 'time');
   if(!nueva) return;
   if(!/^\d{2}:\d{2}$/.test(nueva)){ await customAlert('Formato inválido. Usá HH:MM.'); return; }
   writeAttendance(key, estadoParaHora(nueva, cfg, studentId, curso, fecha));
@@ -883,7 +883,10 @@ function navigate(route, params){
   if(route === 'asistencia' && currentRoute !== 'asistencia'){
     selectedFecha = todayISO();
   }
-  if(currentRoute && currentRoute !== route) navHistory.push(currentRoute);
+  if(currentRoute && currentRoute !== route){
+    navHistory.push(currentRoute);
+    lastFocusedInput = null; // al cambiar de pantalla, que no reaparezca el teclado de la anterior
+  }
   currentRoute = route;
   if(params && params.curso) selectedCurso = params.curso;
   render();
@@ -893,6 +896,7 @@ function navigate(route, params){
 function goBack(fallback){
   const prev = navHistory.pop();
   currentRoute = prev || fallback || 'home';
+  lastFocusedInput = null;
   render();
   window.scrollTo(0,0);
 }
@@ -940,11 +944,12 @@ function customAlert(msg){
   });
 }
 
-function customPrompt(msg, valorInicial){
+function customPrompt(msg, valorInicial, inputType){
   return new Promise(resolve => {
     const overlay = document.getElementById('modalOverlay');
     document.getElementById('modalMsg').textContent = msg;
-    document.getElementById('modalExtra').innerHTML = `<input type="text" id="modalInput" value="${valorInicial||''}" style="margin-bottom:14px;">`;
+    const tipo = inputType || 'text';
+    document.getElementById('modalExtra').innerHTML = `<input type="${tipo}" id="modalInput" value="${valorInicial||''}" style="margin-bottom:14px;">`;
     document.getElementById('modalBtns').innerHTML = `
       <button class="btn-secondary" id="modalCancelBtn">Cancelar</button>
       <button class="btn-primary" id="modalOkBtn">Aceptar</button>
@@ -1843,6 +1848,10 @@ document.addEventListener('input', (e) => {
 });
 
 function render(){
+  // Todavía no sabemos con qué rol entrar (Firestore está confirmando si es
+  // profesor/lectura/alumno). No dibujamos nada todavía: dejamos la pantalla
+  // de carga puesta para no mostrar una pantalla equivocada por un instante.
+  if(!authResolved) return;
   renderInner();
   if($app && !skipFadeNext){
     $app.classList.remove('fade-in');
@@ -4776,6 +4785,11 @@ function renderConfig(){
 }
 
 function getUsuario(){ return localStorage.getItem('isp_usuario') || ''; }
+// Se pone en true recién cuando onAuthStateChanged determinó con qué rol entrar
+// (admin/profesor/lectura/alumno). Antes de eso, render() no dibuja nada para
+// evitar que se vea por un instante la pantalla equivocada (por ej. la del
+// administrador) mientras Firestore todavía está confirmando el rol real.
+let authResolved = false;
 let userRole = null; // 'admin' | 'teacher' | 'viewer' | 'student'
 let currentTeacher = null; // datos del profesor logueado
 let currentViewer = null; // datos de la cuenta de solo lectura logueada
@@ -5042,6 +5056,7 @@ onAuthStateChanged(auth, async (user) => {
     currentTeacher = null;
     startListeners();
     currentRoute = getUsuario() ? 'home' : 'quien';
+    authResolved = true;
     render();
   } else if(user && !user.isAnonymous){
     startListeners();
@@ -5077,10 +5092,12 @@ onAuthStateChanged(auth, async (user) => {
       currentTeacher = null;
       currentRoute = 'profesorSinAcceso';
     }
+    authResolved = true;
     render();
   } else {
     userRole = null;
     currentTeacher = null;
+    authResolved = true;
     currentRoute = 'profesorLogin';
     render();
   }
