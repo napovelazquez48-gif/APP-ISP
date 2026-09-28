@@ -948,18 +948,30 @@ function customPrompt(msg, valorInicial, inputType){
   return new Promise(resolve => {
     const overlay = document.getElementById('modalOverlay');
     document.getElementById('modalMsg').textContent = msg;
-    const tipo = inputType || 'text';
-    document.getElementById('modalExtra').innerHTML = `<input type="${tipo}" id="modalInput" value="${valorInicial||''}" style="margin-bottom:14px;">`;
+    const esHora = inputType === 'time';
+    // Para horas usamos un input de texto con teclado numérico (no el <input type="time">
+    // nativo: en iOS ese widget ignora el estilo del modal y se ve roto/gigante). Con
+    // inputmode="numeric" sale el teclado de números, y el ":" se inserta solo.
+    document.getElementById('modalExtra').innerHTML = esHora
+      ? `<input type="text" inputmode="numeric" maxlength="5" placeholder="07:45" id="modalInput" value="${valorInicial||''}" style="margin-bottom:14px;text-align:center;letter-spacing:1px;">`
+      : `<input type="text" id="modalInput" value="${valorInicial||''}" style="margin-bottom:14px;">`;
     document.getElementById('modalBtns').innerHTML = `
       <button class="btn-secondary" id="modalCancelBtn">Cancelar</button>
       <button class="btn-primary" id="modalOkBtn">Aceptar</button>
     `;
     const input = document.getElementById('modalInput');
+    function onHoraInput(){
+      let digits = input.value.replace(/\D/g,'').slice(0,4);
+      if(digits.length >= 3) input.value = digits.slice(0,2) + ':' + digits.slice(2);
+      else input.value = digits;
+    }
+    if(esHora) input.addEventListener('input', onHoraInput);
     function cerrar(resultado){
       overlay.classList.remove('show');
       document.getElementById('modalOkBtn').removeEventListener('click', onOk);
       document.getElementById('modalCancelBtn').removeEventListener('click', onCancel);
       input.removeEventListener('keydown', onKey);
+      if(esHora) input.removeEventListener('input', onHoraInput);
       resolve(resultado);
     }
     function onOk(){ cerrar(input.value.trim()); }
