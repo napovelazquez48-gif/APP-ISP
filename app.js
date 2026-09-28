@@ -27,7 +27,7 @@ import {
 // Clave pública VAPID para notificaciones push (Firebase Console → Configuración del
 // proyecto → Cloud Messaging → Certificados push web → "Generar par de claves").
 // Sin esto pegado acá, pedir permiso de notificaciones va a fallar en silencio.
-const WEB_PUSH_VAPID_KEY = "PEGAR_ACA_LA_VAPID_KEY_DE_FIREBASE";
+const WEB_PUSH_VAPID_KEY = "BFOUEdifFIrmwE5bwy9bc98MWAAqpLGbbFPMymaWxLR8QYvMMIXkWP2JbbH99rNB6eenzN8Mi-WtoDNxWitAobE";
 
 const firebaseConfig = {
   apiKey: "AIzaSyCJXbMkHj9BHtXI2IqHf6YkMx_2YipMXbc",
