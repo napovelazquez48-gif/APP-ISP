@@ -1154,10 +1154,14 @@ function renderHome(){
       <a href="#" id="cambiarUsuarioLink" style="font-size:12px;color:var(--ink-soft);text-decoration:underline;">Cambiar usuario</a>
       &nbsp;·&nbsp;
       <a href="#" id="importarLink" style="font-size:12px;color:var(--ink-soft);text-decoration:underline;">Importar histórico</a>
+      &nbsp;·&nbsp;
+      <a href="#" id="cerrarSesionLink" style="font-size:12px;color:var(--ink-soft);text-decoration:underline;">Cerrar sesión</a>
     </p>
     ` : `
     <p style="text-align:center;margin-top:18px;">
       <a href="#" id="cambiarUsuarioLink" style="font-size:12px;color:var(--ink-soft);text-decoration:underline;">Cambiar usuario</a>
+      &nbsp;·&nbsp;
+      <a href="#" id="cerrarSesionLink" style="font-size:12px;color:var(--ink-soft);text-decoration:underline;">Cerrar sesión</a>
     </p>
     `}
   `;
@@ -1177,6 +1181,14 @@ function renderHome(){
       localStorage.removeItem('isp_usuario');
       currentRoute = 'quien';
       render();
+    });
+  }
+  if(document.getElementById('cerrarSesionLink')){
+    document.getElementById('cerrarSesionLink').addEventListener('click', async (e) => {
+      e.preventDefault();
+      if(!(await customConfirm('¿Cerrar sesión? Vas a tener que volver a ingresar el mail y la contraseña.'))) return;
+      localStorage.removeItem('isp_usuario');
+      signOut(auth);
     });
   }
 }
