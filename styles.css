@@ -355,6 +355,36 @@ main.fade-in{animation:screenFadeIn 0.22s ease;}
 }
 .toast svg{width:15px;height:15px;flex-shrink:0;color:var(--sage);}
 .toast.show{opacity:1;transform:translateX(-50%) translateY(0);}
+.toast.error{background:var(--stamp);}
+.toast.error svg{color:#fff;}
+
+.offline-banner{
+  position:fixed;top:0;left:0;right:0;z-index:60;
+  max-width:480px;margin:0 auto;
+  background:var(--stamp);color:#fff;font-size:12px;font-weight:600;
+  text-align:center;padding:8px 14px;
+  transform:translateY(-100%);transition:transform .25s;
+}
+.offline-banner.show{transform:translateY(0);}
+
+.aviso-banner{
+  background:var(--gold-bg);border-left:3px solid var(--gold);border-radius:var(--radius-sm);
+  padding:10px 12px;margin-bottom:10px;font-size:12.5px;color:var(--ink);
+  display:flex;align-items:flex-start;gap:8px;
+}
+.aviso-banner svg{width:16px;height:16px;flex-shrink:0;color:var(--gold);margin-top:1px;}
+.aviso-banner.nuevo{background:var(--sage-bg);border-left-color:var(--sage);}
+.aviso-banner.nuevo svg{color:var(--sage);}
+
+.agenda-item{
+  background:var(--card);border:0.5px solid var(--border);border-radius:var(--radius-sm);
+  padding:12px 14px;margin-bottom:8px;display:flex;align-items:center;gap:12px;cursor:pointer;
+}
+.agenda-date{
+  flex-shrink:0;width:42px;text-align:center;
+}
+.agenda-date .dom{font-size:17px;font-weight:700;line-height:1.1;}
+.agenda-date .mon{font-size:10px;color:var(--ink-soft);text-transform:uppercase;}
 
 /* Horarios */
 .hour-list{display:flex;flex-direction:column;gap:8px;}
@@ -378,7 +408,7 @@ main.fade-in{animation:screenFadeIn 0.22s ease;}
 .config-card .v{font-size:15px;font-weight:500;margin:0;}
 .field-row{display:flex;align-items:center;gap:10px;margin-bottom:12px;}
 .field-row label{font-size:12.5px;color:var(--ink-soft);min-width:110px;}
-.field-row input, .field-row select{flex:1;}
+.field-row input, .field-row select, .field-row textarea{flex:1;font-family:'IBM Plex Sans',sans-serif;}
 
 input,select,textarea{
   font-family:'IBM Plex Sans',sans-serif;font-size:14px;

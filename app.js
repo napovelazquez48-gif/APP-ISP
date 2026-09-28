@@ -20,6 +20,14 @@ import {
   getAuth, onAuthStateChanged, signInWithEmailAndPassword,
   createUserWithEmailAndPassword, updatePassword, signOut, setPersistence, browserLocalPersistence
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-auth.js";
+import {
+  getMessaging, getToken, onMessage, isSupported as messagingIsSupported
+} from "https://www.gstatic.com/firebasejs/10.13.0/firebase-messaging.js";
+
+// Clave pública VAPID para notificaciones push (Firebase Console → Configuración del
+// proyecto → Cloud Messaging → Certificados push web → "Generar par de claves").
+// Sin esto pegado acá, pedir permiso de notificaciones va a fallar en silencio.
+const WEB_PUSH_VAPID_KEY = "PEGAR_ACA_LA_VAPID_KEY_DE_FIREBASE";
 
 const firebaseConfig = {
   apiKey: "AIzaSyCJXbMkHj9BHtXI2IqHf6YkMx_2YipMXbc",
@@ -89,6 +97,7 @@ let cache = {
   diasSinClase: {},
   students_auth: {},
   entradasEspeciales: {},
+  eventos: {},
   config: { entrada:'07:45', toleranciaMin:15, corteFaltaCompleta:'09:00' }
 };
 
@@ -221,6 +230,13 @@ function startListeners(){
     const next = {};
     snap.forEach(d => { next[d.id] = Object.assign({ uid: d.id }, d.data()); });
     cache.students_auth = next;
+    render();
+  });
+
+  onSnapshot(collection(db,'eventos'), snap => {
+    const next = {};
+    snap.forEach(d => { next[d.id] = Object.assign({ id: d.id }, d.data()); });
+    cache.eventos = next;
     render();
   });
 
@@ -458,11 +474,11 @@ async function definirEntradaEspecial(fecha, curso){
   if(!/^\d{2}:\d{2}$/.test(horaTope)){ await customAlert('Formato inválido. Usá HH:MM.'); return; }
   const motivo = await customPrompt('Motivo (para tu registro, opcional):', actual ? actual.motivo : '');
   setDoc(doc(db,'entradasEspeciales', docId(`${fecha}_${curso}`)), { fecha, curso, horaTope, motivo: motivo||'', autor: getUsuario() })
-    .catch(err=>console.error(err));
+    .catch(err=>showSaveError(err));
 }
 async function borrarEntradaEspecial(fecha, curso){
   if(!(await customConfirm('¿Sacar la entrada especial de este curso para este día?'))) return;
-  deleteDoc(doc(db,'entradasEspeciales', docId(`${fecha}_${curso}`))).catch(err=>console.error(err));
+  deleteDoc(doc(db,'entradasEspeciales', docId(`${fecha}_${curso}`))).catch(err=>showSaveError(err));
 }
 
 function getDiaSinClase(fecha, curso){
@@ -473,11 +489,11 @@ async function definirDiaSinClase(fecha, curso){
   const motivo = await customPrompt(`Marcar ${curso}° A el ${fecha} como día sin clase (ej: VCF, paro).\n\nMotivo:`, actual ? actual.motivo : 'VCF');
   if(motivo === null || !motivo.trim()) return;
   setDoc(doc(db,'diasSinClase', docId(`${fecha}_${curso}`)), { fecha, curso, motivo: motivo.trim(), autor: getUsuario() })
-    .catch(err=>console.error(err));
+    .catch(err=>showSaveError(err));
 }
 async function borrarDiaSinClase(fecha, curso){
   if(!(await customConfirm('¿Sacar la marca de "día sin clase" de este curso para este día?'))) return;
-  deleteDoc(doc(db,'diasSinClase', docId(`${fecha}_${curso}`))).catch(err=>console.error(err));
+  deleteDoc(doc(db,'diasSinClase', docId(`${fecha}_${curso}`))).catch(err=>showSaveError(err));
 }
 
 function estadoParaHora(hora, cfg, studentId, curso, fecha){
@@ -518,7 +534,7 @@ function animateCounts(){
 
 function writeAttendance(key, data){
   const [fechaK, studentIdK] = key.split('|');
-  setDoc(doc(db,'attendance',docId(key)), Object.assign({ autor: getUsuario(), studentId: studentIdK, fecha: fechaK }, data)).catch(err=>console.error(err));
+  setDoc(doc(db,'attendance',docId(key)), Object.assign({ autor: getUsuario(), studentId: studentIdK, fecha: fechaK }, data)).catch(err=>showSaveError(err));
 }
 
 function markPresente(studentId, fecha, curso){
@@ -526,7 +542,7 @@ function markPresente(studentId, fecha, curso){
   const key = `${fecha}|${studentId}`;
   const rec = cache.attendance[key];
   if(rec && (rec.estado==='P' || rec.estado==='T' || rec.estado==='TJ')){
-    deleteDoc(doc(db,'attendance',docId(key))).catch(err=>console.error(err));
+    deleteDoc(doc(db,'attendance',docId(key))).catch(err=>showSaveError(err));
     return;
   }
   ultimaAccionPulso = { studentId };
@@ -542,7 +558,7 @@ function markAusente(studentId, fecha){
   const key = `${fecha}|${studentId}`;
   const rec = cache.attendance[key];
   if(rec && rec.estado==='A'){
-    deleteDoc(doc(db,'attendance',docId(key))).catch(err=>console.error(err));
+    deleteDoc(doc(db,'attendance',docId(key))).catch(err=>showSaveError(err));
     return;
   }
   ultimaAccionPulso = { studentId };
@@ -578,7 +594,7 @@ async function toggleEF(studentId, fecha){
   const current = cache.ef[key] ? cache.ef[key].tipo : null;
   const ref = doc(db,'ef', docId(`${fecha}_${studentId}`));
   if(current === null){
-    setDoc(ref, { date: fecha, studentId, tipo: 'falta', autor: getUsuario() }).catch(err=>console.error(err));
+    setDoc(ref, { date: fecha, studentId, tipo: 'falta', autor: getUsuario() }).catch(err=>showSaveError(err));
   } else if(current === 'falta'){
     const b = bimestreDe(fecha) || bimestreActual();
     const used = countSAFenBimestre(studentId, b);
@@ -586,9 +602,9 @@ async function toggleEF(studentId, fecha){
       deleteDoc(ref).catch(()=>{});
       return;
     }
-    setDoc(ref, { date: fecha, studentId, tipo: 'saf', autor: getUsuario() }).catch(err=>console.error(err));
+    setDoc(ref, { date: fecha, studentId, tipo: 'saf', autor: getUsuario() }).catch(err=>showSaveError(err));
   } else {
-    deleteDoc(ref).catch(err=>console.error(err));
+    deleteDoc(ref).catch(err=>showSaveError(err));
   }
 }
 
@@ -655,12 +671,12 @@ async function toggleSuplencia(subKey, teacherName){
   const existing = cache.substitutions[subKey] && cache.substitutions[subKey][teacherName];
   const ref = doc(db,'substitutions', docId(`${subKey}__${teacherName}`));
   if(existing){
-    deleteDoc(ref).catch(err=>console.error(err));
+    deleteDoc(ref).catch(err=>showSaveError(err));
     return;
   }
   const suplente = await customPrompt(`${teacherName} — marcar ausente.\n\nNombre del suplente (dejar vacío si no hay):`, '');
   if(suplente === null) return;
-  setDoc(ref, { subKey, teacher: teacherName, suplente: suplente.trim(), autor: getUsuario() }).catch(err=>console.error(err));
+  setDoc(ref, { subKey, teacher: teacherName, suplente: suplente.trim(), autor: getUsuario() }).catch(err=>showSaveError(err));
 
   // Si es la primera hora del día y no hay suplente, ofrece entrada especial para ese curso
   const [fecha, curso, , startHourStr] = subKey.split('|');
@@ -668,7 +684,7 @@ async function toggleSuplencia(subKey, teacherName){
     const horaTope = await customPrompt(`Como falta el/la profesor/a de la primera hora, ¿los alumnos de ${curso}° A pueden entrar más tarde hoy? Hasta qué hora (HH:MM), o dejar vacío si no corresponde:`, '');
     if(horaTope && /^\d{2}:\d{2}$/.test(horaTope)){
       setDoc(doc(db,'entradasEspeciales', docId(`${fecha}_${curso}`)), { fecha, curso, horaTope, motivo: `Ausencia de ${teacherName}`, autor: getUsuario() })
-        .catch(err=>console.error(err));
+        .catch(err=>showSaveError(err));
     }
   }
 }
@@ -952,11 +968,86 @@ function customPrompt(msg, valorInicial){
   });
 }
 
-function showToast(msg){
+function showToast(msg, tipo){
   const t = document.getElementById('toast');
-  t.innerHTML = `${icon('check')}<span>${msg}</span>`;
-  t.classList.add('show');
-  setTimeout(()=>t.classList.remove('show'), 1800);
+  const esError = tipo === 'error';
+  t.innerHTML = `${icon(esError?'alert':'check')}<span>${msg}</span>`;
+  t.className = 'toast show' + (esError ? ' error' : '');
+  clearTimeout(window.__toastTimer);
+  window.__toastTimer = setTimeout(()=>t.classList.remove('show'), esError ? 4000 : 1800);
+}
+
+// Aviso visible cuando un guardado falla (en vez de fallar en silencio en la consola).
+function showSaveError(err){
+  console.error(err);
+  showToast('No se pudo guardar. Revisá tu conexión e intentá de nuevo.', 'error');
+}
+
+// ---------- Indicador de conexión ----------
+let isOnline = navigator.onLine;
+function updateOnlineBanner(){
+  const b = document.getElementById('offlineBanner');
+  if(!b) return;
+  if(isOnline) b.classList.remove('show'); else b.classList.add('show');
+}
+window.addEventListener('online', () => { isOnline = true; updateOnlineBanner(); showToast('Conexión recuperada'); });
+window.addEventListener('offline', () => { isOnline = false; updateOnlineBanner(); showToast('Sin conexión. Los cambios se guardarán cuando vuelva internet.', 'error'); });
+
+// ---------- Notificaciones push (agenda: nuevo evento, 1 semana, 1 día) ----------
+let messagingInstance = null;
+
+async function initMessagingForegroundHandler(){
+  try{
+    if(!(await messagingIsSupported())) return;
+    if(!messagingInstance) messagingInstance = getMessaging(fbApp);
+    onMessage(messagingInstance, (payload) => {
+      const titulo = (payload.notification && payload.notification.title) || (payload.data && payload.data.titulo) || 'Instituto Superior Porteño';
+      const cuerpo = (payload.notification && payload.notification.body) || (payload.data && payload.data.cuerpo) || '';
+      showToast(`${titulo}${cuerpo ? ' — '+cuerpo : ''}`);
+    });
+  }catch(e){ console.error(e); }
+}
+
+async function activarNotificaciones(mostrarErrores){
+  if(userRole !== 'student' || !currentStudentAuth) return;
+  if(!('Notification' in window) || !('serviceWorker' in navigator)){
+    if(mostrarErrores) await customAlert('Este navegador no soporta notificaciones.');
+    return;
+  }
+  if(Notification.permission === 'denied'){
+    if(mostrarErrores) await customAlert('Tenés las notificaciones bloqueadas para esta app en el navegador. Para activarlas, habilitalas manualmente desde la configuración del sitio.');
+    return;
+  }
+  try{
+    const soportado = await messagingIsSupported();
+    if(!soportado){
+      if(mostrarErrores) await customAlert('Este navegador no soporta notificaciones push.');
+      return;
+    }
+    const permiso = await Notification.requestPermission();
+    if(permiso !== 'granted') return;
+    if(!messagingInstance) messagingInstance = getMessaging(fbApp);
+    const reg = await navigator.serviceWorker.ready;
+    const token = await getToken(messagingInstance, { vapidKey: WEB_PUSH_VAPID_KEY, serviceWorkerRegistration: reg });
+    if(!token) return;
+    await setDoc(doc(db,'fcmTokens', currentStudentAuth.uid), {
+      token, curso: currentStudentAuth.curso, studentId: currentStudentAuth.studentId,
+      role: 'student', updatedAt: Date.now()
+    });
+    if(mostrarErrores){ showToast('Notificaciones activadas'); render(); }
+  }catch(err){ if(mostrarErrores) showSaveError(err); else console.error(err); }
+}
+
+function notifStatusBannerHtml(){
+  if(!('Notification' in window) || !('serviceWorker' in navigator)) return '';
+  if(Notification.permission === 'denied'){
+    return `<div class="aviso-banner">${icon('alert')}<span>Tenés las notificaciones bloqueadas para esta app en el navegador. Activalas manualmente para recibir avisos de la agenda.</span></div>`;
+  }
+  if(Notification.permission === 'granted') return '';
+  return `<div class="aviso-banner nuevo" style="flex-direction:column;align-items:stretch;">
+    <div style="display:flex;gap:8px;">${icon('calendar')}<span>Activá las notificaciones para enterarte de exámenes y excursiones aunque no tengas la app abierta.</span></div>
+    <button class="btn-primary" id="activarNotifBtn" style="margin-top:8px;">Activar notificaciones</button>
+  </div>`;
 }
 
 function renderHome(){
@@ -1042,6 +1133,7 @@ function renderHome(){
       ${moduleRow('file','Entregas y trámites','Autorizaciones, plata, fichas médicas, aptos...', 'tramites')}
       ${moduleRow('calendar','Horarios y suplencias','Grilla por curso y división', 'horarios')}
       ${moduleRow('calendar','Calendario del ciclo','Bimestres y feriados', 'calendarioCiclo')}
+      ${moduleRow('calendar','Agenda','Exámenes, recuperatorios y excursiones por curso', 'agenda')}
       ${moduleRow('users','Familias','Contacto de padres y tutores', 'familias')}
       ${moduleRow('chart','Resumen del alumno','Faltas, apercibimientos y certificados', 'resumen')}
       ${moduleRow('chart','Vista por curso','Alertas y riesgo de SCP de un vistazo', 'vistaCurso')}
@@ -1500,7 +1592,7 @@ function renderSancionesLista(){
 
 async function borrarApercibimiento(id){
   if(!(await customConfirm('¿Borrar este apercibimiento? No se puede deshacer.', {peligro:true, textoSi:'Borrar'}))) return;
-  deleteDoc(doc(db,'sanciones',id)).catch(err=>console.error(err));
+  deleteDoc(doc(db,'sanciones',id)).catch(err=>showSaveError(err));
 }
 
 async function agregarApercibimiento(){
@@ -1513,7 +1605,7 @@ async function agregarApercibimiento(){
   const payload = { studentId: selectedStudentId, fecha, motivo, createdAt: new Date(fecha+'T12:00:00').getTime(),
     autor: userRole==='teacher' ? currentTeacher.nombre : getUsuario(), curso: student.curso };
   if(userRole==='teacher') payload.materia = (currentTeacher.materias||[])[0] || '';
-  addDoc(collection(db,'sanciones'), payload).catch(err=>console.error(err));
+  addDoc(collection(db,'sanciones'), payload).catch(err=>showSaveError(err));
   showToast('Apercibimiento guardado');
 }
 
@@ -1663,7 +1755,7 @@ async function guardarJustificativo(){
         DB.set('isp_cert_images', certImagesLocal);
       }
     })
-    .catch(err=>console.error(err));
+    .catch(err=>showSaveError(err));
 
   showToast(count>0 ? `Justificativo guardado — ${count} falta${count>1?'s':''} justificada${count>1?'s':''}` : 'Justificativo guardado');
   navigate('justificativos');
@@ -1817,6 +1909,10 @@ function renderInner(){
   else if(currentRoute === 'tramiteDetalle') renderTramiteDetalle();
   else if(currentRoute === 'tramiteImprimir') renderTramiteImprimir();
   else if(currentRoute === 'vistaGeneral') renderVistaGeneral();
+  else if(currentRoute === 'agenda') renderAgenda();
+  else if(currentRoute === 'agendaNuevo') renderAgendaNuevo();
+  else if(currentRoute === 'agendaDetalle') renderAgendaDetalle();
+  else if(currentRoute === 'studentAgenda') renderStudentAgenda();
   renderTabbar();
 }
 
@@ -2436,7 +2532,7 @@ async function crearProfesor(){
 }
 
 function toggleActivoProfesor(uid, activo){
-  setDoc(doc(db,'teachers',uid), { activo: !activo }, { merge: true }).catch(err=>console.error(err));
+  setDoc(doc(db,'teachers',uid), { activo: !activo }, { merge: true }).catch(err=>showSaveError(err));
 }
 
 async function guardarEdicionProfesor(uid){
@@ -2444,7 +2540,7 @@ async function guardarEdicionProfesor(uid){
   const cursos = Array.from(document.querySelectorAll('.curso-check-edit:checked')).map(c => c.value);
   if(cursos.length===0){ await customAlert('Elegí al menos un curso.'); return; }
   const asignaciones = materias.map(m => ({ materia: m, cursos }));
-  setDoc(doc(db,'teachers',uid), { materias, cursos, asignaciones }, { merge: true }).catch(err=>console.error(err));
+  setDoc(doc(db,'teachers',uid), { materias, cursos, asignaciones }, { merge: true }).catch(err=>showSaveError(err));
   showToast('Datos actualizados');
   navigate('profesores');
 }
@@ -2454,7 +2550,7 @@ async function recalcularDesdeHorario(uid){
   const conocido = profesoresConocidos()[t.nombre];
   if(!conocido){ await customAlert('Este nombre no aparece tal cual en el horario, no lo puedo recalcular solo.'); return; }
   setDoc(doc(db,'teachers',uid), { materias: conocido.materias, cursos: conocido.cursos, asignaciones: conocido.asignaciones }, { merge: true })
-    .catch(err=>console.error(err));
+    .catch(err=>showSaveError(err));
   showToast('Recalculado desde el horario');
   navigate('profesores');
 }
@@ -2497,7 +2593,7 @@ let selectedProfesorUid = null;
 
 async function borrarProfesor(uid, nombre){
   if(!(await customConfirm(`¿Borrar la cuenta de ${nombre}? No se puede deshacer. El mail y contraseña quedan sin efecto (no van a poder entrar más), pero si querés reusar ese mail para otra cuenta después, avisame.`, {peligro:true, textoSi:'Borrar'}))) return;
-  deleteDoc(doc(db,'teachers',uid)).then(() => showToast('Profesor/a borrado')).catch(err=>console.error(err));
+  deleteDoc(doc(db,'teachers',uid)).then(() => showToast('Profesor/a borrado')).catch(err=>showSaveError(err));
 }
 
 function renderProfesores(){
@@ -2676,7 +2772,7 @@ function guardarMapeoDrive(){
   const ops = Object.entries(pendiente.mapeo).map(([studentId, info]) =>
     setDoc(doc(db,'driveMapping', studentId), info)
   );
-  Promise.all(ops).then(() => showToast('Emparejamiento guardado')).catch(err=>console.error(err));
+  Promise.all(ops).then(() => showToast('Emparejamiento guardado')).catch(err=>showSaveError(err));
 }
 
 // Busca la próxima fila vacía mirando SOLO la columna B (fecha), para no confundirse
@@ -2992,6 +3088,7 @@ function renderTeacherHome(){
       ${moduleRow('file','Valoraciones pedagógicas','Bimestral, por materia', 'valoraciones')}
       ${moduleRow('chart','Notas','Cuatrimestral, escala 1 a 10', 'notas')}
       ${moduleRow('users','Resumen del alumno','Faltas, apercibimientos y certificados', 'resumen')}
+      ${moduleRow('calendar','Agenda','Exámenes, recuperatorios y excursiones', 'agenda')}
     </div>
 
     <p style="text-align:center;margin-top:18px;">
@@ -3007,6 +3104,7 @@ function renderTeacherHome(){
 
 function renderStudentHome(){
   const stamp = fmtDateStamp();
+  const avisos = agendaAvisosPendientes();
   $app.innerHTML = `
     <div class="greeting-row">
       <div>
@@ -3020,10 +3118,14 @@ function renderStudentHome(){
       </div>
     </div>
 
+    ${avisosBannerHtml(avisos)}
+    ${notifStatusBannerHtml()}
+
     <div class="module-list big">
       ${moduleRow('clipboard','Mis faltas','Bimestre, materias y detalle día por día', 'studentFaltas')}
       ${moduleRow('chart','Mis notas','1er y 2do cuatrimestre', 'studentNotas')}
       ${moduleRow('calendar','Mi horario','Materias y profesores por día', 'studentHorario')}
+      ${moduleRow('calendar','Mi agenda','Exámenes, recuperatorios y excursiones', 'studentAgenda')}
       ${moduleRow('users','Mis profesores','Materia y mail de contacto', 'studentProfesores')}
     </div>
 
@@ -3033,6 +3135,10 @@ function renderStudentHome(){
       <a href="#" id="salirProfLink" style="font-size:12px;color:var(--ink-soft);text-decoration:underline;">Salir</a>
     </p>
   `;
+  marcarAvisosVistos(avisos);
+  if(document.getElementById('activarNotifBtn')){
+    document.getElementById('activarNotifBtn').addEventListener('click', () => activarNotificaciones(true));
+  }
   document.querySelectorAll('.module-row').forEach(r => r.addEventListener('click', () => {
     selectedStudentId = currentStudentAuth.studentId;
     if(r.dataset.route === 'studentFaltas') navigate('resumenAlumno');
@@ -3128,11 +3234,11 @@ async function crearViewer(){
   }
 }
 function toggleActivoViewer(uid, activo){
-  setDoc(doc(db,'viewers',uid), { activo: !activo }, { merge: true }).catch(err=>console.error(err));
+  setDoc(doc(db,'viewers',uid), { activo: !activo }, { merge: true }).catch(err=>showSaveError(err));
 }
 async function borrarViewer(uid, nombre){
   if(!(await customConfirm(`¿Borrar el acceso de ${nombre}? No se puede deshacer.`, {peligro:true, textoSi:'Borrar'}))) return;
-  deleteDoc(doc(db,'viewers',uid)).then(() => showToast('Acceso borrado')).catch(err=>console.error(err));
+  deleteDoc(doc(db,'viewers',uid)).then(() => showToast('Acceso borrado')).catch(err=>showSaveError(err));
 }
 
 async function crearAlumnoCuenta(){
@@ -3164,11 +3270,11 @@ async function crearAlumnoCuenta(){
   }
 }
 function toggleActivoAlumnoCuenta(uid, activo){
-  setDoc(doc(db,'students_auth',uid), { activo: !activo }, { merge: true }).catch(err=>console.error(err));
+  setDoc(doc(db,'students_auth',uid), { activo: !activo }, { merge: true }).catch(err=>showSaveError(err));
 }
 async function borrarAlumnoCuenta(uid, nombre){
   if(!(await customConfirm(`¿Borrar la cuenta de ${nombre}? No se puede deshacer.`, {peligro:true, textoSi:'Borrar'}))) return;
-  deleteDoc(doc(db,'students_auth',uid)).then(() => showToast('Cuenta borrada')).catch(err=>console.error(err));
+  deleteDoc(doc(db,'students_auth',uid)).then(() => showToast('Cuenta borrada')).catch(err=>showSaveError(err));
 }
 
 async function crearCuentasMasivo(){
@@ -3447,7 +3553,7 @@ function guardarValoracion(){
     autor: userRole==='teacher' ? currentTeacher.nombre : getUsuario(), updatedAt: Date.now()
   };
   const key = docId(`${selectedStudentId}_${bim}_${slugify(materia)}`);
-  setDoc(doc(db,'valoraciones',key), data).catch(err=>console.error(err));
+  setDoc(doc(db,'valoraciones',key), data).catch(err=>showSaveError(err));
   showToast('Valoración guardada');
   navigate('valoraciones');
 }
@@ -3712,7 +3818,7 @@ function renderNotasLista(){
       const key = docId(`${sid}_${window.__notaCuatri}_${slugify(materia)}`);
       setDoc(doc(db,'notas',key), { studentId: sid, curso: student.curso, materia, cuatrimestre: window.__notaCuatri, nota: val, autor: userRole==='teacher' ? currentTeacher.nombre : getUsuario(), updatedAt: Date.now() })
         .then(() => showToast('Nota guardada'))
-        .catch(err=>console.error(err));
+        .catch(err=>showSaveError(err));
     });
   });
 }
@@ -4058,10 +4164,12 @@ function renderTabbar(){
       <button class="tab ${currentRoute==='teacherHome'?'active':''}" id="tabHome">${icon('home')}<span>Inicio</span></button>
       <button class="tab ${currentRoute==='sanciones'||currentRoute==='sancionDetalle'?'active':''}" id="tabSanciones">${icon('alert')}<span>Sanciones</span></button>
       <button class="tab ${currentRoute==='resumen'||currentRoute==='resumenAlumno'?'active':''}" id="tabResumen">${icon('chart')}<span>Resumen</span></button>
+      <button class="tab ${currentRoute==='agenda'||currentRoute==='agendaNuevo'||currentRoute==='agendaDetalle'?'active':''}" id="tabAgenda">${icon('calendar')}<span>Agenda</span></button>
     `;
     document.getElementById('tabHome').addEventListener('click', () => navigate('teacherHome'));
     document.getElementById('tabSanciones').addEventListener('click', () => navigate('sanciones'));
     document.getElementById('tabResumen').addEventListener('click', () => navigate('resumen'));
+    document.getElementById('tabAgenda').addEventListener('click', () => navigate('agenda'));
     return;
   }
   if(userRole === 'viewer'){
@@ -4079,10 +4187,12 @@ function renderTabbar(){
     tb.innerHTML = `
       <button class="tab ${currentRoute==='studentHome'?'active':''}" id="tabHome">${icon('home')}<span>Inicio</span></button>
       <button class="tab ${currentRoute==='resumenAlumno'||currentRoute==='detalleFaltasAlumno'||currentRoute==='resumenNotas'?'active':''}" id="tabMio">${icon('chart')}<span>Mis datos</span></button>
+      <button class="tab ${currentRoute==='studentAgenda'?'active':''}" id="tabAgenda">${icon('calendar')}<span>Agenda</span></button>
       <button class="tab ${currentRoute==='studentProfesores'?'active':''}" id="tabProfes">${icon('users')}<span>Profesores</span></button>
     `;
     document.getElementById('tabHome').addEventListener('click', () => navigate('studentHome'));
     document.getElementById('tabMio').addEventListener('click', () => { selectedStudentId = currentStudentAuth.studentId; navigate('resumenAlumno'); });
+    document.getElementById('tabAgenda').addEventListener('click', () => navigate('studentAgenda'));
     document.getElementById('tabProfes').addEventListener('click', () => navigate('studentProfesores'));
     return;
   }
@@ -4090,11 +4200,13 @@ function renderTabbar(){
     <button class="tab ${currentRoute==='home'?'active':''}" id="tabHome">${icon('home')}<span>Inicio</span></button>
     <button class="tab ${currentRoute==='asistencia'?'active':''}" id="tabAsist">${icon('clipboard')}<span>Asistencia</span></button>
     <button class="tab ${currentRoute==='horarios'?'active':''}" id="tabHorarios">${icon('calendar')}<span>Horarios</span></button>
+    <button class="tab ${currentRoute==='agenda'||currentRoute==='agendaNuevo'||currentRoute==='agendaDetalle'?'active':''}" id="tabAgenda">${icon('clipboard')}<span>Agenda</span></button>
     <button class="tab ${currentRoute==='config'?'active':''}" id="tabConfig">${icon('gear')}<span>Config</span></button>
   `;
   document.getElementById('tabHome').addEventListener('click', () => navigate('home'));
   document.getElementById('tabAsist').addEventListener('click', () => navigate('asistencia'));
   document.getElementById('tabHorarios').addEventListener('click', () => navigate('horarios'));
+  document.getElementById('tabAgenda').addEventListener('click', () => navigate('agenda'));
   document.getElementById('tabConfig').addEventListener('click', () => navigate('config'));
 }
 
@@ -4109,7 +4221,7 @@ async function guardarConfigGeneral(){
   }
   setDoc(doc(db,'config','general'), { entrada, toleranciaMin: tolerancia, corteFaltaCompleta: corte })
     .then(() => showToast('Configuración guardada'))
-    .catch(err=>console.error(err));
+    .catch(err=>showSaveError(err));
 }
 
 async function migrarStudentIdEnAsistencia(){
@@ -4204,6 +4316,26 @@ function renderAuditoria(){
 }
 
 // ---------- Entregas y trámites ----------
+function getEventos(){ return cache.eventos; }
+function eventosDeCurso(curso){
+  return Object.values(getEventos()).filter(e => e.curso === curso).sort((a,b)=> a.fecha.localeCompare(b.fecha));
+}
+function diasHasta(fechaISO){
+  const hoy = new Date(todayISO()+'T00:00:00');
+  const f = new Date(fechaISO+'T00:00:00');
+  return Math.round((f - hoy) / 86400000);
+}
+function fmtDiasHasta(dias){
+  if(dias < 0) return `Hace ${Math.abs(dias)} día${Math.abs(dias)!==1?'s':''}`;
+  if(dias === 0) return 'Hoy';
+  if(dias === 1) return 'Mañana';
+  return `En ${dias} días`;
+}
+const EVENTO_TIPOS = { examen:'Examen', recuperatorio:'Recuperatorio', excursion:'Excursión / salida', otro:'Otro' };
+function eventoIcon(tipo){
+  return tipo==='examen' ? 'file' : tipo==='recuperatorio' ? 'clock' : tipo==='excursion' ? 'run' : 'calendar';
+}
+
 function getTramites(){ return cache.tramites; }
 function entregaKey(tramiteId, studentId, itemKey){ return docId(`${tramiteId}_${studentId}_${itemKey}`); }
 function getEntrega(tramiteId, studentId, itemKey){ return cache.entregas[entregaKey(tramiteId, studentId, itemKey)]; }
@@ -4213,11 +4345,11 @@ async function toggleEntrega(tramiteId, studentId, itemKey){
   const actual = cache.entregas[key];
   const ref = doc(db,'entregas',key);
   if(!actual){
-    setDoc(ref, { entregado: true, fecha: todayISO(), autor: getUsuario() }).catch(err=>console.error(err));
+    setDoc(ref, { entregado: true, fecha: todayISO(), autor: getUsuario() }).catch(err=>showSaveError(err));
   } else if(actual.entregado){
-    setDoc(ref, { exento: true, entregado: false, fecha: todayISO(), autor: getUsuario() }).catch(err=>console.error(err));
+    setDoc(ref, { exento: true, entregado: false, fecha: todayISO(), autor: getUsuario() }).catch(err=>showSaveError(err));
   } else {
-    deleteDoc(ref).catch(err=>console.error(err));
+    deleteDoc(ref).catch(err=>showSaveError(err));
   }
 }
 
@@ -4240,7 +4372,7 @@ async function crearTramite(){
 
 async function borrarTramite(id, nombre){
   if(!(await customConfirm(`¿Borrar "${nombre}" y todo lo registrado ahí? No se puede deshacer.`, {peligro:true, textoSi:'Borrar'}))) return;
-  deleteDoc(doc(db,'tramites',id)).then(() => showToast('Trámite borrado')).catch(err=>console.error(err));
+  deleteDoc(doc(db,'tramites',id)).then(() => showToast('Trámite borrado')).catch(err=>showSaveError(err));
 }
 
 function renderTramites(){
@@ -4687,7 +4819,199 @@ function renderQuien(){
   });
 }
 
+// ---------- Agenda (fechas importantes por curso y materia) ----------
+let selectedEventoId = null;
+
+function cursosAgendaDisponibles(){
+  return userRole === 'teacher' ? (currentTeacher.cursos||[]) : CURSOS;
+}
+
+function renderAgenda(){
+  const cursos = cursosAgendaDisponibles();
+  if(!cursos.includes(selectedCurso)) selectedCurso = cursos[0];
+  const todos = eventosDeCurso(selectedCurso);
+  const proximos = todos.filter(e => diasHasta(e.fecha) >= 0);
+  const pasados = todos.filter(e => diasHasta(e.fecha) < 0).reverse();
+
+  function fila(e){
+    const d = new Date(e.fecha+'T12:00:00');
+    const meses = ['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic'];
+    return `<div class="agenda-item" data-evento="${e.id}">
+      <span class="icon-chip">${icon(eventoIcon(e.tipo))}</span>
+      <div class="agenda-date"><p class="dom">${d.getDate()}</p><p class="mon">${meses[d.getMonth()]}</p></div>
+      <div class="txt" style="flex:1;">
+        <p class="title">${e.titulo}</p>
+        <p class="desc">${EVENTO_TIPOS[e.tipo]||'Otro'}${e.materia?' · '+e.materia:' · Todas las materias'} · ${fmtDiasHasta(diasHasta(e.fecha))}</p>
+      </div>
+      <span class="chevron">${icon('chevron')}</span>
+    </div>`;
+  }
+
+  $app.innerHTML = `
+    <div class="appbar" style="padding:0 0 10px;">
+      <button class="back-btn" id="backBtn">${icon('back')}</button>
+      <h1>Agenda</h1>
+    </div>
+    <div class="course-picker">${cursoBtns(cursos)}</div>
+    <button class="btn-primary" id="nuevoEventoBtn" style="width:100%;margin:4px 0 16px;">+ Nuevo evento</button>
+    <p class="section-label">Próximos</p>
+    ${proximos.length ? proximos.map(fila).join('') : `<p class="empty-inline">No hay eventos próximos para este curso.</p>`}
+    ${pasados.length ? `<p class="section-label" style="margin-top:18px;">Pasados</p>${pasados.map(fila).join('')}` : ''}
+  `;
+  document.getElementById('backBtn').addEventListener('click', () => goBack(homeRoute()));
+  attachCursoBtns((c) => { selectedCurso = c; render(); });
+  document.getElementById('nuevoEventoBtn').addEventListener('click', () => navigate('agendaNuevo'));
+  document.querySelectorAll('[data-evento]').forEach(el => {
+    el.addEventListener('click', () => { selectedEventoId = el.dataset.evento; navigate('agendaDetalle'); });
+  });
+}
+
+function renderAgendaNuevo(){
+  const cursos = cursosAgendaDisponibles();
+  if(!cursos.includes(selectedCurso)) selectedCurso = cursos[0];
+  const materiasOpciones = userRole === 'teacher' ? (currentTeacher.materias||[]) : materiasDeCurso(selectedCurso);
+
+  $app.innerHTML = `
+    <div class="appbar" style="padding:0 0 10px;">
+      <button class="back-btn" id="backBtn">${icon('back')}</button>
+      <h1>Nuevo evento</h1>
+    </div>
+    <p style="font-size:12.5px;color:var(--ink-soft);margin:0 0 6px;">Curso</p>
+    <div class="course-picker" style="margin-bottom:14px;">${cursoBtns(cursos)}</div>
+    <div class="field-row"><label>Título</label><input id="eventoTitulo" type="text" placeholder="Ej: Examen de Matemática"></div>
+    <div class="field-row"><label>Tipo</label>
+      <select id="eventoTipo">${Object.entries(EVENTO_TIPOS).map(([k,v])=>`<option value="${k}">${v}</option>`).join('')}</select>
+    </div>
+    <div class="field-row"><label>Materia</label>
+      <select id="eventoMateria">
+        <option value="">Todas las materias</option>
+        ${materiasOpciones.map(m => `<option value="${m}">${m}</option>`).join('')}
+      </select>
+    </div>
+    <div class="field-row"><label>Fecha</label><input id="eventoFecha" type="date" value="${todayISO()}"></div>
+    <div class="field-row"><label>Detalle (opcional)</label><textarea id="eventoDetalle" rows="3" placeholder="Info adicional para los alumnos"></textarea></div>
+    <p id="eventoError" style="font-size:12px;color:var(--stamp);min-height:16px;margin:0 0 8px;"></p>
+    <button class="btn-primary" id="crearEventoBtn" style="width:100%;">Crear evento</button>
+  `;
+  document.getElementById('backBtn').addEventListener('click', () => goBack('agenda'));
+  attachCursoBtns((c) => { selectedCurso = c; render(); });
+  document.getElementById('crearEventoBtn').addEventListener('click', crearEvento);
+}
+
+async function crearEvento(){
+  const titulo = document.getElementById('eventoTitulo').value.trim();
+  const tipo = document.getElementById('eventoTipo').value;
+  const materia = document.getElementById('eventoMateria').value;
+  const fecha = document.getElementById('eventoFecha').value;
+  const detalle = document.getElementById('eventoDetalle').value.trim();
+  const errEl = document.getElementById('eventoError');
+  errEl.textContent = '';
+  if(!titulo || !fecha){ errEl.textContent = 'Completá al menos el título y la fecha.'; return; }
+  const payload = {
+    curso: selectedCurso, materia, titulo, tipo, fecha, detalle,
+    autor: userRole==='teacher' ? currentTeacher.nombre : getUsuario(),
+    autorUid: userRole==='teacher' ? currentTeacher.uid : 'admin',
+    createdAt: Date.now()
+  };
+  try{
+    await addDoc(collection(db,'eventos'), payload);
+    showToast('Evento agregado a la agenda');
+    navigate('agenda');
+  }catch(err){ showSaveError(err); }
+}
+
+function renderAgendaDetalle(){
+  const e = getEventos()[selectedEventoId];
+  if(!e){ navigate('agenda'); return; }
+  const puedeBorrar = userRole === 'admin' || (userRole === 'teacher' && e.autorUid === currentTeacher.uid);
+
+  $app.innerHTML = `
+    <div class="appbar" style="padding:0 0 10px;">
+      <button class="back-btn" id="backBtn">${icon('back')}</button>
+      <h1>${e.titulo}</h1>
+    </div>
+    <div class="config-card">
+      <p class="k">Curso</p><p class="v">${e.curso}° A</p>
+      <p class="k">Materia</p><p class="v">${e.materia || 'Todas las materias'}</p>
+      <p class="k">Tipo</p><p class="v">${EVENTO_TIPOS[e.tipo] || 'Otro'}</p>
+      <p class="k">Fecha</p><p class="v">${fmtDateLong(e.fecha)} · ${fmtDiasHasta(diasHasta(e.fecha))}</p>
+      ${e.detalle ? `<p class="k">Detalle</p><p class="v">${e.detalle}</p>` : ''}
+      <p class="k">Cargado por</p><p class="v">${e.autor||'—'}</p>
+    </div>
+    ${puedeBorrar ? `<button class="btn-secondary" id="borrarEventoBtn" style="width:100%;margin-top:16px;color:var(--stamp);">Borrar evento</button>` : ''}
+  `;
+  document.getElementById('backBtn').addEventListener('click', () => goBack('agenda'));
+  if(puedeBorrar){
+    document.getElementById('borrarEventoBtn').addEventListener('click', async () => {
+      if(!(await customConfirm('¿Borrar este evento de la agenda? No se puede deshacer.', {peligro:true, textoSi:'Borrar'}))) return;
+      deleteDoc(doc(db,'eventos',e.id)).then(() => { showToast('Evento borrado'); navigate('agenda'); }).catch(err=>showSaveError(err));
+    });
+  }
+}
+
+// ---------- Agenda del alumno + avisos (sin backend de push: se muestran al abrir la app) ----------
+function agendaAvisosKey(){ return 'isp_agenda_avisos_'+(currentStudentAuth ? currentStudentAuth.studentId : ''); }
+function agendaAvisosPendientes(){
+  if(userRole !== 'student') return [];
+  const vistos = DB.get(agendaAvisosKey(), {});
+  const eventos = eventosDeCurso(currentStudentAuth.curso);
+  const avisos = [];
+  eventos.forEach(e => {
+    const v = vistos[e.id] || {};
+    const dias = diasHasta(e.fecha);
+    if(!v.nuevo && (Date.now() - (e.createdAt||0)) < 5*86400000 && dias >= 0){
+      avisos.push({ id: e.id, stage: 'nuevo', texto: `Nuevo evento: "${e.titulo}" — ${fmtDateShort(e.fecha)}` });
+    } else if(!v.sem && dias <= 7 && dias > 1){
+      avisos.push({ id: e.id, stage: 'sem', texto: `En una semana: "${e.titulo}" — ${fmtDateShort(e.fecha)}` });
+    } else if(!v.dia && dias <= 1 && dias >= 0){
+      avisos.push({ id: e.id, stage: 'dia', texto: `${dias===0?'Hoy':'Mañana'}: "${e.titulo}" — ${fmtDateShort(e.fecha)}` });
+    }
+  });
+  return avisos;
+}
+function marcarAvisosVistos(avisos){
+  if(!avisos.length) return;
+  const vistos = DB.get(agendaAvisosKey(), {});
+  avisos.forEach(a => { vistos[a.id] = Object.assign({}, vistos[a.id], { [a.stage]: true }); });
+  DB.set(agendaAvisosKey(), vistos);
+}
+function avisosBannerHtml(avisos){
+  if(!avisos.length) return '';
+  return avisos.map(a => `<div class="aviso-banner ${a.stage==='nuevo'?'nuevo':''}">${icon(a.stage==='nuevo'?'calendar':'alert')}<span>${a.texto}</span></div>`).join('');
+}
+
+function renderStudentAgenda(){
+  const eventos = eventosDeCurso(currentStudentAuth.curso).filter(e => diasHasta(e.fecha) >= 0);
+  const pasados = eventosDeCurso(currentStudentAuth.curso).filter(e => diasHasta(e.fecha) < 0).reverse();
+
+  function fila(e){
+    const d = new Date(e.fecha+'T12:00:00');
+    const meses = ['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic'];
+    return `<div class="agenda-item">
+      <span class="icon-chip">${icon(eventoIcon(e.tipo))}</span>
+      <div class="agenda-date"><p class="dom">${d.getDate()}</p><p class="mon">${meses[d.getMonth()]}</p></div>
+      <div class="txt" style="flex:1;">
+        <p class="title">${e.titulo}</p>
+        <p class="desc">${EVENTO_TIPOS[e.tipo]||'Otro'}${e.materia?' · '+e.materia:' · Todas las materias'} · ${fmtDiasHasta(diasHasta(e.fecha))}</p>
+        ${e.detalle ? `<p class="desc">${e.detalle}</p>` : ''}
+      </div>
+    </div>`;
+  }
+
+  $app.innerHTML = `
+    <div class="appbar" style="padding:0 0 10px;">
+      <button class="back-btn" id="backBtn">${icon('back')}</button>
+      <h1>Mi agenda</h1>
+    </div>
+    <p class="section-label">Próximos</p>
+    ${eventos.length ? eventos.map(fila).join('') : `<p class="empty-inline">No hay eventos próximos cargados para tu curso.</p>`}
+    ${pasados.length ? `<p class="section-label" style="margin-top:18px;">Pasados</p>${pasados.map(fila).join('')}` : ''}
+  `;
+  document.getElementById('backBtn').addEventListener('click', () => goBack('studentHome'));
+}
+
 // ---------- Init ----------
+updateOnlineBanner();
 // Resguardo: si por algún motivo tarda de más en cargar, sacamos la pantalla de carga igual.
 setTimeout(() => {
   const loading = document.getElementById('loadingScreen');
@@ -4723,6 +5047,8 @@ onAuthStateChanged(auth, async (user) => {
             userRole = 'student';
             currentStudentAuth = Object.assign({ uid: user.uid }, adoc.data());
             currentRoute = 'studentHome';
+            initMessagingForegroundHandler();
+            if('Notification' in window && Notification.permission === 'granted') activarNotificaciones(false);
           } else {
             userRole = null;
             currentTeacher = null;

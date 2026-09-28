@@ -1,4 +1,42 @@
-const CACHE_NAME = 'preceptoria-isp-v7';
+const CACHE_NAME = 'preceptoria-isp-v9';
+
+// ---------- Notificaciones push (Firebase Cloud Messaging) ----------
+// Tiene que vivir en este mismo service worker (no en uno aparte) para que
+// funcione sobre el mismo scope que ya usa la PWA.
+importScripts('https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js');
+importScripts('https://www.gstatic.com/firebasejs/10.13.0/firebase-messaging-compat.js');
+
+firebase.initializeApp({
+  apiKey: "AIzaSyCJXbMkHj9BHtXI2IqHf6YkMx_2YipMXbc",
+  authDomain: "app-isp-f601c.firebaseapp.com",
+  projectId: "app-isp-f601c",
+  storageBucket: "app-isp-f601c.firebasestorage.app",
+  messagingSenderId: "1052109436240",
+  appId: "1:1052109436240:web:f5e6a49100db6fb85d6855"
+});
+const messaging = firebase.messaging();
+
+// Notificación recibida con la app cerrada o en segundo plano.
+messaging.onBackgroundMessage((payload) => {
+  const titulo = (payload.notification && payload.notification.title) || (payload.data && payload.data.titulo) || 'Instituto Superior Porteño';
+  const cuerpo = (payload.notification && payload.notification.body) || (payload.data && payload.data.cuerpo) || '';
+  self.registration.showNotification(titulo, {
+    body: cuerpo,
+    icon: './icon-192.png',
+    badge: './icon-192.png',
+    data: payload.data || {}
+  });
+});
+
+self.addEventListener('notificationclick', (event) => {
+  event.notification.close();
+  event.waitUntil(
+    clients.matchAll({ type: 'window', includeUncontrolled: true }).then((clientList) => {
+      for (const c of clientList) { if ('focus' in c) return c.focus(); }
+      if (clients.openWindow) return clients.openWindow('./');
+    })
+  );
+});
 const LOCAL_ASSETS = [
   './',
   './index.html',
@@ -15,7 +53,10 @@ const CDN_ASSETS = [
   'https://accounts.google.com/gsi/client',
   'https://apis.google.com/js/api.js',
   'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js',
-  'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js'
+  'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js',
+  'https://www.gstatic.com/firebasejs/10.13.0/firebase-messaging.js',
+  'https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js',
+  'https://www.gstatic.com/firebasejs/10.13.0/firebase-messaging-compat.js'
 ];
 
 self.addEventListener('install', (event) => {
