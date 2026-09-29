@@ -4007,6 +4007,166 @@ function exportarAsistenciaCurso(curso){
   XLSX.writeFile(wb, `Asistencia_${curso}A_bim${bim.n}_${todayISO()}.xlsx`);
 }
 
+// ---------- Reportes mensuales (formato planilla oficial del colegio) ----------
+const MESES_NOMBRE = ['Enero','Febrero','Marzo','Abril','Mayo','Junio','Julio','Agosto','Septiembre','Octubre','Noviembre','Diciembre'];
+
+// Meses del ciclo lectivo (marzo en adelante) que ya arrancaron, para elegir en el selector.
+function mesesConDatos(){
+  const hoy = todayISO();
+  const anioMes = hoy.slice(0,7);
+  const anio = Number(hoy.slice(0,4));
+  const out = [];
+  for(let m=3; m<=12; m++){
+    const iso = `${anio}-${String(m).padStart(2,'0')}`;
+    if(iso > anioMes) break;
+    out.push({ value: iso, label: `${MESES_NOMBRE[m-1]} ${anio}` });
+  }
+  return out.length ? out : [{ value: anioMes, label: `${MESES_NOMBRE[Number(hoy.slice(5,7))-1]} ${anio}` }];
+}
+
+// Rango real del mes: si es el mes en curso, corta en el día de hoy (no tiene sentido
+// pedir días que todavía no pasaron).
+function rangoDelMes(mesISO){
+  const [anio, mes] = mesISO.split('-').map(Number);
+  const from = `${mesISO}-01`;
+  const ultimoDia = new Date(anio, mes, 0).getDate();
+  const hoy = todayISO();
+  let to = `${mesISO}-${String(ultimoDia).padStart(2,'0')}`;
+  if(to > hoy) to = hoy;
+  return { from, to };
+}
+
+// Días hábiles de un curso puntual en un mes: de lunes a viernes, sin feriados generales
+// ni días marcados como "sin clase" para ese curso.
+function diasHabilesDelMes(curso, mesISO){
+  const { from, to } = rangoDelMes(mesISO);
+  const out = [];
+  let d = new Date(from+'T00:00:00');
+  const end = new Date(to+'T00:00:00');
+  while(d <= end){
+    const iso = d.toISOString().slice(0,10);
+    const dow = d.getDay();
+    if(dow !== 0 && dow !== 6 && !FERIADOS_2026.has(iso) && !getDiaSinClase(iso, curso)) out.push(iso);
+    d.setDate(d.getDate()+1);
+  }
+  return out;
+}
+
+// Traduce el estado interno de un alumno en una fecha al código de una sola letra que
+// se usa en la planilla oficial (P/A/T). Sin ningún registro en un día ya pasado se toma
+// como Presente, igual criterio que en la pantalla de Asistencia diaria.
+function codigoOficialDelDia(fecha, studentId){
+  const rec = cache.attendance[`${fecha}|${studentId}`];
+  if(!rec) return 'P';
+  if(rec.estado === 'TJ') return 'T';
+  if(rec.estado === 'J') return 'A';
+  return rec.estado || 'P';
+}
+
+// Planilla día por día, con el mismo criterio que la planilla oficial en papel del
+// colegio (una fila por alumno, una columna por día, códigos P/A/T). A diferencia de
+// la de papel, los feriados y días sin clase directamente no aparecen como columna
+// (en vez del truco de escribir el nombre del feriado en letras verticales): quedan
+// listados aparte, al pie, para que se entienda por qué no están.
+function exportarPlanillaOficialCurso(curso, mesISO){
+  const students = getStudents().filter(s => s.curso === curso).sort((a,b)=> a.apellido.localeCompare(b.apellido));
+  const dias = diasHabilesDelMes(curso, mesISO);
+  const [anio, mesN] = mesISO.split('-').map(Number);
+  const nombreMes = MESES_NOMBRE[mesN-1];
+
+  if(!dias.length){
+    showToast('No hay días hábiles en ese mes todavía.', 'error');
+    return;
+  }
+
+  let totalPosible = 0, totalPeso = 0;
+  const filas = students.map((s, idx) => {
+    let ausencias = 0, tardes = 0;
+    const codigos = dias.map(f => {
+      const c = codigoOficialDelDia(f, s.id);
+      if(c === 'A') ausencias++;
+      else if(c === 'T') tardes++;
+      return c;
+    });
+    totalPosible += dias.length;
+    totalPeso += ausencias + tardes*0.5;
+    const pct = dias.length ? (100 - (ausencias + tardes*0.5) / dias.length * 100) : 100;
+    return { n: idx+1, nombre: `${s.apellido}, ${s.nombre}`, codigos, ausencias, tardes, pct };
+  });
+  const pctGeneral = totalPosible ? (100 - totalPeso/totalPosible*100) : 100;
+  const totalesPorDia = dias.map((_, j) => filas.reduce((acc,f)=> acc + (f.codigos[j]==='A' ? 1 : 0), 0));
+
+  const headerFechas = dias.map(f => {
+    const d = new Date(f+'T00:00:00');
+    return `${String(d.getDate()).padStart(2,'0')}/${String(d.getMonth()+1).padStart(2,'0')}`;
+  });
+
+  const aoa = [];
+  aoa.push([`${curso}° AÑO ${anio}`]);
+  aoa.push([]);
+  aoa.push([nombreMes.toUpperCase()]);
+  aoa.push([`Porcentaje de asistencia del mes: ${pctGeneral.toFixed(2).replace('.',',')}%`]);
+  aoa.push([]);
+  aoa.push(['Nº','Apellidos y Nombres', ...headerFechas, 'Ausencias','Tardes','% Asistencia']);
+  filas.forEach(f => aoa.push([f.n, f.nombre, ...f.codigos, f.ausencias, f.tardes, `${f.pct.toFixed(1).replace('.',',')}%`]));
+  aoa.push(['','Faltas totales del día', ...totalesPorDia]);
+  aoa.push([]);
+  aoa.push(['Referencias: P = Presente · A = Ausente · T = Tarde']);
+
+  const excluidos = [];
+  { const { from, to } = rangoDelMes(mesISO);
+    let d = new Date(from+'T00:00:00'); const end = new Date(to+'T00:00:00');
+    while(d <= end){
+      const iso = d.toISOString().slice(0,10); const dow = d.getDay();
+      if(dow!==0 && dow!==6){
+        if(FERIADOS_2026.has(iso)) excluidos.push(iso+' (feriado)');
+        else{ const sc = getDiaSinClase(iso, curso); if(sc) excluidos.push(`${iso} (sin clase: ${sc.motivo})`); }
+      }
+      d.setDate(d.getDate()+1);
+    }
+  }
+  if(excluidos.length) aoa.push([`Días sin clase este mes (no figuran en la planilla): ${excluidos.join(' · ')}`]);
+
+  const ws = XLSX.utils.aoa_to_sheet(aoa);
+  ws['!cols'] = [{wch:4},{wch:26}, ...headerFechas.map(()=>({wch:6})), {wch:10},{wch:8},{wch:12}];
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, `${curso}° A ${nombreMes.slice(0,3)}`);
+  XLSX.writeFile(wb, `Planilla_Oficial_${curso}A_${mesISO}.xlsx`);
+}
+
+// Resumen simple por mes (uno por alumno, sin el detalle día por día).
+function exportarResumenMensualCurso(curso, mesISO){
+  const students = getStudents().filter(s => s.curso === curso).sort((a,b)=> a.apellido.localeCompare(b.apellido));
+  const dias = diasHabilesDelMes(curso, mesISO);
+  const [anio, mesN] = mesISO.split('-').map(Number);
+  const nombreMes = MESES_NOMBRE[mesN-1];
+  if(!dias.length){
+    showToast('No hay días hábiles en ese mes todavía.', 'error');
+    return;
+  }
+  const filas = students.map(s => {
+    let ausencias=0, tardes=0, justificadas=0;
+    dias.forEach(f => {
+      const rec = cache.attendance[`${f}|${s.id}`];
+      if(!rec) return;
+      if(rec.estado==='A' && rec.exencion) justificadas++;
+      else if(rec.estado==='A') ausencias++;
+      else if(rec.estado==='J') justificadas++;
+      else if(rec.estado==='T') tardes++;
+    });
+    const pct = dias.length ? 100 - ((ausencias + tardes*0.5)/dias.length*100) : 100;
+    return {
+      'Apellido': s.apellido, 'Nombre': s.nombre, 'Curso': `${curso}° A`,
+      'Ausencias': ausencias, 'Tardes': tardes, 'Justificadas': justificadas,
+      '% Asistencia': `${pct.toFixed(1).replace('.',',')}%`
+    };
+  });
+  const ws = XLSX.utils.json_to_sheet(filas);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, `${curso}° A`);
+  XLSX.writeFile(wb, `Resumen_${curso}A_${nombreMes}_${anio}.xlsx`);
+}
+
 function computeTendenciaCurso(curso){
   const students = getStudents().filter(s => s.curso === curso);
   return BIMESTRES.map(bim => {
@@ -4087,7 +4247,13 @@ function renderVistaCurso(){
       </div>
     </div>
 
-    ${userRole!=='student' ? `<button class="btn-secondary" id="exportarBtn" style="width:100%;margin-bottom:16px;"><span class="btn-icon-fix">${icon('file')}</span> Exportar asistencia a Excel</button>` : ''}
+    ${userRole!=='student' ? `
+    <div class="field-row" style="margin-bottom:10px;">
+      <select id="mesOficialSelect">${mesesConDatos().map((m,i,arr)=>`<option value="${m.value}" ${i===arr.length-1?'selected':''}>${m.label}</option>`).join('')}</select>
+    </div>
+    <button class="btn-secondary" id="exportarOficialBtn" style="width:100%;margin-bottom:10px;"><span class="btn-icon-fix">${icon('file')}</span> Exportar planilla oficial del mes (día por día)</button>
+    <button class="btn-secondary" id="exportarResumenMesBtn" style="width:100%;margin-bottom:10px;"><span class="btn-icon-fix">${icon('file')}</span> Exportar resumen del mes</button>
+    <button class="btn-secondary" id="exportarBtn" style="width:100%;margin-bottom:16px;"><span class="btn-icon-fix">${icon('file')}</span> Exportar asistencia a Excel (bimestre)</button>` : ''}
 
     <p class="section-label">Faltas promedio por alumno, por bimestre</p>
     <div class="config-card" style="margin-bottom:16px;">${svgTendencia(computeTendenciaCurso(selectedCurso))}</div>
@@ -4104,6 +4270,12 @@ function renderVistaCurso(){
   document.getElementById('cardSCPCurso').addEventListener('click', () => navigate('vistaCursoSCP'));
   if(document.getElementById('exportarBtn')){
     document.getElementById('exportarBtn').addEventListener('click', () => exportarAsistenciaCurso(selectedCurso));
+  }
+  if(document.getElementById('exportarOficialBtn')){
+    document.getElementById('exportarOficialBtn').addEventListener('click', () => exportarPlanillaOficialCurso(selectedCurso, document.getElementById('mesOficialSelect').value));
+  }
+  if(document.getElementById('exportarResumenMesBtn')){
+    document.getElementById('exportarResumenMesBtn').addEventListener('click', () => exportarResumenMensualCurso(selectedCurso, document.getElementById('mesOficialSelect').value));
   }
   document.querySelectorAll('[data-materia]').forEach(el => {
     el.addEventListener('click', () => { selectedMateriaRiesgo = el.dataset.materia; navigate('vistaCursoMateria'); });

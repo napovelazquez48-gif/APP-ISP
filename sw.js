@@ -1,4 +1,4 @@
-const CACHE_NAME = 'preceptoria-isp-v13';
+const CACHE_NAME = 'preceptoria-isp-v14';
 
 // ---------- Notificaciones push (Firebase Cloud Messaging) ----------
 // Tiene que vivir en este mismo service worker (no en uno aparte) para que
