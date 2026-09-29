@@ -1026,7 +1026,9 @@ async function initMessagingForegroundHandler(){
 }
 
 async function activarNotificaciones(mostrarErrores){
-  if(userRole !== 'student' || !currentStudentAuth) return;
+  if(userRole !== 'admin' && userRole !== 'teacher' && userRole !== 'student') return;
+  if(userRole === 'teacher' && !currentTeacher) return;
+  if(userRole === 'student' && !currentStudentAuth) return;
   if(!('Notification' in window) || !('serviceWorker' in navigator)){
     if(mostrarErrores) await customAlert('Este navegador no soporta notificaciones.');
     return;
@@ -1047,10 +1049,13 @@ async function activarNotificaciones(mostrarErrores){
     const reg = await navigator.serviceWorker.ready;
     const token = await getToken(messagingInstance, { vapidKey: WEB_PUSH_VAPID_KEY, serviceWorkerRegistration: reg });
     if(!token) return;
-    await setDoc(doc(db,'fcmTokens', currentStudentAuth.uid), {
-      token, curso: currentStudentAuth.curso, studentId: currentStudentAuth.studentId,
-      role: 'student', updatedAt: Date.now()
-    });
+    const uid = userRole === 'student' ? currentStudentAuth.uid : (userRole === 'teacher' ? currentTeacher.uid : auth.currentUser.uid);
+    const datosRol = userRole === 'student'
+      ? { curso: currentStudentAuth.curso, studentId: currentStudentAuth.studentId }
+      : userRole === 'teacher'
+        ? { cursos: currentTeacher.cursos||[], materias: currentTeacher.materias||[] }
+        : {};
+    await setDoc(doc(db,'fcmTokens', uid), Object.assign({ token, role: userRole, updatedAt: Date.now() }, datosRol));
     if(mostrarErrores){ showToast('Notificaciones activadas'); render(); }
   }catch(err){ if(mostrarErrores) showSaveError(err); else console.error(err); }
 }
@@ -1058,11 +1063,16 @@ async function activarNotificaciones(mostrarErrores){
 function notifStatusBannerHtml(){
   if(!('Notification' in window) || !('serviceWorker' in navigator)) return '';
   if(Notification.permission === 'denied'){
-    return `<div class="aviso-banner">${icon('alert')}<span>Tenés las notificaciones bloqueadas para esta app en el navegador. Activalas manualmente para recibir avisos de la agenda.</span></div>`;
+    return `<div class="aviso-banner">${icon('alert')}<span>Tenés las notificaciones bloqueadas para esta app en el navegador. Activalas manualmente para recibir avisos.</span></div>`;
   }
   if(Notification.permission === 'granted') return '';
+  const texto = userRole==='admin'
+    ? 'Activá las notificaciones para enterarte al instante si un alumno entra en alerta por faltas, además de los avisos de la agenda.'
+    : userRole==='teacher'
+      ? 'Activá las notificaciones para que te avisemos si se te vence cargar valoraciones o notas, además de los avisos de la agenda.'
+      : 'Activá las notificaciones para enterarte de exámenes, TPs y otros eventos aunque no tengas la app abierta.';
   return `<div class="aviso-banner nuevo" style="flex-direction:column;align-items:stretch;">
-    <div style="display:flex;gap:8px;">${icon('calendar')}<span>Activá las notificaciones para enterarte de exámenes, TPs y otros eventos aunque no tengas la app abierta.</span></div>
+    <div style="display:flex;gap:8px;">${icon('calendar')}<span>${texto}</span></div>
     <button class="btn-primary" id="activarNotifBtn" style="margin-top:8px;">Activar notificaciones</button>
   </div>`;
 }
@@ -1143,6 +1153,8 @@ function renderHome(){
       </div>`;
     })()}
 
+    ${notifStatusBannerHtml()}
+
     <div class="module-list">
       ${moduleRow('clipboard','Asistencia diaria','Presente, ausente, tardanza', 'asistencia')}
       ${moduleRow('alert','Sanciones e incidentes','Registro por alumno', 'sanciones')}
@@ -1183,6 +1195,9 @@ function renderHome(){
     `}
   `;
   attachModuleHandlers();
+  if(document.getElementById('activarNotifBtn')){
+    document.getElementById('activarNotifBtn').addEventListener('click', () => activarNotificaciones(true));
+  }
   document.getElementById('cardAsistenciaHoy').addEventListener('click', () => navigate('detalleAsistenciaHoy'));
   document.getElementById('cardAlertas').addEventListener('click', () => navigate('detalleAlertas'));
   if(document.getElementById('cardTramites')){
@@ -2098,14 +2113,19 @@ function renderResumenLista(){
   const cursos = cursosDisponibles();
   if(!cursos.includes(selectedCurso)) selectedCurso = cursos[0];
   const filtro = (window.__resumenFiltro||'').toLowerCase();
-  let students = getStudents().filter(s => s.curso === selectedCurso).sort((a,b)=> a.apellido.localeCompare(b.apellido));
-  if(filtro) students = students.filter(s => `${s.apellido} ${s.nombre}`.toLowerCase().includes(filtro));
+  // Con texto en el buscador, se busca en TODO el colegio (no hace falta elegir el
+  // curso primero); vacío el buscador, se vuelve a navegar curso por curso como antes.
+  const buscandoGlobal = filtro.length >= 2;
+  let students = buscandoGlobal
+    ? getStudents().filter(s => `${s.apellido} ${s.nombre}`.toLowerCase().includes(filtro))
+    : getStudents().filter(s => s.curso === selectedCurso);
+  students = students.sort((a,b)=> a.apellido.localeCompare(b.apellido));
   const weights = computeAbsenceWeights();
   const rows = students.map(s => {
     const w = weights[s.id] || 0;
     return `<div class="module-row" data-student="${s.id}">
       <div class="txt">
-        <p class="title">${s.apellido}, ${s.nombre}</p>
+        <p class="title">${s.apellido}, ${s.nombre}${buscandoGlobal ? ` <span style="font-weight:400;color:var(--ink-soft);">· ${s.curso}° A</span>` : ''}</p>
         <p class="desc">${w} falta${w!==1?'s':''} en el bimestre</p>
       </div>
       ${w>=UMBRAL_ALERTA ? `<span class="badge-soon" style="background:var(--stamp-bg);color:var(--stamp);">${w}</span>` : ''}
@@ -2118,10 +2138,10 @@ function renderResumenLista(){
       <button class="back-btn" id="backBtn">${icon('back')}</button>
       <h1>Resumen del alumno</h1>
     </div>
-    <div class="course-picker">
+    <div class="course-picker" style="${buscandoGlobal?'opacity:0.4;pointer-events:none;':''}">
       ${cursoBtns(cursos)}
     </div>
-    <input type="text" id="filtroResumen" placeholder="Buscar por nombre..." style="margin-bottom:12px;" value="${window.__resumenFiltro||''}">
+    <input type="text" id="filtroResumen" placeholder="Buscar alumno en todo el colegio..." style="margin-bottom:12px;" value="${window.__resumenFiltro||''}">
     ${students.length ? `<div class="module-list">${rows}</div>` : `<p class="empty-inline">Nadie coincide con esa búsqueda.</p>`}
     ${userRole==='admin' ? `<button class="btn-secondary" id="boletinesOficialesCursoBtn" style="width:100%;margin-top:14px;">${icon('file')} Descargar boletines oficiales del curso (PDF)</button>
     <button class="btn-secondary" id="boletinesOficialesTodosBtn" style="width:100%;margin-top:8px;">${icon('file')} Descargar boletines oficiales de TODO el colegio (PDF)</button>` : ''}
@@ -3115,6 +3135,8 @@ function renderTeacherHome(){
       </div>
     </div>
 
+    ${notifStatusBannerHtml()}
+
     <div class="module-list">
       ${moduleRow('clipboard','Asistencia diaria','Solo consulta, por curso', 'asistencia')}
       ${moduleRow('alert','Sanciones e incidentes','Registro por alumno', 'sanciones')}
@@ -3133,6 +3155,9 @@ function renderTeacherHome(){
   document.querySelectorAll('.module-row').forEach(r => r.addEventListener('click', () => navigate(r.dataset.route)));
   document.getElementById('cambiarPassLink').addEventListener('click', (e) => { e.preventDefault(); cambiarPasswordProfesor(); });
   document.getElementById('salirProfLink').addEventListener('click', (e) => { e.preventDefault(); signOut(auth); });
+  if(document.getElementById('activarNotifBtn')){
+    document.getElementById('activarNotifBtn').addEventListener('click', () => activarNotificaciones(true));
+  }
 }
 
 function renderStudentHome(){
@@ -5241,6 +5266,8 @@ onAuthStateChanged(auth, async (user) => {
     startListeners();
     currentRoute = getUsuario() ? 'home' : 'quien';
     authResolved = true;
+    initMessagingForegroundHandler();
+    if('Notification' in window && Notification.permission === 'granted') activarNotificaciones(false);
     render();
   } else if(user && !user.isAnonymous){
     startListeners();
@@ -5250,6 +5277,8 @@ onAuthStateChanged(auth, async (user) => {
         userRole = 'teacher';
         currentTeacher = Object.assign({ uid: user.uid }, tdoc.data());
         currentRoute = 'teacherHome';
+        initMessagingForegroundHandler();
+        if('Notification' in window && Notification.permission === 'granted') activarNotificaciones(false);
       } else {
         const vdoc = await getDoc(doc(db,'viewers',user.uid));
         if(vdoc.exists() && vdoc.data().activo !== false){
