@@ -1867,12 +1867,20 @@ const APP_START_TIME = Date.now();
 
 let lastFocusedInput = null;
 let skipFadeNext = false;
+// OJO: tiene que ir en fase de "captura" (el "true" del final), no de burbujeo.
+// Los inputs de búsqueda de cada pantalla (ej. "filtroResumen") llaman a render()
+// en su propio listener de 'input', lo que reconstruye toda la pantalla (y destruye
+// el input) ANTES de que este listener llegara a correr si fuera en burbujeo —
+// guardando siempre la posición del cursor de la letra ANTERIOR, no la actual. Eso
+// era lo que hacía que, al escribir rápido, el cursor saltara al principio y se
+// hiciera imposible escribir. En captura, este listener corre primero (antes de que
+// el input de cada pantalla dispare el render), y guarda la posición correcta.
 document.addEventListener('input', (e) => {
   if(e.target && e.target.id && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA')){
     lastFocusedInput = { id: e.target.id, start: e.target.selectionStart, end: e.target.selectionEnd };
     skipFadeNext = true;
   }
-});
+}, true);
 
 function render(){
   // Todavía no sabemos con qué rol entrar (Firestore está confirmando si es
@@ -3893,6 +3901,21 @@ function exportarVistaGeneral(){
   XLSX.writeFile(wb, `Vista_general_ISP_${todayISO()}.xlsx`);
 }
 
+// % de asistencia del bimestre actual, por curso (mismo criterio de "peso" que el
+// resto de la app: falta=1 día, tarde=0.5, EF falta=0.5, exención no suma).
+function computeAsistenciaPctPorCurso(){
+  const bim = bimestreActual();
+  const diasHabiles = eachDateInRange(bim.from, bim.to).filter(d => diaKeyFor(d)).length;
+  const weights = computeAbsenceWeights(bim);
+  return CURSOS.map(c => {
+    const students = getStudents().filter(s => s.curso === c);
+    const totalPosible = students.length * diasHabiles;
+    const totalPeso = students.reduce((sum,s) => sum + (weights[s.id]||0), 0);
+    const pct = totalPosible ? Math.round((1 - totalPeso/totalPosible)*1000)/10 : 100;
+    return { label: c+'°', promedio: pct };
+  });
+}
+
 function renderVistaGeneral(){
   const porCurso = CURSOS.map(c => Object.assign({ curso: c }, computeVistaCurso(c)));
   const totalAlumnos = porCurso.reduce((s,c)=>s+c.total, 0);
@@ -3921,6 +3944,9 @@ function renderVistaGeneral(){
       <div class="stat-card ${totalAlerta>0?'alert':''}"><p class="label">En alerta</p><p class="value">${totalAlerta}</p></div>
       <div class="stat-card ${totalSCP>0?'alert':''}"><p class="label">Riesgo SCP</p><p class="value">${totalSCP}</p></div>
     </div>
+    <p class="section-label">Asistencia del bimestre, por curso</p>
+    <div class="config-card" style="margin-bottom:16px;">${svgTendencia(computeAsistenciaPctPorCurso(), { suffix:'%', escalaFija:[0,100], colorPorValor: (v) => v < Math.round(UMBRAL_SCP*100) ? 'var(--stamp)' : 'var(--sage)' })}</div>
+
     <p class="section-label">Por curso</p>
     <div class="module-list">${rows}</div>
     ${userRole==='admin' ? `<button class="btn-secondary no-print" id="exportarGeneralBtn" style="width:100%;margin-top:14px;">${icon('file')} Exportar a Excel</button>
@@ -4221,17 +4247,21 @@ function computeTendenciaDiaSemana(curso){
   }));
 }
 
-function svgTendencia(datos){
+function svgTendencia(datos, opts){
+  const suffix = (opts && opts.suffix) || '';
+  const escalaFija = opts && opts.escalaFija; // ej: [0,100] para que las barras de % se comparen bien entre sí
   const w = 320, h = 160, padL = 20, padB = 26, padT = 28;
-  const max = Math.max(1, ...datos.map(d=>d.promedio));
+  const max = escalaFija ? escalaFija[1] : Math.max(1, ...datos.map(d=>d.promedio));
+  const min = escalaFija ? escalaFija[0] : 0;
   const barW = (w - padL - 10) / datos.length;
   const bars = datos.map((d, i) => {
-    const barH = Math.max(4, (d.promedio / max) * (h - padT - padB));
+    const barH = Math.max(4, ((d.promedio - min) / (max - min)) * (h - padT - padB));
     const x = padL + i*barW + barW*0.2;
     const y = h - padB - barH;
-    return `<rect x="${x}" y="${y}" width="${barW*0.6}" height="${barH}" rx="3" fill="var(--sage)"/>
+    const color = (opts && opts.colorPorValor) ? opts.colorPorValor(d.promedio) : 'var(--sage)';
+    return `<rect x="${x}" y="${y}" width="${barW*0.6}" height="${barH}" rx="3" fill="${color}"/>
       <text x="${x+barW*0.3}" y="${h-padB+18}" text-anchor="middle" font-size="12" fill="var(--ink-soft)">${d.label}</text>
-      <text x="${x+barW*0.3}" y="${y-9}" text-anchor="middle" font-family="'Source Serif 4',serif" font-size="16" font-weight="700" fill="var(--ink)">${d.promedio}</text>`;
+      <text x="${x+barW*0.3}" y="${y-9}" text-anchor="middle" font-family="'Source Serif 4',serif" font-size="16" font-weight="700" fill="var(--ink)">${d.promedio}${suffix}</text>`;
   }).join('');
   return `<svg viewBox="0 0 ${w} ${h}" style="width:100%;height:auto;display:block;">
     <line x1="${padL}" y1="${h-padB}" x2="${w-5}" y2="${h-padB}" stroke="var(--border)"/>
