@@ -1758,20 +1758,35 @@ function updatePreview(){
     box.innerHTML = `<p style="font-size:12px;color:var(--ink-soft);">Elegí un rango de fechas válido.</p>`;
     return;
   }
+  const student = getStudents().find(s => s.id === selectedStudentId);
   const att = getAttendance();
   const days = dateRange(from, to);
   let count = 0;
   const rows = days.map(iso => {
+    const esDiaDeClase = diaKeyFor(iso) && !FERIADOS_2026.has(iso) && !getDiaSinClase(iso, student.curso);
     const rec = att[`${iso}|${selectedStudentId}`];
-    const isAusente = rec && rec.estado === 'A';
-    if(isAusente) count++;
+    let estadoTxt, esJustificable = false;
+    if(!esDiaDeClase){
+      estadoTxt = 'no hay clase';
+    } else if(!rec){
+      // No hay nada cargado todavía para ese día (por ejemplo, se cargó el
+      // certificado antes de tomar asistencia): se justifica igual, no se
+      // pierde por no tener una "Ausente" previa.
+      estadoTxt = 'Sin asistencia cargada → Justificada'; esJustificable = true;
+    } else if(rec.estado === 'A'){
+      estadoTxt = 'Ausente → Justificada'; esJustificable = true;
+    } else {
+      const nombres = { P:'Presente', T:'Tarde', TJ:'Tarde justificada', J:'Justificada' };
+      estadoTxt = `Ya cargado como ${nombres[rec.estado] || rec.estado} (no se modifica)`;
+    }
+    if(esJustificable) count++;
     return `<div class="preview-row">
       <span>${fmtDateShort(iso)}</span>
-      <span class="${isAusente?'yes':'no'}">${isAusente ? 'Ausente → Justificada' : 'sin falta cargada'}</span>
+      <span class="${esJustificable?'yes':'no'}">${estadoTxt}</span>
     </div>`;
   }).join('');
   box.innerHTML = `
-    <p class="preview-title">${count>0 ? `Se van a justificar ${count} falta${count>1?'s':''}` : 'No hay faltas para justificar en ese rango'}</p>
+    <p class="preview-title">${count>0 ? `Se van a justificar ${count} día${count>1?'s':''}` : 'No hay días para justificar en ese rango'}</p>
     ${rows}
   `;
 }
@@ -1781,15 +1796,28 @@ async function guardarJustificativo(){
   const to = document.getElementById('fechaHasta').value;
   if(!from || !to || from > to){ await customAlert('Elegí un rango de fechas válido.'); return; }
 
+  const student = getStudents().find(s => s.id === selectedStudentId);
   const days = dateRange(from, to);
   let count = 0;
   days.forEach(iso => {
+    // Si no hay clase ese día (fin de semana, feriado o "día sin clase" del
+    // curso), no hay nada que justificar.
+    if(!diaKeyFor(iso) || FERIADOS_2026.has(iso) || getDiaSinClase(iso, student.curso)) return;
     const key = `${iso}|${selectedStudentId}`;
     const rec = cache.attendance[key];
-    if(rec && rec.estado === 'A'){
+    if(!rec){
+      // Antes esto se salteaba en silencio si todavía no se había cargado
+      // asistencia ese día (por ejemplo, certificado cargado por adelantado),
+      // y el día quedaba sin justificar. Ahora se crea directamente como
+      // justificada.
+      writeAttendance(key, { estado: 'J', hora: null });
+      count++;
+    } else if(rec.estado === 'A'){
       writeAttendance(key, Object.assign({}, rec, { estado: 'J' }));
       count++;
     }
+    // Si ya había una marca real distinta de "Ausente" (Presente, Tarde, etc.)
+    // no se pisa, para no borrar algo que el preceptor cargó a mano.
   });
 
   addDoc(collection(db,'certificados'), { studentId: selectedStudentId, from, to, createdAt: Date.now(), autor: getUsuario() })
@@ -1801,7 +1829,7 @@ async function guardarJustificativo(){
     })
     .catch(err=>showSaveError(err));
 
-  showToast(count>0 ? `Justificativo guardado — ${count} falta${count>1?'s':''} justificada${count>1?'s':''}` : 'Justificativo guardado');
+  showToast(count>0 ? `Justificativo guardado — ${count} día${count>1?'s':''} justificado${count>1?'s':''}` : 'Justificativo guardado');
   navigate('justificativos');
 }
 
