@@ -557,7 +557,10 @@ function markAusente(studentId, fecha){
   fecha = fecha || selectedFecha;
   const key = `${fecha}|${studentId}`;
   const rec = cache.attendance[key];
-  if(rec && rec.estado==='A'){
+  // "J" (ausente justificada, viene de un certificado) se trata igual que "A"
+  // para el toggle: tocar de nuevo el botón lo desmarca del todo, en vez de
+  // pisarlo con un "A" sin justificar y perder la justificación.
+  if(rec && (rec.estado==='A' || rec.estado==='J')){
     deleteDoc(doc(db,'attendance',docId(key))).catch(err=>showSaveError(err));
     return;
   }
@@ -1459,7 +1462,7 @@ function renderAsistencia(){
           </div>
           <div class="btn-group">
             <button class="state-btn ${estado==='P'||estado==='T'||estado==='TJ'?'on-p':''} ${ultimaAccionPulso && ultimaAccionPulso.studentId===s.id && (estado==='P'||estado==='T'||estado==='TJ') ? 'pulse' : ''}" data-p="${s.id}">P</button>
-            <button class="state-btn ${estado==='A'?'on-a':''} ${ultimaAccionPulso && ultimaAccionPulso.studentId===s.id && estado==='A' ? 'pulse' : ''}" data-a="${s.id}">A</button>
+            <button class="state-btn ${estado==='A'||estado==='J'?'on-a':''} ${ultimaAccionPulso && ultimaAccionPulso.studentId===s.id && (estado==='A'||estado==='J') ? 'pulse' : ''}" data-a="${s.id}">A</button>
             ${efHtml}
             <button class="state-btn hora-btn" data-edit="${s.id}" title="Editar hora de llegada">${icon('clock')}</button>
           </div>
@@ -2426,7 +2429,12 @@ function renderResumenAlumno(){
 
     <p class="section-label" style="margin-top:16px;">Certificados entregados</p>
     ${certs.length ? `<div class="sancion-list">${certs.map(c => `
-      <div class="sancion-item"><p class="folio">${fmtDateShort(c.from)} al ${fmtDateShort(c.to)}</p></div>
+      <div class="sancion-item">
+        <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;">
+          <p class="folio">${fmtDateShort(c.from)} al ${fmtDateShort(c.to)}</p>
+          ${(userRole!=='viewer' && userRole!=='student') ? `<button class="borrar-btn" data-borrar-cert="${c.id}">${icon('trash')}</button>` : ''}
+        </div>
+      </div>
     `).join('')}</div>` : `<p class="empty-inline">Sin certificados cargados.</p>`}
 
     <p class="section-label" style="margin-top:16px;">Autorización de tardanza</p>
@@ -2469,6 +2477,15 @@ function renderResumenAlumno(){
   if(document.getElementById('verNotasBtn')){
     document.getElementById('verNotasBtn').addEventListener('click', () => navigate('resumenNotas'));
   }
+  document.querySelectorAll('[data-borrar-cert]').forEach(b => {
+    b.addEventListener('click', () => borrarCertificado(b.dataset.borrarCert));
+  });
+}
+
+async function borrarCertificado(id){
+  if(!(await customConfirm('¿Borrar este certificado de la lista? No se puede deshacer. Esto no cambia la asistencia ya justificada, solo saca el registro del certificado.', {peligro:true, textoSi:'Borrar'}))) return;
+  deleteDoc(doc(db,'certificados',id)).catch(err=>showSaveError(err));
+  if(certImagesLocal[id]){ delete certImagesLocal[id]; DB.set('isp_cert_images', certImagesLocal); }
 }
 
 function renderResumenValoraciones(){
