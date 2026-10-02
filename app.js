@@ -980,17 +980,30 @@ function renderHorarios(){
 }
 
 function renderAusentismoDocente(){
-  const conteo = {};
-  Object.values(cache.substitutions).forEach(porProfesor => {
+  // Se cuenta por DÍA, no por cada hora/curso marcado: si un profesor da clase en
+  // varios cursos el mismo día y falta, es 1 sola ausencia (aunque haya varios
+  // registros de suplencia ese día, uno por curso/hora — incluida la cascada
+  // automática del resto de sus horas). Para que se pueda verificar a simple vista,
+  // se muestran también las fechas concretas de cada uno (tocando "ver fechas").
+  const diasPorProfesor = {};
+  Object.entries(cache.substitutions).forEach(([subKey, porProfesor]) => {
+    const fecha = subKey.split('|')[0];
     Object.keys(porProfesor).forEach(nombre => {
-      conteo[nombre] = (conteo[nombre]||0) + 1;
+      if(!diasPorProfesor[nombre]) diasPorProfesor[nombre] = new Set();
+      diasPorProfesor[nombre].add(fecha);
     });
   });
-  const lista = Object.entries(conteo).sort((a,b)=> b[1]-a[1]);
-  const rows = lista.map(([nombre, veces]) => `
+  const lista = Object.entries(diasPorProfesor)
+    .map(([nombre, fechas]) => [nombre, [...fechas].sort().reverse()])
+    .sort((a,b)=> b[1].length-a[1].length);
+  const rows = lista.map(([nombre, fechas]) => `
     <div class="sancion-item">
       <p class="folio">${nombre}</p>
-      <p class="motivo">${veces} ${veces===1?'ausencia registrada':'ausencias registradas'}</p>
+      <p class="motivo">${fechas.length} ${fechas.length===1?'día de ausencia registrado':'días de ausencia registrados'}</p>
+      <details style="margin-top:4px;">
+        <summary style="font-size:11.5px;color:var(--ink-soft);cursor:pointer;">Ver fechas</summary>
+        <p style="font-size:12px;color:var(--ink-soft);margin-top:4px;">${fechas.map(f=>fmtDateShort(f)).join(' · ')}</p>
+      </details>
     </div>
   `).join('');
 
@@ -999,7 +1012,7 @@ function renderAusentismoDocente(){
       <button class="back-btn" id="backBtn">${icon('back')}</button>
       <h1>Ausentismo docente</h1>
     </div>
-    <p class="info-note" style="margin-top:0;">${icon('info')}Cuenta las veces que marcaste a cada profesor/a como ausente en "Horarios y suplencias", desde que empezaste a usar la app.</p>
+    <p class="info-note" style="margin-top:0;">${icon('info')}Cuenta los días que marcaste a cada profesor/a como ausente en "Horarios y suplencias" (un día cuenta una sola vez, aunque dicte en varios cursos), desde que empezaste a usar la app. Tocá "Ver fechas" para revisar cuáles son.</p>
     ${lista.length ? `<div class="sancion-list">${rows}</div>` : `<p class="empty-inline">Todavía no marcaste ninguna ausencia docente.</p>`}
   `;
   document.getElementById('backBtn').addEventListener('click', () => goBack('horarios'));
@@ -1391,11 +1404,10 @@ function renderHome(){
     ${getUsuario()==='Napo' ? `
     <p class="section-label" style="margin-top:22px;">Administración</p>
     <div class="module-list">
-      ${moduleRow('users','Profesores','Altas y bajas de cuentas de profesor', 'profesores')}
       ${moduleRow('users','Cuentas de alumnos','Faltas, notas y contacto de profesores', 'alumnosCuentas')}
-      ${moduleRow('users','Acceso de lectura','Rectoría, psicopedagogía, secretaría', 'lectura')}
       ${moduleRow('calendar','Conexión con Drive','Emparejar y sincronizar faltas con Excel', 'conexionDrive')}
     </div>
+    <p style="font-size:11.5px;color:var(--ink-soft);margin-top:8px;">Profesores y acceso de lectura ahora están en Configuración.</p>
     <p style="text-align:center;margin-top:18px;">
       <a href="#" id="cambiarUsuarioLink" style="font-size:12px;color:var(--ink-soft);text-decoration:underline;">Cambiar usuario</a>
       &nbsp;·&nbsp;
