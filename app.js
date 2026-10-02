@@ -97,6 +97,7 @@ let cache = {
   diasSinClase: {},
   students_auth: {},
   students: {},
+  schedule: {},
   entradasEspeciales: {},
   eventos: {},
   config: { entrada:'07:45', toleranciaMin:15, corteFaltaCompleta:'09:00' }
@@ -241,6 +242,13 @@ function startListeners(){
     render();
   });
 
+  onSnapshot(collection(db,'schedule'), snap => {
+    const next = {};
+    snap.forEach(d => { next[d.id] = d.data(); });
+    cache.schedule = next;
+    render();
+  });
+
   onSnapshot(collection(db,'eventos'), snap => {
     const next = {};
     snap.forEach(d => { next[d.id] = Object.assign({ id: d.id }, d.data()); });
@@ -350,6 +358,45 @@ async function reactivarAlumno(id){
   if(!(await customConfirm(`¿Reactivar a ${s.nombre} ${s.apellido}?`))) return;
   setDoc(doc(db,'students', id), { activo: true }, { merge: true }).catch(err=>showSaveError(err));
 }
+
+// ---------- Horario de materias (editable) ----------
+// Igual que con los alumnos: mientras no se corrió la migración, se sigue usando
+// SEED_SCHEDULE (fijo en el código) tal cual estaba. Una vez migrado, la fuente real
+// es la colección 'schedule' de Firestore (un documento por curso, con el horario de
+// cada día adentro), así se puede editar sin pedir un redeploy de la app.
+function getSchedule(){
+  if(Object.keys(cache.schedule).length){
+    const merged = {};
+    CURSOS.forEach(c => { merged[c] = (cache.schedule[c] && cache.schedule[c].dias) || {}; });
+    return merged;
+  }
+  return SEED_SCHEDULE;
+}
+async function migrarHorarioAFirestore(){
+  if(Object.keys(cache.schedule).length){
+    if(!(await customConfirm('El horario ya está migrado a la base de datos. ¿Volver a correr la migración igual? (no debería hacer falta)'))) return;
+  } else {
+    if(!(await customConfirm('Esto copia el horario actual de materias a la base de datos para que lo puedas editar vos mismo desde la app. Se hace una sola vez y no cambia nada de lo que ya está cargado. ¿Continuar?'))) return;
+  }
+  try{
+    await Promise.all(CURSOS.map(c => setDoc(doc(db,'schedule', c), { dias: SEED_SCHEDULE[c] || {} }, { merge: true })));
+    await customAlert('Listo, ya podés editar el horario desde "Horario de materias" en Configuración.');
+  }catch(err){ showSaveError(err); }
+}
+async function guardarHorarioDia(curso, dia, entradas){
+  // entradas: [{hour, subject, teachersTxt}], se guardan solo las horas con materia cargada
+  const limpio = entradas
+    .filter(e => e.subject && e.subject.trim())
+    .map(e => ({
+      hour: e.hour,
+      subject: e.subject.trim(),
+      teachers: e.teachersTxt.split(',').map(t=>t.trim().toUpperCase()).filter(Boolean)
+    }));
+  try{
+    await setDoc(doc(db,'schedule', curso), { dias: { [dia]: limpio } }, { merge: true });
+    showToast('Horario guardado');
+  }catch(err){ showSaveError(err); }
+}
 function getConfig(){ return cache.config; }
 function getAttendance(){ return cache.attendance; }
 function getEF(){ return cache.ef; }
@@ -387,7 +434,7 @@ function bimestreActual(){
 
 // ---------- Motor de faltas por materia ----------
 function subjectsForDay(curso, diaKey){
-  const entries = (SEED_SCHEDULE[curso] && SEED_SCHEDULE[curso][diaKey]) || [];
+  const entries = (getSchedule()[curso] && getSchedule()[curso][diaKey]) || [];
   return [...new Set(entries.map(e => e.subject))];
 }
 function eachDateInRange(fromISO, toISO){
@@ -429,7 +476,7 @@ function computeMateriaStats(studentId, bim){
       if(isFullAbsence){
         stats[subj].faltas++;
       } else if(isParcial){
-        const entries = SEED_SCHEDULE[curso][diaKey].filter(e => e.subject === subj);
+        const entries = (getSchedule()[curso][diaKey]||[]).filter(e => e.subject === subj);
         const perdida = entries.some(e => {
           const startTime = HOUR_TIME[e.hour];
           return startTime && minutesOf(startTime) < minutesOf(rec.hora);
@@ -789,7 +836,7 @@ async function toggleSuplencia(subKey, teacherName){
     const [fechaDel, , diaDel, startHourDelStr] = subKey.split('|');
     if(Number(startHourDelStr) === 1){
       CURSOS.forEach(curso2 => {
-        const dayEntries2 = (SEED_SCHEDULE[curso2] && SEED_SCHEDULE[curso2][diaDel]) || [];
+        const dayEntries2 = (getSchedule()[curso2] && getSchedule()[curso2][diaDel]) || [];
         buildBlocks(dayEntries2).forEach(b2 => {
           if(b2.startHour <= 1) return;
           if(!b2.teachers.includes(teacherName)) return;
@@ -823,7 +870,7 @@ async function toggleSuplencia(subKey, teacherName){
   // sin pisar ninguna hora que ya tenga una suplencia cargada aparte.
   if(startHour === 1){
     CURSOS.forEach(curso2 => {
-      const dayEntries2 = (SEED_SCHEDULE[curso2] && SEED_SCHEDULE[curso2][dia]) || [];
+      const dayEntries2 = (getSchedule()[curso2] && getSchedule()[curso2][dia]) || [];
       buildBlocks(dayEntries2).forEach(b2 => {
         if(b2.startHour <= startHour) return;
         if(!b2.teachers.includes(teacherName)) return;
@@ -838,7 +885,7 @@ async function toggleSuplencia(subKey, teacherName){
 }
 
 function renderHorarios(){
-  const dayEntries = (SEED_SCHEDULE[selectedCurso] && SEED_SCHEDULE[selectedCurso][selectedDia]) || [];
+  const dayEntries = (getSchedule()[selectedCurso] && getSchedule()[selectedCurso][selectedDia]) || [];
   const blocks = buildBlocks(dayEntries);
   const subs = getSubstitutions();
   const dateKey = todayISO();
@@ -944,7 +991,7 @@ let selectedCurso = '1';
 function renderStudentHorario(){
   const curso = currentStudentAuth.curso;
   window.__studentDia = window.__studentDia || diaKeyFor(todayISO()) || 'lunes';
-  const dayEntries = (SEED_SCHEDULE[curso] && SEED_SCHEDULE[curso][window.__studentDia]) || [];
+  const dayEntries = (getSchedule()[curso] && getSchedule()[curso][window.__studentDia]) || [];
   const blocks = buildBlocks(dayEntries);
   const subs = getSubstitutions();
   const dateKey = todayISO();
@@ -2138,6 +2185,7 @@ function renderInner(){
   else if(currentRoute === 'notas') renderNotasLista();
   else if(currentRoute === 'config') renderConfig();
   else if(currentRoute === 'alumnos') renderAlumnos();
+  else if(currentRoute === 'horarioEditar') renderHorarioEditar();
   else if(currentRoute === 'configAvanzada') renderConfigAvanzada();
   else if(currentRoute === 'calendarioCiclo') renderCalendarioCiclo();
   else if(currentRoute === 'auditoria') renderAuditoria();
@@ -2369,7 +2417,7 @@ function subjectsAfectadasEnDia(studentId, iso){
     affected = subjects.slice();
   } else if(isParcial){
     affected = subjects.filter(subj => {
-      const entries = SEED_SCHEDULE[curso][diaKey].filter(e=>e.subject===subj);
+      const entries = (getSchedule()[curso][diaKey]||[]).filter(e=>e.subject===subj);
       return entries.some(e => { const st=HOUR_TIME[e.hour]; return st && minutesOf(st)<minutesOf(rec.hora); });
     });
   }
@@ -3700,7 +3748,7 @@ const OPCIONES_VALORACION = {
 function materiasDisponibles(){
   if(userRole === 'teacher') return currentTeacher.materias || [];
   const set = new Set();
-  Object.values(SEED_SCHEDULE).forEach(days => {
+  Object.values(getSchedule()).forEach(days => {
     Object.values(days).forEach(entries => entries.forEach(e => set.add(e.subject)));
   });
   return [...set].sort();
@@ -3708,7 +3756,7 @@ function materiasDisponibles(){
 
 function profesoresConocidos(){
   const map = {};
-  Object.entries(SEED_SCHEDULE).forEach(([curso, days]) => {
+  Object.entries(getSchedule()).forEach(([curso, days]) => {
     Object.values(days).forEach(entries => {
       entries.forEach(e => {
         (e.teachers||[]).forEach(nombre => {
@@ -3744,7 +3792,7 @@ function materiaActual(curso){
 }
 function materiasDeCurso(curso){
   const set = new Set();
-  const days = SEED_SCHEDULE[curso] || {};
+  const days = getSchedule()[curso] || {};
   Object.values(days).forEach(entries => entries.forEach(e => set.add(e.subject)));
   return [...set].sort();
 }
@@ -4223,7 +4271,50 @@ function descargarRespaldoCompleto(){
   });
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(hojaTramites), 'Tramites');
 
+  const hojaCertificados = cache.certificados.map(c => {
+    const s = students.find(x=>x.id===c.studentId);
+    return { Alumno: nombreDe(c.studentId), Curso: s ? `${s.curso}°A` : '', Desde: c.from, Hasta: c.to };
+  });
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(hojaCertificados), 'Certificados');
+
   XLSX.writeFile(wb, `Respaldo_ISP_${todayISO()}.xlsx`);
+}
+
+// ---------- Respaldos por separado (Configuración) ----------
+function descargarSancionesExcel(){
+  const students = getStudents();
+  const nombreDe = (id) => { const s = students.find(x=>x.id===id); return s ? `${s.apellido}, ${s.nombre}` : id; };
+  const cursoDe = (id) => { const s = students.find(x=>x.id===id); return s ? `${s.curso}°A` : ''; };
+  const filas = [];
+  Object.entries(getSanciones()).forEach(([sid, lista]) => {
+    lista.forEach(s => filas.push({ Alumno: nombreDe(sid), Curso: cursoDe(sid), Folio: s.folio, Fecha: s.fecha, Motivo: s.motivo, Autor: s.autor||'' }));
+  });
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(filas), 'Sanciones');
+  XLSX.writeFile(wb, `Sanciones_ISP_${todayISO()}.xlsx`);
+}
+function descargarCertificadosExcel(){
+  const students = getStudents();
+  const nombreDe = (id) => { const s = students.find(x=>x.id===id); return s ? `${s.apellido}, ${s.nombre}` : id; };
+  const cursoDe = (id) => { const s = students.find(x=>x.id===id); return s ? `${s.curso}°A` : ''; };
+  const filas = cache.certificados.map(c => ({ Alumno: nombreDe(c.studentId), Curso: cursoDe(c.studentId), Desde: c.from, Hasta: c.to }));
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(filas), 'Certificados');
+  XLSX.writeFile(wb, `Certificados_ISP_${todayISO()}.xlsx`);
+}
+function descargarTramitesExcel(){
+  const filas = [];
+  Object.values(getTramites()).forEach(t => {
+    getStudents().filter(s => t.cursos.includes(s.curso)).forEach(s => {
+      t.items.forEach(it => {
+        const e = getEntrega(t.id, s.id, it.key);
+        filas.push({ Tramite: t.nombre, Alumno: `${s.apellido}, ${s.nombre}`, Curso: s.curso+'°A', Item: it.label, Estado: e ? (e.entregado?'Entregado':(e.exento?'Exento':'')) : 'Pendiente' });
+      });
+    });
+  });
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(filas), 'Tramites');
+  XLSX.writeFile(wb, `Tramites_ISP_${todayISO()}.xlsx`);
 }
 
 function exportarAsistenciaCurso(curso){
@@ -5204,6 +5295,63 @@ function renderAlumnos(){
   });
 }
 
+function renderHorarioEditar(){
+  const migrado = Object.keys(cache.schedule).length > 0;
+  const schedule = getSchedule();
+  const dayEntries = (schedule[selectedCurso] && schedule[selectedCurso][selectedDia]) || [];
+  const porHora = {};
+  dayEntries.forEach(e => { porHora[e.hour] = e; });
+
+  const filas = [1,2,3,4,5,6,7,8].map(h => {
+    const e = porHora[h];
+    return `
+      <div class="field-row">
+        <label>${h}ª hora</label>
+        <input type="text" class="horaMateria" data-hour="${h}" placeholder="Materia" value="${e ? e.subject : ''}" style="flex:2;">
+        <input type="text" class="horaProfesor" data-hour="${h}" placeholder="Profesor/a (coma si hay más de uno)" value="${e ? e.teachers.join(', ') : ''}" style="flex:2;">
+      </div>`;
+  }).join('');
+
+  $app.innerHTML = `
+    <div class="appbar" style="padding:0 0 10px;">
+      <button class="back-btn" id="backBtn">${icon('back')}</button>
+      <h1>Horario de materias</h1>
+    </div>
+    ${!migrado ? `
+    <div class="config-card" style="margin-bottom:18px;">
+      <p style="font-size:12.5px;color:var(--ink-soft);margin-bottom:10px;">Antes de poder editar el horario desde acá, hay que migrarlo a la base de datos (se hace una sola vez y no cambia nada de lo que ya está cargado).</p>
+      <button class="btn-primary" id="migrarHorarioBtn" style="width:100%;">Migrar horario</button>
+    </div>
+    ` : `
+    <div class="course-picker">
+      ${cursoBtns(CURSOS)}
+      ${pillBtnRow('diaEdit', DIAS.map(d => ({value:d, label:DIA_LABEL[d].slice(0,3)})), selectedDia)}
+    </div>
+    <div class="config-card" style="margin-top:14px;">
+      <p style="font-size:11.5px;color:var(--ink-soft);margin-bottom:10px;">Dejá "Materia" vacía en las horas que ese día no tiene clase para este curso.</p>
+      ${filas}
+    </div>
+    <button class="btn-primary" id="guardarHorarioBtn" style="width:100%;margin:16px 0 30px;">Guardar ${selectedCurso}° A — ${DIA_LABEL[selectedDia]}</button>
+    `}
+  `;
+  document.getElementById('backBtn').addEventListener('click', () => goBack('config'));
+  if(document.getElementById('migrarHorarioBtn')){
+    document.getElementById('migrarHorarioBtn').addEventListener('click', migrarHorarioAFirestore);
+  }
+  attachCursoBtns((c) => { selectedCurso = c; render(); });
+  attachPillBtns('diaEdit', (d) => { selectedDia = d; render(); });
+  if(document.getElementById('guardarHorarioBtn')){
+    document.getElementById('guardarHorarioBtn').addEventListener('click', () => {
+      const entradas = [1,2,3,4,5,6,7,8].map(h => ({
+        hour: h,
+        subject: document.querySelector(`.horaMateria[data-hour="${h}"]`).value,
+        teachersTxt: document.querySelector(`.horaProfesor[data-hour="${h}"]`).value
+      }));
+      guardarHorarioDia(selectedCurso, selectedDia, entradas);
+    });
+  }
+}
+
 function renderConfig(){
   const cfg = getConfig();
   const esNapo = getUsuario()==='Napo';
@@ -5237,9 +5385,16 @@ function renderConfig(){
       <p id="migracionEstado" style="font-size:12px;color:var(--ink-soft);margin-top:8px;"></p>
     </div>
     <button class="btn-secondary" id="irAlumnosBtn" style="width:100%;margin-top:10px;">Alumnos (agregar / dar de baja)</button>
+    <button class="btn-secondary" id="irProfesoresCfgBtn" style="width:100%;margin-top:10px;">Profesores</button>
+    <button class="btn-secondary" id="irViewersBtn" style="width:100%;margin-top:10px;">Cuentas de solo lectura</button>
+    <button class="btn-secondary" id="irHorarioEditarBtn" style="width:100%;margin-top:10px;">Horario de materias</button>
     <button class="btn-secondary" id="irAuditoriaBtn" style="width:100%;margin-top:10px;">Ver registro de actividad</button>
     <button class="btn-secondary" id="irAvanzadaBtn" style="width:100%;margin-top:10px;">Feriados, bimestres, horarios y umbrales</button>
     <button class="btn-secondary" id="irRespaldoBtn" style="width:100%;margin-top:10px;">Descargar respaldo completo (Excel)</button>
+    <p class="section-label" style="margin-top:16px;">Respaldos por separado</p>
+    <button class="btn-secondary" id="irRespaldoSancionesBtn" style="width:100%;">Sanciones (Excel)</button>
+    <button class="btn-secondary" id="irRespaldoCertificadosBtn" style="width:100%;margin-top:10px;">Certificados (Excel)</button>
+    <button class="btn-secondary" id="irRespaldoTramitesBtn" style="width:100%;margin-top:10px;">Trámites (Excel)</button>
     <div class="config-card" style="margin-top:16px;">
       <p style="font-size:12.5px;color:var(--ink-soft);margin-bottom:10px;">Importar notas desde un archivo (reemplaza TODAS las notas actuales).</p>
       <input type="file" id="notasImportInput" accept="application/json" style="margin-bottom:10px;">
@@ -5267,6 +5422,15 @@ function renderConfig(){
   if(document.getElementById('irAlumnosBtn')){
     document.getElementById('irAlumnosBtn').addEventListener('click', () => navigate('alumnos'));
   }
+  if(document.getElementById('irProfesoresCfgBtn')){
+    document.getElementById('irProfesoresCfgBtn').addEventListener('click', () => navigate('profesores'));
+  }
+  if(document.getElementById('irViewersBtn')){
+    document.getElementById('irViewersBtn').addEventListener('click', () => navigate('lectura'));
+  }
+  if(document.getElementById('irHorarioEditarBtn')){
+    document.getElementById('irHorarioEditarBtn').addEventListener('click', () => navigate('horarioEditar'));
+  }
   if(document.getElementById('irAuditoriaBtn')){
     document.getElementById('irAuditoriaBtn').addEventListener('click', () => navigate('auditoria'));
   }
@@ -5275,6 +5439,15 @@ function renderConfig(){
   }
   if(document.getElementById('irRespaldoBtn')){
     document.getElementById('irRespaldoBtn').addEventListener('click', descargarRespaldoCompleto);
+  }
+  if(document.getElementById('irRespaldoSancionesBtn')){
+    document.getElementById('irRespaldoSancionesBtn').addEventListener('click', descargarSancionesExcel);
+  }
+  if(document.getElementById('irRespaldoCertificadosBtn')){
+    document.getElementById('irRespaldoCertificadosBtn').addEventListener('click', descargarCertificadosExcel);
+  }
+  if(document.getElementById('irRespaldoTramitesBtn')){
+    document.getElementById('irRespaldoTramitesBtn').addEventListener('click', descargarTramitesExcel);
   }
   if(document.getElementById('notasImportInput')){
     document.getElementById('notasImportInput').addEventListener('change', (e) => {
