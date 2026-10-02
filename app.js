@@ -496,8 +496,14 @@ async function borrarDiaSinClase(fecha, curso){
   deleteDoc(doc(db,'diasSinClase', docId(`${fecha}_${curso}`))).catch(err=>showSaveError(err));
 }
 
-function estadoParaHora(hora, cfg, studentId, curso, fecha){
-  const especial = (curso && fecha) ? getEntradaEspecial(fecha, curso) : null;
+function estadoParaHora(hora, cfg, studentId, curso, fecha, esManual){
+  // La "entrada especial" da margen cuando se marca con el botón P usando la
+  // hora real del reloj (puede ser que la demora sea del preceptor, no del
+  // alumno). Pero si la hora se escribió a mano con el relojito (esManual),
+  // es la hora real de llegada de ESE alumno, así que se evalúa con las
+  // reglas normales — si no, un alumno que llegó tarde de verdad podría
+  // quedar como "Presente" solo por caer dentro del margen de la especial.
+  const especial = (!esManual && curso && fecha) ? getEntradaEspecial(fecha, curso) : null;
   if(especial && minutesOf(hora) <= minutesOf(especial.horaTope)){
     return { estado: 'P', hora };
   }
@@ -588,7 +594,7 @@ async function editHora(studentId, fecha, curso){
   const nueva = await customPrompt('Hora de llegada (HH:MM):', current, 'time');
   if(!nueva) return;
   if(!/^\d{2}:\d{2}$/.test(nueva)){ await customAlert('Formato inválido. Usá HH:MM.'); return; }
-  writeAttendance(key, estadoParaHora(nueva, cfg, studentId, curso, fecha));
+  writeAttendance(key, estadoParaHora(nueva, cfg, studentId, curso, fecha, true));
 }
 
 async function toggleEF(studentId, fecha){
