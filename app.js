@@ -99,6 +99,7 @@ let cache = {
   students: {},
   schedule: {},
   entradasEspeciales: {},
+  _lastSync: {},
   eventos: {},
   config: { entrada:'07:45', toleranciaMin:15, corteFaltaCompleta:'09:00' }
 };
@@ -108,6 +109,7 @@ function startListeners(){
     const next = {};
     snap.forEach(d => { next[d.id] = d.data(); });
     cache.attendance = next;
+    cache._lastSync.attendance = Date.now();
     render();
   });
 
@@ -123,6 +125,7 @@ function startListeners(){
       byStudent[sid].forEach((item,idx)=>{ item.folio = idx+1; });
     });
     cache.sanciones = byStudent;
+    cache._lastSync.sanciones = Date.now();
     render();
   });
 
@@ -134,6 +137,7 @@ function startListeners(){
       next[data.subKey][data.teacher] = { suplente: data.suplente };
     });
     cache.substitutions = next;
+    cache._lastSync.substitutions = Date.now();
     render();
   });
 
@@ -144,6 +148,7 @@ function startListeners(){
       next[`${data.date}|${data.studentId}`] = { tipo: data.tipo || 'falta' };
     });
     cache.ef = next;
+    cache._lastSync.ef = Date.now();
     render();
   });
 
@@ -155,6 +160,7 @@ function startListeners(){
     });
     next.sort((a,b)=> a.createdAt - b.createdAt);
     cache.certificados = next;
+    cache._lastSync.certificados = Date.now();
     render();
   });
 
@@ -162,6 +168,7 @@ function startListeners(){
     const next = {};
     snap.forEach(d => { next[d.id] = d.data(); });
     cache.autorizaciones = next;
+    cache._lastSync.autorizaciones = Date.now();
     render();
   });
 
@@ -169,6 +176,7 @@ function startListeners(){
     const next = {};
     snap.forEach(d => { next[d.id] = Object.assign({ uid: d.id }, d.data()); });
     cache.teachers = next;
+    cache._lastSync.teachers = Date.now();
     render();
   });
 
@@ -176,6 +184,7 @@ function startListeners(){
     const next = {};
     snap.forEach(d => { next[d.id] = d.data(); });
     cache.valoraciones = next;
+    cache._lastSync.valoraciones = Date.now();
     render();
   });
 
@@ -183,6 +192,7 @@ function startListeners(){
     const next = {};
     snap.forEach(d => { next[d.id] = d.data(); });
     cache.notas = next;
+    cache._lastSync.notas = Date.now();
     render();
   });
 
@@ -190,6 +200,7 @@ function startListeners(){
     const next = {};
     snap.forEach(d => { next[d.id] = d.data(); });
     cache.entradasEspeciales = next;
+    cache._lastSync.entradasEspeciales = Date.now();
     render();
   });
 
@@ -197,6 +208,7 @@ function startListeners(){
     const next = {};
     snap.forEach(d => { next[d.id] = Object.assign({ uid: d.id }, d.data()); });
     cache.viewers = next;
+    cache._lastSync.viewers = Date.now();
     render();
   });
 
@@ -204,6 +216,7 @@ function startListeners(){
     const next = {};
     snap.forEach(d => { next[d.id] = d.data(); });
     cache.driveMapping = next;
+    cache._lastSync.driveMapping = Date.now();
     render();
   });
 
@@ -211,6 +224,7 @@ function startListeners(){
     const next = {};
     snap.forEach(d => { next[d.id] = Object.assign({ id: d.id }, d.data()); });
     cache.tramites = next;
+    cache._lastSync.tramites = Date.now();
     render();
   });
 
@@ -218,6 +232,7 @@ function startListeners(){
     const next = {};
     snap.forEach(d => { next[d.id] = d.data(); });
     cache.entregas = next;
+    cache._lastSync.entregas = Date.now();
     render();
   });
 
@@ -225,6 +240,7 @@ function startListeners(){
     const next = {};
     snap.forEach(d => { next[d.id] = d.data(); });
     cache.diasSinClase = next;
+    cache._lastSync.diasSinClase = Date.now();
     render();
   });
 
@@ -232,6 +248,7 @@ function startListeners(){
     const next = {};
     snap.forEach(d => { next[d.id] = Object.assign({ uid: d.id }, d.data()); });
     cache.students_auth = next;
+    cache._lastSync.students_auth = Date.now();
     render();
   });
 
@@ -239,6 +256,7 @@ function startListeners(){
     const next = {};
     snap.forEach(d => { next[d.id] = Object.assign({ id: d.id }, d.data()); });
     cache.students = next;
+    cache._lastSync.students = Date.now();
     render();
   });
 
@@ -246,6 +264,7 @@ function startListeners(){
     const next = {};
     snap.forEach(d => { next[d.id] = d.data(); });
     cache.schedule = next;
+    cache._lastSync.schedule = Date.now();
     render();
   });
 
@@ -253,6 +272,7 @@ function startListeners(){
     const next = {};
     snap.forEach(d => { next[d.id] = Object.assign({ id: d.id }, d.data()); });
     cache.eventos = next;
+    cache._lastSync.eventos = Date.now();
     render();
   });
 
@@ -260,6 +280,7 @@ function startListeners(){
   onSnapshot(configRef, d => {
     if(d.exists()){
       cache.config = d.data();
+      cache._lastSync.config = Date.now();
       aplicarConfigDinamica(cache.config);
     }
     render();
@@ -398,6 +419,7 @@ async function guardarHorarioDia(curso, dia, entradas){
   }catch(err){ showSaveError(err); }
 }
 function getConfig(){ return cache.config; }
+function getPasswordGenerica(){ return (cache.config && cache.config.passwordGenerica) || '123456'; }
 function getAttendance(){ return cache.attendance; }
 function getEF(){ return cache.ef; }
 
@@ -2186,6 +2208,8 @@ function renderInner(){
   else if(currentRoute === 'config') renderConfig();
   else if(currentRoute === 'alumnos') renderAlumnos();
   else if(currentRoute === 'horarioEditar') renderHorarioEditar();
+  else if(currentRoute === 'entradasEspeciales') renderEntradasEspeciales();
+  else if(currentRoute === 'sincronizacion') renderSincronizacion();
   else if(currentRoute === 'configAvanzada') renderConfigAvanzada();
   else if(currentRoute === 'calendarioCiclo') renderCalendarioCiclo();
   else if(currentRoute === 'auditoria') renderAuditoria();
@@ -3594,7 +3618,7 @@ async function crearCuentasMasivo(){
   let ok = 0, error = 0;
   for(const a of pendientes){
     try{
-      const cred = await createUserWithEmailAndPassword(authSecundaria, a.email, '123456');
+      const cred = await createUserWithEmailAndPassword(authSecundaria, a.email, getPasswordGenerica());
       await setDoc(doc(db,'students_auth',cred.user.uid), { studentId: a.studentId, nombre: a.nombre, curso: a.curso, email: a.email, activo: true, creadoPor: getUsuario() });
       await signOut(authSecundaria);
       ok++;
@@ -3642,7 +3666,7 @@ function renderAlumnosCuentas(){
 
     <p class="section-label">Carga masiva</p>
     <div class="config-card" style="margin-bottom:18px;">
-      <p style="font-size:12.5px;color:var(--ink-soft);margin-bottom:10px;">Subí el archivo de alumnos emparejados con su mail (JSON), y creá todas esas cuentas de una vez con la contraseña genérica <b>123456</b> (cada alumno la puede cambiar después).</p>
+      <p style="font-size:12.5px;color:var(--ink-soft);margin-bottom:10px;">Subí el archivo de alumnos emparejados con su mail (JSON), y creá todas esas cuentas de una vez con la contraseña genérica <b>${getPasswordGenerica()}</b> (cada alumno la puede cambiar después; se edita en Configuración).</p>
       <input type="file" id="cargaMasivaInput" accept="application/json" style="margin-bottom:10px;">
       <p id="masivoPreview" style="font-size:12.5px;color:var(--ink-soft);margin-bottom:10px;"></p>
       <button class="btn-primary" id="crearMasivoBtn" style="width:100%;display:none;">Crear todas las cuentas</button>
@@ -4765,7 +4789,15 @@ async function guardarConfigGeneral(){
     await customAlert('Revisá los formatos: horas como HH:MM, tolerancia en minutos.');
     return;
   }
-  setDoc(doc(db,'config','general'), { entrada, toleranciaMin: tolerancia, corteFaltaCompleta: corte })
+  const datos = { entrada, toleranciaMin: tolerancia, corteFaltaCompleta: corte };
+  const passEl = document.getElementById('cfgPasswordGenerica');
+  if(passEl){
+    const pass = passEl.value.trim();
+    if(pass.length < 6){ await customAlert('La contraseña genérica tiene que tener al menos 6 caracteres.'); return; }
+    datos.passwordGenerica = pass;
+  }
+  // merge:true para no pisar lo cargado en "Feriados, bimestres, horarios y umbrales"
+  setDoc(doc(db,'config','general'), datos, { merge: true })
     .then(() => showToast('Configuración guardada'))
     .catch(err=>showSaveError(err));
 }
@@ -5174,8 +5206,69 @@ async function guardarConfigAvanzada(){
   navigate('config');
 }
 
+function parseFeriadosTextarea(){
+  const el = document.getElementById('cfgFeriados');
+  const raw = el ? el.value : [...FERIADOS_2026].join('\n');
+  return new Set(raw.split(/[\n,]/).map(s=>s.trim()).filter(f=>/^\d{4}-\d{2}-\d{2}$/.test(f)));
+}
+function escribirFeriadosTextarea(set){
+  const el = document.getElementById('cfgFeriados');
+  if(el) el.value = [...set].sort().join('\n');
+}
+function etiquetaMesFeriados(mesISO){
+  const [a,m] = mesISO.split('-').map(Number);
+  return `${MESES_NOMBRE[m-1]} ${a}`;
+}
+function generarCeldasCalendarioFeriados(mesISO, set){
+  const [anio, mes] = mesISO.split('-').map(Number);
+  const primerDia = new Date(anio, mes-1, 1);
+  const ultimoDia = new Date(anio, mes, 0).getDate();
+  const offsetLunes = (primerDia.getDay()+6)%7; // 0 = lunes
+  let celdas = '';
+  for(let i=0;i<offsetLunes;i++) celdas += `<div></div>`;
+  for(let d=1; d<=ultimoDia; d++){
+    const iso = `${mesISO}-${String(d).padStart(2,'0')}`;
+    const dow = new Date(anio, mes-1, d).getDay();
+    const esFinde = dow===0||dow===6;
+    const marcado = set.has(iso);
+    const bg = marcado ? 'var(--stamp)' : (esFinde ? 'var(--paper-2)' : 'var(--card)');
+    const color = marcado ? '#fff' : 'var(--ink)';
+    celdas += `<button type="button" data-cal-dia="${iso}" style="aspect-ratio:1;border:1px solid var(--border);border-radius:8px;background:${bg};color:${color};font-size:12.5px;cursor:pointer;">${d}</button>`;
+  }
+  return celdas;
+}
+function pintarCalendarioFeriados(){
+  const cont = document.getElementById('feriadosCalendario');
+  if(!cont) return;
+  const mesISO = window.__feriadosCalMes;
+  const set = parseFeriadosTextarea();
+  cont.innerHTML = generarCeldasCalendarioFeriados(mesISO, set);
+  const label = document.getElementById('feriadosCalMesLabel');
+  if(label) label.textContent = etiquetaMesFeriados(mesISO);
+  document.querySelectorAll('[data-cal-dia]').forEach(b => {
+    b.addEventListener('click', () => {
+      const iso = b.dataset.calDia;
+      const set2 = parseFeriadosTextarea();
+      if(set2.has(iso)) set2.delete(iso); else set2.add(iso);
+      escribirFeriadosTextarea(set2);
+      pintarCalendarioFeriados();
+    });
+  });
+}
+function cambiarMesFeriados(delta){
+  let [a,m] = window.__feriadosCalMes.split('-').map(Number);
+  m += delta;
+  if(m<1){m=12;a--;} if(m>12){m=1;a++;}
+  const nuevo = `${a}-${String(m).padStart(2,'0')}`;
+  if(nuevo < '2026-01' || nuevo > '2026-12') return; // acompaña el ciclo lectivo 2026
+  window.__feriadosCalMes = nuevo;
+  pintarCalendarioFeriados();
+}
+
 function renderConfigAvanzada(){
   const feriadosTexto = [...FERIADOS_2026].sort().join('\n');
+  const hoyMes = todayISO().slice(0,7);
+  window.__feriadosCalMes = window.__feriadosCalMes || (hoyMes >= '2026-01' && hoyMes <= '2026-12' ? hoyMes : '2026-03');
   $app.innerHTML = `
     <div class="appbar" style="padding:0 0 10px;">
       <button class="back-btn" id="backBtn">${icon('back')}</button>
@@ -5193,8 +5286,19 @@ function renderConfigAvanzada(){
 
     <p class="section-label" style="margin-top:20px;">Feriados y días sin clase</p>
     <div class="config-card">
-      <textarea id="cfgFeriados" rows="6" placeholder="Una fecha por línea, formato AAAA-MM-DD">${feriadosTexto}</textarea>
-      <p style="font-size:11.5px;color:var(--ink-soft);margin:8px 0 0;">Se usan para no contar esos días como clase en el % de asistencia por materia.</p>
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
+        <button type="button" class="btn-chip" id="feriadosMesAnterior">${icon('back')}</button>
+        <p style="font-size:13px;font-weight:600;" id="feriadosCalMesLabel">${etiquetaMesFeriados(window.__feriadosCalMes)}</p>
+        <button type="button" class="btn-chip" id="feriadosMesSiguiente" style="transform:scaleX(-1);">${icon('back')}</button>
+      </div>
+      <div id="feriadosCalendario" style="display:grid;grid-template-columns:repeat(7,1fr);gap:4px;">
+        ${generarCeldasCalendarioFeriados(window.__feriadosCalMes, new Set(FERIADOS_2026))}
+      </div>
+      <p style="font-size:11.5px;color:var(--ink-soft);margin:10px 0 0;">Tocá un día para marcarlo/desmarcarlo como feriado o día sin clase. Se usan para no contar esos días como clase en el % de asistencia por materia.</p>
+      <details style="margin-top:12px;">
+        <summary style="font-size:12px;color:var(--ink-soft);cursor:pointer;">Editar como lista de texto</summary>
+        <textarea id="cfgFeriados" rows="6" placeholder="Una fecha por línea, formato AAAA-MM-DD" style="margin-top:8px;">${feriadosTexto}</textarea>
+      </details>
     </div>
 
     <p class="section-label" style="margin-top:20px;">Umbrales</p>
@@ -5225,6 +5329,9 @@ function renderConfigAvanzada(){
   `;
   document.getElementById('backBtn').addEventListener('click', () => goBack('config'));
   document.getElementById('guardarAvanzadaBtn').addEventListener('click', guardarConfigAvanzada);
+  document.getElementById('feriadosMesAnterior').addEventListener('click', () => cambiarMesFeriados(-1));
+  document.getElementById('feriadosMesSiguiente').addEventListener('click', () => cambiarMesFeriados(1));
+  pintarCalendarioFeriados();
 }
 
 function renderAlumnos(){
@@ -5352,6 +5459,83 @@ function renderHorarioEditar(){
   }
 }
 
+const ETIQUETA_SYNC = {
+  attendance: 'Asistencia', sanciones: 'Sanciones', substitutions: 'Suplencias',
+  ef: 'Ed. Física', certificados: 'Certificados', autorizaciones: 'Autorizaciones (TJ)',
+  teachers: 'Cuentas de profesores', valoraciones: 'Valoraciones', notas: 'Notas',
+  entradasEspeciales: 'Entradas especiales', viewers: 'Cuentas de lectura',
+  driveMapping: 'Vínculos con Drive', tramites: 'Trámites', entregas: 'Entregas de trámites',
+  diasSinClase: 'Días sin clase', students_auth: 'Cuentas de alumnos', students: 'Alumnos',
+  schedule: 'Horario de materias', eventos: 'Agenda', config: 'Configuración general'
+};
+function tiempoRelativo(ms){
+  if(!ms) return 'nunca (todavía no llegó nada)';
+  const seg = Math.round((Date.now()-ms)/1000);
+  if(seg < 5) return 'recién';
+  if(seg < 60) return `hace ${seg} seg`;
+  const min = Math.round(seg/60);
+  if(min < 60) return `hace ${min} min`;
+  const hs = Math.round(min/60);
+  if(hs < 24) return `hace ${hs} h`;
+  return `hace ${Math.round(hs/24)} días`;
+}
+function renderSincronizacion(){
+  const filas = Object.entries(ETIQUETA_SYNC).map(([key,label]) => {
+    const ms = cache._lastSync[key];
+    const ok = ms && (Date.now()-ms) < 5*60*1000;
+    return `
+      <div class="sancion-item">
+        <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
+          <p class="folio"><span class="status-dot ${ms?'on':'off'}"></span>${label}</p>
+          <p style="font-size:12.5px;color:${ms?'var(--ink-soft)':'var(--stamp)'};">${tiempoRelativo(ms)}</p>
+        </div>
+      </div>`;
+  }).join('');
+  $app.innerHTML = `
+    <div class="appbar" style="padding:0 0 10px;">
+      <button class="back-btn" id="backBtn">${icon('back')}</button>
+      <h1>Última sincronización</h1>
+    </div>
+    <p style="font-size:12.5px;color:var(--ink-soft);margin-bottom:14px;">Cuándo se actualizó por última vez cada parte de la app en este celular/compu (se refresca solo con cada cambio que llega). Si algo quedó en "nunca" o hace mucho rato con el celular conectado a internet, probablemente convenga cerrar y volver a abrir la app.</p>
+    <div class="sancion-list">${filas}</div>
+    <button class="btn-secondary" id="refrescarSyncBtn" style="width:100%;margin-top:16px;">Actualizar esta pantalla</button>
+  `;
+  document.getElementById('backBtn').addEventListener('click', () => goBack('config'));
+  document.getElementById('refrescarSyncBtn').addEventListener('click', render);
+}
+
+function renderEntradasEspeciales(){
+  const lista = Object.values(cache.entradasEspeciales)
+    .sort((a,b)=> b.fecha.localeCompare(a.fecha) || a.curso.localeCompare(b.curso));
+
+  const rows = lista.map(e => `
+    <div class="sancion-item">
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;">
+        <div>
+          <p class="folio"><span class="curso-chip c${e.curso}">${e.curso}°</span> ${fmtDateShort(e.fecha)} · hasta las ${e.horaTope}</p>
+          ${e.motivo ? `<p class="motivo">${e.motivo}</p>` : ''}
+        </div>
+        <button class="btn-chip danger" data-borrar-ee="${e.fecha}|${e.curso}">Borrar</button>
+      </div>
+    </div>`).join('');
+
+  $app.innerHTML = `
+    <div class="appbar" style="padding:0 0 10px;">
+      <button class="back-btn" id="backBtn">${icon('back')}</button>
+      <h1>Entradas especiales</h1>
+    </div>
+    <p style="font-size:12.5px;color:var(--ink-soft);margin-bottom:14px;">Todas las entradas especiales cargadas (desde "Horarios y suplencias" o al marcar un profesor ausente la primera hora). Se pueden borrar si se cargaron por error.</p>
+    ${lista.length ? `<div class="sancion-list">${rows}</div>` : `<p style="font-size:13px;color:var(--ink-soft);">No hay ninguna cargada.</p>`}
+  `;
+  document.getElementById('backBtn').addEventListener('click', () => goBack('config'));
+  document.querySelectorAll('[data-borrar-ee]').forEach(b => {
+    b.addEventListener('click', () => {
+      const [fecha, curso] = b.dataset.borrarEe.split('|');
+      borrarEntradaEspecial(fecha, curso);
+    });
+  });
+}
+
 function renderConfig(){
   const cfg = getConfig();
   const esNapo = getUsuario()==='Napo';
@@ -5373,6 +5557,8 @@ function renderConfig(){
       <div class="field-row"><label>Tolerancia (min)</label><input id="cfgTolerancia" type="number" value="${cfg.toleranciaMin}"></div>
       <div class="field-row"><label>Corte falta completa</label><input id="cfgCorte" type="text" value="${cfg.corteFaltaCompleta}" placeholder="09:00"></div>
       <p style="font-size:11.5px;color:var(--ink-soft);margin:8px 0 12px;">Después de la hora de "corte", una llegada ya cuenta como falta completa en vez de tardanza.</p>
+      <div class="field-row"><label>Contraseña genérica alumnos</label><input id="cfgPasswordGenerica" type="text" value="${getPasswordGenerica()}" placeholder="mínimo 6 caracteres"></div>
+      <p style="font-size:11.5px;color:var(--ink-soft);margin:8px 0 12px;">Es la contraseña con la que se crean las cuentas de alumnos en la carga masiva (en "Cuentas de alumnos"). Cada alumno la puede cambiar después por su cuenta.</p>
       <button class="btn-primary" id="guardarConfigBtn" style="width:100%;">Guardar</button>
     </div>
     ` : ''}
@@ -5388,6 +5574,8 @@ function renderConfig(){
     <button class="btn-secondary" id="irProfesoresCfgBtn" style="width:100%;margin-top:10px;">Profesores</button>
     <button class="btn-secondary" id="irViewersBtn" style="width:100%;margin-top:10px;">Cuentas de solo lectura</button>
     <button class="btn-secondary" id="irHorarioEditarBtn" style="width:100%;margin-top:10px;">Horario de materias</button>
+    <button class="btn-secondary" id="irEntradasEspecialesBtn" style="width:100%;margin-top:10px;">Entradas especiales cargadas</button>
+    <button class="btn-secondary" id="irSincronizacionBtn" style="width:100%;margin-top:10px;">Última sincronización</button>
     <button class="btn-secondary" id="irAuditoriaBtn" style="width:100%;margin-top:10px;">Ver registro de actividad</button>
     <button class="btn-secondary" id="irAvanzadaBtn" style="width:100%;margin-top:10px;">Feriados, bimestres, horarios y umbrales</button>
     <button class="btn-secondary" id="irRespaldoBtn" style="width:100%;margin-top:10px;">Descargar respaldo completo (Excel)</button>
@@ -5430,6 +5618,12 @@ function renderConfig(){
   }
   if(document.getElementById('irHorarioEditarBtn')){
     document.getElementById('irHorarioEditarBtn').addEventListener('click', () => navigate('horarioEditar'));
+  }
+  if(document.getElementById('irEntradasEspecialesBtn')){
+    document.getElementById('irEntradasEspecialesBtn').addEventListener('click', () => navigate('entradasEspeciales'));
+  }
+  if(document.getElementById('irSincronizacionBtn')){
+    document.getElementById('irSincronizacionBtn').addEventListener('click', () => navigate('sincronizacion'));
   }
   if(document.getElementById('irAuditoriaBtn')){
     document.getElementById('irAuditoriaBtn').addEventListener('click', () => navigate('auditoria'));
