@@ -96,6 +96,7 @@ let cache = {
   entregas: {},
   diasSinClase: {},
   students_auth: {},
+  students: {},
   entradasEspeciales: {},
   eventos: {},
   config: { entrada:'07:45', toleranciaMin:15, corteFaltaCompleta:'09:00' }
@@ -233,6 +234,13 @@ function startListeners(){
     render();
   });
 
+  onSnapshot(collection(db,'students'), snap => {
+    const next = {};
+    snap.forEach(d => { next[d.id] = Object.assign({ id: d.id }, d.data()); });
+    cache.students = next;
+    render();
+  });
+
   onSnapshot(collection(db,'eventos'), snap => {
     const next = {};
     snap.forEach(d => { next[d.id] = Object.assign({ id: d.id }, d.data()); });
@@ -262,7 +270,86 @@ function aplicarConfigDinamica(cfg){
   if(cfg.efHorario) EF_HORARIO = cfg.efHorario;
 }
 
-function getStudents(){ return SEED_STUDENTS; }
+// Mientras no se corrió la migración (botón en Configuración), se sigue usando la
+// lista fija SEED_STUDENTS como antes. Una vez migrada, la base real es la colección
+// 'students' de Firestore (se puede agregar/quitar alumnos desde la app sin redeploy).
+// Los alumnos dados de baja (activo:false) quedan ocultos acá pero su historial de
+// asistencia no se toca.
+function getStudents(){
+  if(Object.keys(cache.students).length){
+    return Object.values(cache.students).filter(s => s.activo !== false);
+  }
+  return SEED_STUDENTS;
+}
+function getStudentsDeBaja(){
+  return Object.values(cache.students).filter(s => s.activo === false);
+}
+async function migrarAlumnosAFirestore(){
+  if(Object.keys(cache.students).length){
+    if(!(await customConfirm('Los alumnos ya están migrados a la base de datos. ¿Volver a correr la migración igual? (no debería hacer falta, y no borra ni duplica a los que ya están)'))) return;
+  } else {
+    if(!(await customConfirm('Esto copia la lista actual de alumnos a la base de datos para que puedas agregar y dar de baja alumnos desde la app. Se hace una sola vez. ¿Continuar?'))) return;
+  }
+  try{
+    await Promise.all(SEED_STUDENTS.map(s => setDoc(doc(db,'students', s.id), {
+      apellido: s.apellido, nombre: s.nombre, curso: s.curso, division: s.division||'A',
+      familyEmails: s.familyEmails||[], activo: true
+    }, { merge: true })));
+    await customAlert('Listo, ya podés agregar y dar de baja alumnos desde "Alumnos" en Configuración.');
+  }catch(err){ showSaveError(err); }
+}
+function nuevoStudentId(){
+  return 'alu_' + Date.now().toString(36) + Math.random().toString(36).slice(2,6);
+}
+async function agregarAlumno(){
+  const apellido = await customPrompt('Apellido del alumno:', '');
+  if(apellido === null || !apellido.trim()) return;
+  const nombre = await customPrompt('Nombre del alumno:', '');
+  if(nombre === null || !nombre.trim()) return;
+  const curso = await customPrompt('Curso (1 a 5):', '');
+  if(curso === null || !CURSOS.includes(curso.trim())) { await customAlert('Curso inválido, tiene que ser 1, 2, 3, 4 o 5.'); return; }
+  const mailsTxt = await customPrompt('Mails de la familia, separados por coma (opcional):', '');
+  const familyEmails = (mailsTxt||'').split(',').map(e=>e.trim()).filter(Boolean);
+  const id = nuevoStudentId();
+  try{
+    await setDoc(doc(db,'students', id), {
+      apellido: apellido.trim(), nombre: nombre.trim(), curso: curso.trim(), division: 'A',
+      familyEmails, activo: true
+    });
+    showToast('Alumno agregado');
+  }catch(err){ showSaveError(err); }
+}
+async function editarAlumno(id){
+  const s = cache.students[id];
+  if(!s) return;
+  const apellido = await customPrompt('Apellido:', s.apellido);
+  if(apellido === null || !apellido.trim()) return;
+  const nombre = await customPrompt('Nombre:', s.nombre);
+  if(nombre === null || !nombre.trim()) return;
+  const curso = await customPrompt('Curso (1 a 5):', s.curso);
+  if(curso === null || !CURSOS.includes(curso.trim())) { await customAlert('Curso inválido.'); return; }
+  const mailsTxt = await customPrompt('Mails de la familia, separados por coma:', (s.familyEmails||[]).join(', '));
+  const familyEmails = (mailsTxt||'').split(',').map(e=>e.trim()).filter(Boolean);
+  try{
+    await setDoc(doc(db,'students', id), {
+      apellido: apellido.trim(), nombre: nombre.trim(), curso: curso.trim(), division: s.division||'A',
+      familyEmails
+    }, { merge: true });
+    showToast('Datos actualizados');
+  }catch(err){ showSaveError(err); }
+}
+async function darDeBajaAlumno(id){
+  const s = cache.students[id];
+  if(!s) return;
+  if(!(await customConfirm(`¿Dar de baja a ${s.nombre} ${s.apellido}? No va a aparecer más en los cursos ni en las listas, pero su historial de asistencia y sanciones se conserva. Lo podés reactivar cuando quieras.`, {peligro:true, textoSi:'Dar de baja'}))) return;
+  setDoc(doc(db,'students', id), { activo: false }, { merge: true }).catch(err=>showSaveError(err));
+}
+async function reactivarAlumno(id){
+  const s = cache.students[id];
+  if(!s) return;
+  if(!(await customConfirm(`¿Reactivar a ${s.nombre} ${s.apellido}?`))) return;
+  setDoc(doc(db,'students', id), { activo: true }, { merge: true }).catch(err=>showSaveError(err));
+}
 function getConfig(){ return cache.config; }
 function getAttendance(){ return cache.attendance; }
 function getEF(){ return cache.ef; }
@@ -573,6 +660,22 @@ function markAusente(studentId, fecha){
   ultimaAccionPulso = { studentId };
   writeAttendance(key, { estado: 'A', hora: null });
 }
+
+async function marcarTodosPresentes(){
+  const students = getStudents().filter(s => s.curso === selectedCurso);
+  const sinMarcar = students.filter(s => !cache.attendance[`${selectedFecha}|${s.id}`]);
+  if(!sinMarcar.length){ await customAlert('Ya está todo marcado para este curso en este día.'); return; }
+  const n = sinMarcar.length;
+  if(!(await customConfirm(`Se va a marcar como Presente a ${n} alumno${n>1?'s':''} que todavía no tenían nada cargado hoy. Los que ya tienen Ausente, Tarde u otra marca no se tocan. ¿Confirmás?`))) return;
+  const cfg = getConfig();
+  const esHoy = selectedFecha === todayISO();
+  sinMarcar.forEach(s => {
+    const key = `${selectedFecha}|${s.id}`;
+    writeAttendance(key, esHoy ? estadoParaHora(nowHHMM(), cfg, s.id, selectedCurso, selectedFecha) : { estado: 'P', hora: null });
+  });
+  showToast(`${n} alumno${n>1?'s':''} marcado${n>1?'s':''} presente${n>1?'s':''}`);
+}
+
 async function marcarExencion(studentId, fecha){
   fecha = fecha || selectedFecha;
   const key = `${fecha}|${studentId}`;
@@ -681,6 +784,23 @@ async function toggleSuplencia(subKey, teacherName){
   const ref = doc(db,'substitutions', docId(`${subKey}__${teacherName}`));
   if(existing){
     deleteDoc(ref).catch(err=>showSaveError(err));
+    // Si se destoggle la primera hora, también se sacan las horas posteriores que se
+    // habían marcado solas por la cascada (nunca las que el preceptor cargó aparte).
+    const [fechaDel, , diaDel, startHourDelStr] = subKey.split('|');
+    if(Number(startHourDelStr) === 1){
+      CURSOS.forEach(curso2 => {
+        const dayEntries2 = (SEED_SCHEDULE[curso2] && SEED_SCHEDULE[curso2][diaDel]) || [];
+        buildBlocks(dayEntries2).forEach(b2 => {
+          if(b2.startHour <= 1) return;
+          if(!b2.teachers.includes(teacherName)) return;
+          const subKey2 = `${fechaDel}|${curso2}|${diaDel}|${b2.startHour}`;
+          const rec2 = cache.substitutions[subKey2] && cache.substitutions[subKey2][teacherName];
+          if(rec2 && rec2.cascada){
+            deleteDoc(doc(db,'substitutions', docId(`${subKey2}__${teacherName}`))).catch(err=>showSaveError(err));
+          }
+        });
+      });
+    }
     return;
   }
   const suplente = await customPrompt(`${teacherName} — marcar ausente.\n\nNombre del suplente (dejar vacío si no hay):`, '');
@@ -688,13 +808,32 @@ async function toggleSuplencia(subKey, teacherName){
   setDoc(ref, { subKey, teacher: teacherName, suplente: suplente.trim(), autor: getUsuario() }).catch(err=>showSaveError(err));
 
   // Si es la primera hora del día y no hay suplente, ofrece entrada especial para ese curso
-  const [fecha, curso, , startHourStr] = subKey.split('|');
-  if(Number(startHourStr) === 1 && !suplente.trim()){
+  const [fecha, curso, dia, startHourStr] = subKey.split('|');
+  const startHour = Number(startHourStr);
+  if(startHour === 1 && !suplente.trim()){
     const horaTope = await customPrompt(`Como falta el/la profesor/a de la primera hora, ¿los alumnos de ${curso}° A pueden entrar más tarde hoy? Hasta qué hora (HH:MM), o dejar vacío si no corresponde:`, '');
     if(horaTope && /^\d{2}:\d{2}$/.test(horaTope)){
       setDoc(doc(db,'entradasEspeciales', docId(`${fecha}_${curso}`)), { fecha, curso, horaTope, motivo: `Ausencia de ${teacherName}`, autor: getUsuario() })
         .catch(err=>showSaveError(err));
     }
+  }
+
+  // Cascada: si falta desde la primera hora, se asume que falta todo el día y se marca
+  // ausente automáticamente en el resto de sus horas de esa jornada (en cualquier curso),
+  // sin pisar ninguna hora que ya tenga una suplencia cargada aparte.
+  if(startHour === 1){
+    CURSOS.forEach(curso2 => {
+      const dayEntries2 = (SEED_SCHEDULE[curso2] && SEED_SCHEDULE[curso2][dia]) || [];
+      buildBlocks(dayEntries2).forEach(b2 => {
+        if(b2.startHour <= startHour) return;
+        if(!b2.teachers.includes(teacherName)) return;
+        const subKey2 = `${fecha}|${curso2}|${dia}|${b2.startHour}`;
+        if(cache.substitutions[subKey2] && cache.substitutions[subKey2][teacherName]) return;
+        setDoc(doc(db,'substitutions', docId(`${subKey2}__${teacherName}`)), {
+          subKey: subKey2, teacher: teacherName, suplente: suplente.trim(), autor: getUsuario(), cascada: true
+        }).catch(err=>showSaveError(err));
+      });
+    });
   }
 }
 
@@ -1513,6 +1652,7 @@ function renderAsistencia(){
       }
       return soloLectura ? '' : `<p style="text-align:right;margin:-8px 0 14px;"><a href="#" id="sinClaseLink" style="font-size:12px;color:var(--ink-soft);text-decoration:underline;">+ Día sin clase para este curso (VCF, paro...)</a></p>`;
     })()}
+    ${(!soloLectura && students.length) ? `<button class="btn-secondary" id="marcarTodosBtn" style="width:100%;margin-bottom:14px;">Marcar todos presentes</button>` : ''}
     ${students.length ? rows : `<div class="empty-state"><h2>Sin alumnos</h2><p>Este curso no tiene alumnos cargados.</p></div>`}
     <div style="height:16px"></div>
   `;
@@ -1535,6 +1675,9 @@ function renderAsistencia(){
   }
   if(document.getElementById('borrarEspecialBtn')){
     document.getElementById('borrarEspecialBtn').addEventListener('click', () => borrarEntradaEspecial(selectedFecha, selectedCurso));
+  }
+  if(document.getElementById('marcarTodosBtn')){
+    document.getElementById('marcarTodosBtn').addEventListener('click', marcarTodosPresentes);
   }
   if(document.getElementById('sinClaseLink')){
     document.getElementById('sinClaseLink').addEventListener('click', (e) => { e.preventDefault(); definirDiaSinClase(selectedFecha, selectedCurso); });
@@ -1994,6 +2137,7 @@ function renderInner(){
   else if(currentRoute === 'valoracionAlumno') renderValoracionAlumno();
   else if(currentRoute === 'notas') renderNotasLista();
   else if(currentRoute === 'config') renderConfig();
+  else if(currentRoute === 'alumnos') renderAlumnos();
   else if(currentRoute === 'configAvanzada') renderConfigAvanzada();
   else if(currentRoute === 'calendarioCiclo') renderCalendarioCiclo();
   else if(currentRoute === 'auditoria') renderAuditoria();
@@ -4992,6 +5136,74 @@ function renderConfigAvanzada(){
   document.getElementById('guardarAvanzadaBtn').addEventListener('click', guardarConfigAvanzada);
 }
 
+function renderAlumnos(){
+  const migrado = Object.keys(cache.students).length > 0;
+  const filtro = (window.__alumnosFiltro||'').toLowerCase();
+  const activos = getStudents().filter(s => !filtro || `${s.apellido} ${s.nombre}`.toLowerCase().includes(filtro))
+    .sort((a,b)=> Number(a.curso)-Number(b.curso) || a.apellido.localeCompare(b.apellido));
+  const bajas = migrado ? getStudentsDeBaja().sort((a,b)=> a.apellido.localeCompare(b.apellido)) : [];
+
+  const filaAlumno = (s, esBaja) => `
+    <div class="sancion-item">
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;">
+        <div>
+          <p class="folio"><span class="curso-chip c${s.curso}">${s.curso}°</span> ${s.apellido}, ${s.nombre}</p>
+          ${s.familyEmails && s.familyEmails.length ? `<p class="motivo">${s.familyEmails.join(', ')}</p>` : ''}
+        </div>
+        <div style="display:flex;flex-direction:column;gap:6px;flex-shrink:0;">
+          ${esBaja
+            ? `<button class="btn-chip" data-reactivar="${s.id}">Reactivar</button>`
+            : `<button class="btn-chip" data-editar="${s.id}">Editar</button>
+               <button class="btn-chip danger" data-baja="${s.id}">Dar de baja</button>`}
+        </div>
+      </div>
+    </div>`;
+
+  $app.innerHTML = `
+    <div class="appbar" style="padding:0 0 10px;">
+      <button class="back-btn" id="backBtn">${icon('back')}</button>
+      <h1>Alumnos</h1>
+    </div>
+
+    ${!migrado ? `
+    <div class="config-card" style="margin-bottom:18px;">
+      <p style="font-size:12.5px;color:var(--ink-soft);margin-bottom:10px;">Antes de poder agregar o dar de baja alumnos desde acá, hay que migrar la lista actual a la base de datos (se hace una sola vez y no cambia nada de lo que ya está cargado).</p>
+      <button class="btn-primary" id="migrarAlumnosBtn" style="width:100%;">Migrar alumnos</button>
+    </div>
+    ` : `
+    <button class="btn-primary" id="agregarAlumnoBtn" style="width:100%;margin-bottom:14px;">Agregar alumno</button>
+    <input type="text" id="filtroAlumnos" placeholder="Buscar por nombre..." style="margin-bottom:12px;" value="${window.__alumnosFiltro||''}">
+    `}
+
+    <p class="section-label">Alumnos activos (${activos.length})</p>
+    ${activos.length ? `<div class="sancion-list" style="margin-bottom:18px;">${activos.map(s=>filaAlumno(s,false)).join('')}</div>` : `<p style="font-size:13px;color:var(--ink-soft);margin-bottom:18px;">Nadie coincide con esa búsqueda.</p>`}
+
+    ${bajas.length ? `
+    <p class="section-label">Dados de baja (${bajas.length})</p>
+    <div class="sancion-list" style="margin-bottom:18px;">${bajas.map(s=>filaAlumno(s,true)).join('')}</div>
+    ` : ''}
+  `;
+  document.getElementById('backBtn').addEventListener('click', () => goBack('config'));
+  if(document.getElementById('migrarAlumnosBtn')){
+    document.getElementById('migrarAlumnosBtn').addEventListener('click', migrarAlumnosAFirestore);
+  }
+  if(document.getElementById('agregarAlumnoBtn')){
+    document.getElementById('agregarAlumnoBtn').addEventListener('click', () => agregarAlumno().then(render));
+  }
+  if(document.getElementById('filtroAlumnos')){
+    document.getElementById('filtroAlumnos').addEventListener('input', (e) => { window.__alumnosFiltro = e.target.value; render(); });
+  }
+  document.querySelectorAll('[data-editar]').forEach(b => {
+    b.addEventListener('click', () => editarAlumno(b.dataset.editar).then(render));
+  });
+  document.querySelectorAll('[data-baja]').forEach(b => {
+    b.addEventListener('click', () => darDeBajaAlumno(b.dataset.baja));
+  });
+  document.querySelectorAll('[data-reactivar]').forEach(b => {
+    b.addEventListener('click', () => reactivarAlumno(b.dataset.reactivar));
+  });
+}
+
 function renderConfig(){
   const cfg = getConfig();
   const esNapo = getUsuario()==='Napo';
@@ -5024,6 +5236,7 @@ function renderConfig(){
       <button class="btn-secondary" id="migrarBtn" style="width:100%;">Actualizar registros viejos</button>
       <p id="migracionEstado" style="font-size:12px;color:var(--ink-soft);margin-top:8px;"></p>
     </div>
+    <button class="btn-secondary" id="irAlumnosBtn" style="width:100%;margin-top:10px;">Alumnos (agregar / dar de baja)</button>
     <button class="btn-secondary" id="irAuditoriaBtn" style="width:100%;margin-top:10px;">Ver registro de actividad</button>
     <button class="btn-secondary" id="irAvanzadaBtn" style="width:100%;margin-top:10px;">Feriados, bimestres, horarios y umbrales</button>
     <button class="btn-secondary" id="irRespaldoBtn" style="width:100%;margin-top:10px;">Descargar respaldo completo (Excel)</button>
@@ -5050,6 +5263,9 @@ function renderConfig(){
   }
   if(document.getElementById('migrarBtn')){
     document.getElementById('migrarBtn').addEventListener('click', migrarStudentIdEnAsistencia);
+  }
+  if(document.getElementById('irAlumnosBtn')){
+    document.getElementById('irAlumnosBtn').addEventListener('click', () => navigate('alumnos'));
   }
   if(document.getElementById('irAuditoriaBtn')){
     document.getElementById('irAuditoriaBtn').addEventListener('click', () => navigate('auditoria'));
