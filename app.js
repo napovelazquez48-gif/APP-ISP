@@ -13,8 +13,9 @@ const HOUR_TIME = {1:'7:45',2:'8:25',3:'9:20',4:'10:00',5:'10:55',6:'11:35',7:'1
 // ---------- Firebase ----------
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-app.js";
 import {
-  initializeFirestore, persistentLocalCache, persistentSingleTabManager,
-  collection, doc, setDoc, deleteDoc, addDoc, onSnapshot, getDoc, writeBatch
+  initializeFirestore, persistentLocalCache, persistentMultipleTabManager,
+  collection, doc, setDoc, deleteDoc, addDoc, onSnapshot, getDoc, writeBatch,
+  query, where, getDocs, getDocsFromCache
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
 import {
   getAuth, onAuthStateChanged, signInWithEmailAndPassword,
@@ -58,7 +59,10 @@ const authSecundaria = getAuth(fbAppSecundaria);
 setPersistence(authSecundaria, browserLocalPersistence).catch(err=>console.error(err));
 let db;
 try{
-  db = initializeFirestore(fbApp, { localCache: persistentLocalCache({ tabManager: persistentSingleTabManager() }) });
+  // Multi-pestaña: con el manejador de una sola pestaña, si la app quedaba abierta
+  // en dos lados (por ej. una pestaña del navegador y la app instalada), la segunda
+  // se quedaba SIN copia local y volvía a bajar todo de Firestore cada vez.
+  db = initializeFirestore(fbApp, { localCache: persistentLocalCache({ tabManager: persistentMultipleTabManager() }) });
 }catch(e){
   db = initializeFirestore(fbApp, {});
 }
@@ -81,7 +85,9 @@ let certImagesLocal = DB.get('isp_cert_images', {});
 
 // ---------- In-memory cache (mirrors Firestore in real time) ----------
 let cache = {
-  attendance: {},
+  attendance: {},      // la vista completa que usa toda la app (histórico + en vivo)
+  attendanceLive: {},  // lo que llega en tiempo real (bimestre actual)
+  attendanceHist: {},  // lo anterior al bimestre actual, se carga una vez por sesión
   sanciones: {},
   substitutions: {},
   ef: {},
@@ -104,14 +110,140 @@ let cache = {
   config: { entrada:'07:45', toleranciaMin:15, corteFaltaCompleta:'09:00' }
 };
 
+// ---------- Asistencia: en vivo lo reciente, el resto desde la copia local ----------
+// La colección de asistencia tiene ~12.000 registros y crece todos los días. Tenerla
+// entera "en vivo" hacía que cada arranque con la copia local fría se llevara ~12.000
+// lecturas de Firestore (el límite gratis son 50.000 por día). Ahora:
+//   · en vivo (onSnapshot) va solo el bimestre actual, que es lo que cambia;
+//   · lo anterior sale de la copia local del dispositivo (gratis) y solo se vuelve a
+//     pedir al servidor cuando de verdad cambió algo viejo. Para saberlo se usa un
+//     número de versión guardado en config/general ("histRev"): cada vez que se toca
+//     una fecha anterior al bimestre actual se actualiza, y los demás dispositivos lo
+//     ven por el listener de configuración que ya existía (1 documento, no 12.000).
+// Toda la app sigue viendo cache.attendance completo, así que ningún cálculo cambia.
+let INICIO_VIVO = null;
+let histAsistenciaListo = false;
+let histRevCargada = null;
+
+function refrescarAttendance(){
+  cache.attendance = Object.assign({}, cache.attendanceHist, cache.attendanceLive);
+}
+
+// Si se toca una fecha anterior al bimestre actual, el listener en vivo no la ve
+// (quedó fuera de su ventana), así que se actualiza la copia en memoria a mano para
+// que el cambio se vea en el momento. En Firestore ya se guardó igual.
+function tocarHistorico(key, data){
+  const id = docId(key);
+  const fecha = String(key).split('|')[0];
+  if(!INICIO_VIVO || fecha >= INICIO_VIVO) return;
+  if(data === null) delete cache.attendanceHist[id];
+  else cache.attendanceHist[id] = Object.assign({}, cache.attendanceHist[id], data);
+  refrescarAttendance();
+  marcarHistoricoCambiado();
+  render();
+}
+
+// Avisa al resto de los dispositivos (y a este mismo en la próxima sesión) que algo
+// anterior al bimestre actual cambió, así vuelven a pedir el histórico una sola vez
+// en lugar de estar recargándolo cada tanto por las dudas.
+let histRevTimer = null;
+function marcarHistoricoCambiado(){
+  const rev = Date.now();
+  histRevCargada = rev;
+  const marca = DB.get('isp_hist_asistencia', null);
+  if(marca) DB.set('isp_hist_asistencia', Object.assign({}, marca, { rev }));
+  // Justificar un certificado de varios días toca muchas fechas viejas seguidas:
+  // se espera a que termine la ráfaga y se escribe la versión una sola vez.
+  clearTimeout(histRevTimer);
+  histRevTimer = setTimeout(() => {
+    setDoc(doc(db,'config','general'), { histRev: histRevCargada }, { merge: true }).catch(()=>{});
+  }, 1500);
+}
+
+// Después de una carga masiva (importar histórico, sincronizar con Drive, migrar)
+// se vuelve a pedir el histórico al servidor para no quedar con datos a medias.
+async function recargarHistoricoAsistencia(){
+  DB.set('isp_hist_asistencia', null);
+  histAsistenciaListo = false;
+  render();
+  const rev = Date.now();
+  setDoc(doc(db,'config','general'), { histRev: rev }, { merge: true }).catch(()=>{});
+  try{ await cargarHistoricoAsistencia(rev); }
+  catch(e){ histAsistenciaListo = true; render(); }
+}
+
+let histCargando = false;
+async function cargarHistoricoAsistencia(rev){
+  // Candado: el listener de config puede disparar dos veces seguidas (por ejemplo al
+  // guardar configuración) y sin esto se pedirían 12.000 registros dos veces.
+  if(histCargando) return;
+  histCargando = true;
+  try{
+    await traerHistoricoAsistencia(rev);
+  } finally {
+    histCargando = false;
+  }
+}
+
+async function traerHistoricoAsistencia(rev){
+  // A propósito SIN filtro de fecha: los registros que se importaron en su momento
+  // se guardaron sin el campo 'fecha' (la fecha iba solo en el ID del documento), y
+  // una consulta por rango los dejaría afuera, borrando de la app meses de historia.
+  // Trayendo la colección entera no se puede perder ninguno; lo del bimestre actual
+  // que venga repetido lo pisa igual la versión en vivo, que es la más fresca.
+  const q = query(collection(db,'attendance'));
+  const marca = DB.get('isp_hist_asistencia', null);
+  // La copia local sirve si se armó con la misma versión del histórico que la de ahora.
+  const vigente = marca && marca.rev === rev;
+
+  let snap = null;
+  if(vigente){
+    try{
+      const local = await getDocsFromCache(q);
+      // Y además tiene que traer aproximadamente lo mismo que la última vez que se
+      // pidió al servidor: si el navegador la limpió a medias, se rehace.
+      if(local.size >= Math.floor((marca.cantidad || 0) * 0.9)) snap = local;
+    }catch(e){ /* sin copia local utilizable: se pide al servidor abajo */ }
+  }
+  if(!snap){
+    snap = await getDocs(q);
+    DB.set('isp_hist_asistencia', { rev, cantidad: snap.size });
+  }
+  histRevCargada = rev;
+
+  const hist = {};
+  snap.forEach(d => {
+    const r = d.data();
+    // Lo que el listener en vivo ya cubre no se guarda acá: si no, al borrar una
+    // marca del bimestre actual volvería a aparecer desde esta copia vieja.
+    if(r.fecha && r.fecha >= INICIO_VIVO) return;
+    hist[d.id] = r;
+  });
+  cache.attendanceHist = hist;
+  refrescarAttendance();
+  histAsistenciaListo = true;
+  render();
+}
+
+let listenersIniciados = false;
 function startListeners(){
-  onSnapshot(collection(db,'attendance'), snap => {
+  // Se llama desde las dos ramas de onAuthStateChanged; si se enganchara dos veces
+  // quedarían listeners duplicados y Firestore cobraría las lecturas dos veces.
+  if(listenersIniciados) return;
+  listenersIniciados = true;
+  INICIO_VIVO = bimestreActual().from;
+
+  onSnapshot(query(collection(db,'attendance'), where('fecha','>=', INICIO_VIVO)), snap => {
     const next = {};
     snap.forEach(d => { next[d.id] = d.data(); });
-    cache.attendance = next;
+    cache.attendanceLive = next;
+    refrescarAttendance();
     cache._lastSync.attendance = Date.now();
     render();
   });
+
+  // El histórico no se dispara acá: se carga desde el listener de config/general, que
+  // es el que trae la versión (histRev) con la que hay que compararlo.
 
   onSnapshot(collection(db,'sanciones'), snap => {
     const byStudent = {};
@@ -284,6 +416,18 @@ function startListeners(){
       aplicarConfigDinamica(cache.config);
     }
     render();
+    // Primera carga del histórico, y recarga solo si la versión que llega es MÁS
+    // NUEVA que la cargada (así el eco de nuestra propia escritura, o un snapshot
+    // viejo que llega tarde, no dispara una recarga completa al pedo).
+    const rev = (d.exists() && d.data().histRev) || 0;
+    if(!histAsistenciaListo || rev > (histRevCargada || 0)){
+      cargarHistoricoAsistencia(rev).catch(err => {
+        console.error('No se pudo cargar el histórico de asistencia', err);
+        histAsistenciaListo = true; // para no dejar el aviso colgado en pantalla
+        showToast('No pude cargar el histórico de asistencia. Los totales de bimestres anteriores pueden quedar incompletos.', 'error');
+        render();
+      });
+    }
   });
   getDoc(configRef).then(d => {
     if(!d.exists()) setDoc(configRef, cache.config).catch(()=>{});
@@ -696,7 +840,9 @@ function animateCounts(){
 
 function writeAttendance(key, data){
   const [fechaK, studentIdK] = key.split('|');
-  setDoc(doc(db,'attendance',docId(key)), Object.assign({ autor: getUsuario(), studentId: studentIdK, fecha: fechaK }, data)).catch(err=>showSaveError(err));
+  const payload = Object.assign({ autor: getUsuario(), studentId: studentIdK, fecha: fechaK }, data);
+  setDoc(doc(db,'attendance',docId(key)), payload).catch(err=>showSaveError(err));
+  tocarHistorico(key, payload);
 }
 
 function markPresente(studentId, fecha, curso){
@@ -705,6 +851,7 @@ function markPresente(studentId, fecha, curso){
   const rec = cache.attendance[key];
   if(rec && (rec.estado==='P' || rec.estado==='T' || rec.estado==='TJ')){
     deleteDoc(doc(db,'attendance',docId(key))).catch(err=>showSaveError(err));
+    tocarHistorico(key, null);
     return;
   }
   ultimaAccionPulso = { studentId };
@@ -724,6 +871,7 @@ function markAusente(studentId, fecha){
   // pisarlo con un "A" sin justificar y perder la justificación.
   if(rec && (rec.estado==='A' || rec.estado==='J')){
     deleteDoc(doc(db,'attendance',docId(key))).catch(err=>showSaveError(err));
+    tocarHistorico(key, null);
     return;
   }
   ultimaAccionPulso = { studentId };
@@ -1512,7 +1660,10 @@ function renderDetalleAlertas(){
 async function ejecutarImportacion(data){
   const ops = [];
   (data.attendance||[]).forEach(ev => {
-    const payload = { estado: ev.estado, hora: ev.hora || null, autor: 'Importación histórica' };
+    // Ojo: fecha y studentId tienen que ir SIEMPRE como campos, no solo dentro del
+    // ID del documento, porque las consultas por rango de fechas (la app y la
+    // revisión diaria de faltas) filtran por el campo 'fecha'.
+    const payload = { estado: ev.estado, hora: ev.hora || null, fecha: ev.fecha, studentId: ev.studentId, autor: 'Importación histórica' };
     if(ev.exencion) payload.exencion = ev.exencion;
     ops.push({ type:'set', ref: doc(db,'attendance', docId(`${ev.fecha}|${ev.studentId}`)), data: payload });
   });
@@ -1546,6 +1697,9 @@ async function ejecutarImportacion(data){
     });
     await batch.commit();
   }
+  // Se acaban de escribir registros de fechas viejas: el listener en vivo no los ve,
+  // así que se vuelve a pedir el histórico para que queden a la vista enseguida.
+  await recargarHistoricoAsistencia();
   return ops.length;
 }
 
@@ -2148,6 +2302,8 @@ function render(){
   // profesor/lectura/alumno). No dibujamos nada todavía: dejamos la pantalla
   // de carga puesta para no mostrar una pantalla equivocada por un instante.
   if(!authResolved) return;
+  const hb = document.getElementById('histBanner');
+  if(hb) hb.classList.toggle('show', !histAsistenciaListo);
   renderInner();
   if($app && !skipFadeNext){
     $app.classList.remove('fade-in');
@@ -3213,6 +3369,7 @@ async function marcarTodoComoYaSincronizado(){
     }
     if(estadoEl) estadoEl.textContent = `Listo: ${hechos} registros marcados como ya sincronizados.`;
     showToast('Todo marcado como ya sincronizado');
+    await recargarHistoricoAsistencia(); // se tocaron fechas viejas, fuera del listener en vivo
     render();
   }catch(err){
     console.error(err);
@@ -3257,6 +3414,7 @@ async function sincronizarPendientesConDrive(){
     try{
       await procesar(cache.driveMapping[p.studentId].spreadsheetId, fmtDateShort(p.fecha), p.fila.tipo, p.fila.peso);
       await setDoc(doc(db,'attendance', docId(p.key)), { driveSynced: true }, { merge: true });
+      tocarHistorico(p.key, { driveSynced: true }); // puede ser una fecha vieja
       ok++;
     }catch(err){
       console.error(err);
@@ -4833,6 +4991,7 @@ async function migrarStudentIdEnAsistencia(){
   }
   if(estadoEl) estadoEl.textContent = `Listo, ${hechos} registros actualizados.`;
   showToast('Migración terminada');
+  await recargarHistoricoAsistencia(); // la mayoría son fechas viejas
 }
 
 function renderCalendarioCiclo(){
