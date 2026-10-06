@@ -296,7 +296,10 @@ function startListeners(){
     const next = {};
     snap.forEach(d => {
       const data = d.data();
-      next[`${data.date}|${data.studentId}`] = { tipo: data.tipo || 'falta' };
+      // Ojo: hay que conservar driveSynced. Antes se guardaba solo el tipo y por eso
+      // los registros de Ed. Física figuraban siempre "pendientes" de pasar a Drive,
+      // aunque se hubieran sincronizado o marcado como ya sincronizados.
+      next[`${data.date}|${data.studentId}`] = { tipo: data.tipo || 'falta', driveSynced: data.driveSynced === true };
     });
     cache.ef = next;
     cache._lastSync.ef = Date.now();
