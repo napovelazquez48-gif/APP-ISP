@@ -635,14 +635,42 @@ textarea{resize:vertical;}
 /* Al entrar a una pantalla se desliza desde la derecha; al volver, desde la izquierda.
    overflow-x:clip en el body evita la barra horizontal durante el deslizamiento sin
    crear un contenedor de scroll (que rompería el encabezado fijo). */
-body{overflow-x:clip;}
-main.slide-adelante{animation:slideAdelante .26s cubic-bezier(.2,.7,.3,1);}
-main.slide-atras{animation:slideAtras .26s cubic-bezier(.2,.7,.3,1);}
-@keyframes slideAdelante{ from{transform:translateX(24%);opacity:0;} to{transform:none;opacity:1;} }
-@keyframes slideAtras{ from{transform:translateX(-24%);opacity:0;} to{transform:none;opacity:1;} }
-@media (prefers-reduced-motion: reduce){
-  main.slide-adelante, main.slide-atras, main.fade-in{animation:none;}
+html,body{overflow-x:clip;}
+/* Estilo iOS: la pantalla nueva entra desde la derecha tapando a la anterior, que se
+   corre un poco hacia la izquierda. Al volver, la de arriba sale hacia la derecha y la
+   anterior vuelve a su lugar. La "pantalla saliente" es una copia de la anterior que
+   se dibuja un instante encima/debajo mientras dura el movimiento. */
+.tabbar{z-index:100;}
+main.slide-adelante{
+  position:relative;z-index:2;background-color:var(--paper);
+  box-shadow:-10px 0 28px rgba(0,0,0,0.14);
+  animation:entraAdelante .42s cubic-bezier(.32,.72,0,1);
 }
+main.slide-atras{animation:entraAtras .42s cubic-bezier(.32,.72,0,1);}
+.pantalla-saliente{pointer-events:none;box-sizing:border-box;}
+.pantalla-saliente.saliente-adelante{z-index:1;animation:saleAdelante .42s cubic-bezier(.32,.72,0,1) forwards;}
+.pantalla-saliente.saliente-atras{
+  z-index:3;background-color:var(--paper);box-shadow:-10px 0 28px rgba(0,0,0,0.14);
+  animation:saleAtras .42s cubic-bezier(.32,.72,0,1) forwards;
+}
+@keyframes entraAdelante{ from{transform:translateX(100%);} to{transform:none;} }
+@keyframes saleAdelante{ from{transform:none;opacity:1;} to{transform:translateX(-30%);opacity:.6;} }
+@keyframes entraAtras{ from{transform:translateX(-30%);opacity:.6;} to{transform:none;opacity:1;} }
+@keyframes saleAtras{ from{transform:translateX(var(--desde, 0px));} to{transform:translateX(100%);} }
+/* Mientras se arrastra con el dedo para volver */
+main.arrastrando{
+  position:relative;z-index:2;background-color:var(--paper);
+  box-shadow:-10px 0 28px rgba(0,0,0,0.14);will-change:transform;
+}
+main.volviendo-lugar{transition:transform .25s cubic-bezier(.32,.72,0,1);}
+@media (prefers-reduced-motion: reduce){
+  main.slide-adelante, main.slide-atras, main.fade-in, .pantalla-saliente{animation:none;}
+}
+
+/* Que no se pueda seleccionar texto (botones, títulos, listas): queda más prolijo.
+   Se mantiene la selección donde se escribe. */
+body{-webkit-user-select:none;user-select:none;-webkit-touch-callout:none;}
+input, textarea, select, [contenteditable="true"]{-webkit-user-select:text;user-select:text;-webkit-touch-callout:default;}
 
 /* ---------- Encabezado fijo en Asistencia diaria ---------- */
 .sticky-head{

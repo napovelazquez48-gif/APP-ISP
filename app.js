@@ -2403,6 +2403,96 @@ document.addEventListener('input', (e) => {
   }
 }, true);
 
+// ---------- Transición tipo iOS y gesto para volver ----------
+// Antes de dibujar la pantalla nueva se hace una copia de la actual y se la pone fija
+// en el mismo lugar, para que se vea deslizarse (hacia la izquierda al avanzar, hacia
+// la derecha al volver) mientras entra la nueva. Se borra sola al terminar.
+let arrastreDesdePx = 0;
+const movimientoReducido = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+function crearPantallaSaliente(transicion){
+  if(movimientoReducido || !$app || !$app.firstElementChild) return;
+  document.querySelectorAll('.pantalla-saliente').forEach(el => el.remove());
+  const rect = $app.getBoundingClientRect();
+  const f = $app.cloneNode(true);
+  f.removeAttribute('id');
+  f.querySelectorAll('[id]').forEach(el => el.removeAttribute('id'));
+  f.classList.remove('fade-in', 'slide-adelante', 'slide-atras', 'arrastrando', 'volviendo-lugar');
+  f.classList.add('pantalla-saliente', transicion === 'atras' ? 'saliente-atras' : 'saliente-adelante');
+  f.setAttribute('aria-hidden', 'true');
+  // Si se estaba arrastrando con el dedo, el rect ya incluye ese corrimiento: se descuenta
+  // porque la animación arranca justo desde ahí (--desde).
+  f.style.cssText = `position:fixed;top:${rect.top}px;left:${rect.left - arrastreDesdePx}px;width:${rect.width}px;margin:0;`;
+  f.style.setProperty('--desde', arrastreDesdePx + 'px');
+  document.body.appendChild(f);
+  const quitar = () => f.remove();
+  f.addEventListener('animationend', quitar, { once: true });
+  setTimeout(quitar, 800);
+}
+
+// Arrastrar hacia la derecha desde cualquier parte de la pantalla vuelve atrás, como en
+// el iPhone. Solo funciona en pantallas que tienen flecha de volver (usa ese mismo botón,
+// así vuelve exactamente a donde volvería la flecha) y no se activa sobre campos de texto,
+// listas que se desplazan de costado, o con un cartel abierto.
+(function gestoVolver(){
+  let x0 = 0, y0 = 0, t0 = 0, activo = false, decidido = false, horizontal = false, back = null;
+  function puedeEmpezar(target){
+    const modal = document.getElementById('modalOverlay');
+    if(modal && modal.classList.contains('show')) return false;
+    back = document.getElementById('backBtn');
+    if(!back || !$app || !target || !target.closest) return false;
+    if(!$app.contains(target)) return false;
+    if(target.closest('input, textarea, select, [contenteditable="true"], .no-swipe')) return false;
+    for(let el = target; el && el !== $app; el = el.parentElement){
+      if(el.scrollWidth > el.clientWidth + 2){
+        const ox = getComputedStyle(el).overflowX;
+        if(ox === 'auto' || ox === 'scroll') return false;
+      }
+    }
+    return true;
+  }
+  document.addEventListener('touchstart', (e) => {
+    activo = false;
+    if(e.touches.length !== 1 || !puedeEmpezar(e.target)) return;
+    activo = true; decidido = false; horizontal = false;
+    x0 = e.touches[0].clientX; y0 = e.touches[0].clientY; t0 = Date.now();
+  }, { passive: true });
+  document.addEventListener('touchmove', (e) => {
+    if(!activo) return;
+    const dx = e.touches[0].clientX - x0, dy = e.touches[0].clientY - y0;
+    if(!decidido){
+      if(Math.abs(dx) < 10 && Math.abs(dy) < 10) return;
+      decidido = true;
+      horizontal = dx > 0 && Math.abs(dx) > Math.abs(dy) * 1.3;
+      if(!horizontal){ activo = false; return; }
+      $app.classList.remove('volviendo-lugar');
+      $app.classList.add('arrastrando');
+    }
+    e.preventDefault(); // mientras se arrastra de costado, que la pantalla no scrollee
+    $app.style.transform = `translateX(${Math.max(0, dx)}px)`;
+  }, { passive: false });
+  function terminar(e){
+    if(!activo || !horizontal){ activo = false; return; }
+    activo = false;
+    const dx = Math.max(0, (e.changedTouches[0] ? e.changedTouches[0].clientX : x0) - x0);
+    const velocidad = dx / Math.max(1, Date.now() - t0); // px por ms
+    if(dx > 90 || (dx > 35 && velocidad > 0.5)){
+      arrastreDesdePx = dx;
+      back.click();
+      arrastreDesdePx = 0;
+      $app.style.transform = '';
+      $app.classList.remove('arrastrando');
+    } else {
+      // No llegó: vuelve suave a su lugar.
+      $app.classList.add('volviendo-lugar');
+      $app.style.transform = '';
+      setTimeout(() => { $app.classList.remove('arrastrando', 'volviendo-lugar'); }, 260);
+    }
+  }
+  document.addEventListener('touchend', terminar, { passive: true });
+  document.addEventListener('touchcancel', terminar, { passive: true });
+})();
+
 function render(){
   // Todavía no sabemos con qué rol entrar (Firestore está confirmando si es
   // profesor/lectura/alumno). No dibujamos nada todavía: dejamos la pantalla
@@ -2410,6 +2500,8 @@ function render(){
   if(!authResolved) return;
   const hb = document.getElementById('histBanner');
   if(hb) hb.classList.toggle('show', !histAsistenciaListo);
+  if((pendingTransicion === 'adelante' || pendingTransicion === 'atras') && primerRenderHecho) crearPantallaSaliente(pendingTransicion);
+  if($app){ $app.style.transform = ''; $app.classList.remove('arrastrando', 'volviendo-lugar'); }
   renderInner();
   const transicion = pendingTransicion;
   pendingTransicion = null;
