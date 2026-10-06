@@ -83,6 +83,27 @@ const DB = {
 };
 let certImagesLocal = DB.get('isp_cert_images', {});
 
+// ---------- Tema claro / oscuro ----------
+// 'auto' sigue al celular; 'claro' u 'oscuro' lo fijan. Se guarda por dispositivo.
+// (index.html aplica lo mismo antes de pintar, para que no parpadee al abrir.)
+function getTema(){
+  const t = DB.get('isp_tema', 'auto');
+  return (t === 'claro' || t === 'oscuro') ? t : 'auto';
+}
+function aplicarTema(){
+  const t = getTema();
+  if(t === 'auto') document.documentElement.removeAttribute('data-tema');
+  else document.documentElement.setAttribute('data-tema', t);
+  const oscuro = t === 'oscuro' || (t === 'auto' && window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
+  const meta = document.querySelector('meta[name="theme-color"]');
+  if(meta) meta.setAttribute('content', oscuro ? '#161B23' : '#1F2A3A');
+}
+function setTema(t){
+  DB.set('isp_tema', t);
+  aplicarTema();
+}
+aplicarTema();
+
 // ---------- In-memory cache (mirrors Firestore in real time) ----------
 let cache = {
   attendance: {},      // la vista completa que usa toda la app (histórico + en vivo)
@@ -104,6 +125,7 @@ let cache = {
   students_auth: {},
   students: {},
   schedule: {},
+  pendientes: {},
   entradasEspeciales: {},
   _lastSync: {},
   eventos: {},
@@ -392,6 +414,17 @@ function startListeners(){
     render();
   });
 
+  // Pendientes del preceptor: solo los baja la cuenta de administración (los
+  // profesores, cuentas de lectura y alumnos ni siquiera se suscriben).
+  if(userRole === 'admin'){
+    onSnapshot(collection(db,'pendientes'), snap => {
+      const next = {};
+      snap.forEach(d => { next[d.id] = Object.assign({ id: d.id }, d.data()); });
+      cache.pendientes = next;
+      render();
+    });
+  }
+
   onSnapshot(collection(db,'schedule'), snap => {
     const next = {};
     snap.forEach(d => { next[d.id] = d.data(); });
@@ -619,6 +652,24 @@ function diaKeyFor(dateISO){
   return map[new Date(dateISO+'T00:00:00').getDay()] || null;
 }
 
+// ---------- Retiros anticipados ----------
+// Un retiro solo vale si el alumno estuvo ese día (P, T o TJ). Suma media falta al
+// total ponderado del bimestre y cuenta como falta en cada materia que no terminó de
+// cursar (se fue antes de que esa hora terminara) — el espejo de la llegada tarde, que
+// cuenta las materias que ya habían empezado cuando llegó.
+function tieneRetiro(rec){
+  return !!(rec && rec.retiro && rec.retiro.hora && rec.estado !== 'A' && rec.estado !== 'J');
+}
+function pesoRetiro(rec){ return tieneRetiro(rec) ? 0.5 : 0; }
+function horaPerdidaPorRetiro(rec, hour){
+  const t = HORA_TIEMPOS[hour];
+  return tieneRetiro(rec) && !!t && minutesOf(rec.retiro.hora) < minutesOf(t[1]);
+}
+function efPerdidaPorRetiro(rec, curso){
+  const b = EF_HORARIO.find(x => x.cursos.includes(curso));
+  return tieneRetiro(rec) && !!b && minutesOf(rec.retiro.hora) < minutesOf(b.fin);
+}
+
 function computeMateriaStats(studentId, bim){
   const student = getStudents().find(s => s.id === studentId);
   const curso = student.curso;
@@ -635,17 +686,19 @@ function computeMateriaStats(studentId, bim){
     const rec = att[`${iso}|${studentId}`];
     const isFullAbsence = rec && (rec.estado==='A' || rec.estado==='J') && !rec.exencion && !rec.llegoTarde;
     const isParcial = rec && rec.hora && (rec.estado==='T' || (rec.estado==='A' && rec.llegoTarde && !rec.exencion));
+    const isRetiro = tieneRetiro(rec);
 
     subjects.forEach(subj => {
       if(!stats[subj]) stats[subj] = { faltas:0, total:0 };
       stats[subj].total++;
       if(isFullAbsence){
         stats[subj].faltas++;
-      } else if(isParcial){
+      } else if(isParcial || isRetiro){
         const entries = (getSchedule()[curso][diaKey]||[]).filter(e => e.subject === subj);
         const perdida = entries.some(e => {
           const startTime = HOUR_TIME[e.hour];
-          return startTime && minutesOf(startTime) < minutesOf(rec.hora);
+          const porLlegada = isParcial && startTime && minutesOf(startTime) < minutesOf(rec.hora);
+          return porLlegada || horaPerdidaPorRetiro(rec, e.hour);
         });
         if(perdida) stats[subj].faltas++;
       }
@@ -655,7 +708,7 @@ function computeMateriaStats(studentId, bim){
     if(diaKey === 'martes' || diaKey === 'jueves'){
       if(!stats['ED FIS']) stats['ED FIS'] = { faltas:0, total:0 };
       stats['ED FIS'].total++;
-      if(isFullAbsence){
+      if(isFullAbsence || efPerdidaPorRetiro(rec, curso)){
         stats['ED FIS'].faltas++;
         efCountedDates.add(iso);
       }
@@ -684,6 +737,7 @@ function computeAbsenceWeights(range){
     let w = 0;
     if(rec.estado === 'A' || rec.estado === 'J') w = 1; // justificada sigue sumando, el certificado queda como respaldo
     else if(rec.estado === 'T') w = 0.5;
+    w += pesoRetiro(rec);
     if(w>0) weights[sid] = (weights[sid]||0) + w;
   });
   Object.entries(getEF()).forEach(([key, val]) => {
@@ -707,6 +761,7 @@ function computeFechaAlerta(studentId, range){
     let w = 0;
     if(rec.estado === 'A' || rec.estado === 'J') w = 1;
     else if(rec.estado === 'T') w = 0.5;
+    w += pesoRetiro(rec);
     if(w>0) eventos.push({ fecha, w });
   });
   Object.entries(getEF()).forEach(([key, val]) => {
@@ -841,8 +896,45 @@ function animateCounts(){
 function writeAttendance(key, data){
   const [fechaK, studentIdK] = key.split('|');
   const payload = Object.assign({ autor: getUsuario(), studentId: studentIdK, fecha: fechaK }, data);
+  // Al corregir la hora de llegada (o cualquier otro cambio que no hable del retiro),
+  // el retiro que ya estaba cargado se conserva. Si pasa a ausente, se descarta solo.
+  const prev = cache.attendance[key];
+  if(!('retiro' in data) && prev && prev.retiro && data.estado !== 'A' && data.estado !== 'J'){
+    payload.retiro = prev.retiro;
+  }
   setDoc(doc(db,'attendance',docId(key)), payload).catch(err=>showSaveError(err));
   tocarHistorico(key, payload);
+}
+
+async function editarRetiro(studentId, fecha){
+  fecha = fecha || selectedFecha;
+  const key = `${fecha}|${studentId}`;
+  const rec = cache.attendance[key];
+  if(rec && (rec.estado === 'A' || rec.estado === 'J')){
+    await customAlert('Está marcado ausente ese día. Para cargar un retiro primero tiene que figurar como presente.');
+    return;
+  }
+  const actual = rec && rec.retiro ? rec.retiro : null;
+  const sugerida = actual ? actual.hora : (fecha === todayISO() ? nowHHMM() : '');
+  const hora = await customPrompt(
+    actual ? 'Hora del retiro (HH:MM). Dejá vacío para sacar el retiro:' : 'Hora del retiro (HH:MM):',
+    sugerida
+  );
+  if(hora === null) return;
+  const h = hora.trim();
+  if(!h){
+    if(actual) writeAttendance(key, Object.assign({}, rec, { retiro: null }));
+    return;
+  }
+  if(!/^\d{1,2}:\d{2}$/.test(h)){ await customAlert('Formato inválido. Usá HH:MM, por ejemplo 11:30.'); return; }
+  const horaNorm = h.padStart(5, '0');
+  const motivo = await customPrompt('Motivo (opcional):', actual ? (actual.motivo || '') : '');
+  if(motivo === null) return;
+  // Si no tenía nada cargado, estuvo presente: se marca P sin hora (no se usa la hora
+  // actual para no dejarlo como "tarde" por cargar el retiro a media mañana).
+  const base = rec ? Object.assign({}, rec) : { estado: 'P', hora: null };
+  writeAttendance(key, Object.assign(base, { retiro: { hora: horaNorm, motivo: motivo.trim() } }));
+  showToast('Retiro cargado');
 }
 
 function markPresente(studentId, fecha, curso){
@@ -1245,6 +1337,9 @@ function icon(name){
     gear: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 00.33 1.82l.06.06a2 2 0 11-2.83 2.83l-.06-.06a1.65 1.65 0 00-1.82-.33 1.65 1.65 0 00-1 1.51V21a2 2 0 01-4 0v-.09a1.65 1.65 0 00-1-1.51 1.65 1.65 0 00-1.82.33l-.06.06a2 2 0 11-2.83-2.83l.06-.06a1.65 1.65 0 00.33-1.82 1.65 1.65 0 00-1.51-1H3a2 2 0 010-4h.09a1.65 1.65 0 001.51-1 1.65 1.65 0 00-.33-1.82l-.06-.06a2 2 0 112.83-2.83l.06.06a1.65 1.65 0 001.82.33H9a1.65 1.65 0 001-1.51V3a2 2 0 014 0v.09a1.65 1.65 0 001 1.51 1.65 1.65 0 001.82-.33l.06-.06a2 2 0 112.83 2.83l-.06.06a1.65 1.65 0 00-.33 1.82V9a1.65 1.65 0 001.51 1H21a2 2 0 010 4h-.09a1.65 1.65 0 00-1.51 1z"/></svg>',
     info: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></svg>',
     clock: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>',
+    salida: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4h4a2 2 0 012 2v12a2 2 0 01-2 2h-4"/><path d="M10 16l-4-4 4-4"/><path d="M6 12h10"/></svg>',
+    bell: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8a6 6 0 10-12 0c0 7-3 9-3 9h18s-3-2-3-9"/><path d="M13.7 21a2 2 0 01-3.4 0"/></svg>',
+    sun: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>',
     run: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><circle cx="14.5" cy="5" r="1.8"/><path d="M9 21l2-5 3 1 3 5M6 14l3-3 2-4 4 2 3-1M9 12L7 9"/></svg>',
     chart: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M4 20V10M11 20V4M18 20v-7"/><path d="M2 20h20"/></svg>',
     trash: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2"/><path d="M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>',
@@ -1255,7 +1350,20 @@ function icon(name){
 
 let navHistory = [];
 
-function navigate(route, params){
+// Sombra del encabezado fijo solo cuando ya quedó pegado arriba (al scrollear).
+window.addEventListener('scroll', () => {
+  const el = document.querySelector('.sticky-head');
+  if(el) el.classList.toggle('pegado', window.scrollY > 4);
+}, { passive: true });
+
+// Animación que corresponde al próximo render: 'adelante' (entrar a una pantalla),
+// 'atras' (volver) o 'tab' (cambiar de pestaña abajo). Los renders que no cambian de
+// pantalla (llega un dato nuevo, se toca un botón) no animan nada.
+let pendingTransicion = null;
+let primerRenderHecho = false;
+
+function navigate(route, params, transicion){
+  if(currentRoute !== route) pendingTransicion = transicion || 'adelante';
   // Al entrar a asistencia diaria desde otro lado, siempre arranca en el día real de hoy
   // (evita quedarse pegado en una fecha vieja si la app quedó abierta de un día para el otro)
   if(route === 'asistencia' && currentRoute !== 'asistencia'){
@@ -1272,6 +1380,7 @@ function navigate(route, params){
 }
 
 function goBack(fallback){
+  pendingTransicion = 'atras';
   const prev = navHistory.pop();
   currentRoute = prev || fallback || 'home';
   lastFocusedInput = null;
@@ -1533,43 +1642,22 @@ function renderHome(){
 
     ${notifStatusBannerHtml()}
 
-    <div class="module-list">
-      ${moduleRow('clipboard','Asistencia diaria','Presente, ausente, tardanza', 'asistencia')}
-      ${moduleRow('alert','Sanciones e incidentes','Registro por alumno', 'sanciones')}
-      ${moduleRow('file','Justificativos médicos','Certificados y fechas', 'justificativos')}
-      ${moduleRow('file','Entregas y trámites','Autorizaciones, plata, fichas médicas, aptos...', 'tramites')}
-      ${moduleRow('calendar','Horarios y suplencias','Grilla por curso y división', 'horarios')}
-      ${moduleRow('calendar','Calendario del ciclo','Bimestres y feriados', 'calendarioCiclo')}
-      ${moduleRow('calendar','Agenda','Exámenes, recuperatorios, TPs y más, por curso', 'agenda')}
-      ${moduleRow('users','Familias','Contacto de padres y tutores', 'familias')}
-      ${moduleRow('chart','Resumen del alumno','Faltas, apercibimientos y certificados', 'resumen')}
-      ${moduleRow('chart','Vista por curso','Alertas y riesgo de SCP de un vistazo', 'vistaCurso')}
-      ${moduleRow('chart','Vista general del colegio','Los 5 cursos comparados', 'vistaGeneral')}
-      ${moduleRow('file','Valoraciones pedagógicas','Bimestral, por materia', 'valoraciones')}
-      ${moduleRow('chart','Notas','Cuatrimestral, escala 1 a 10', 'notas')}
+    <div class="module-grid">
+      ${moduleTile('clipboard','Asistencia diaria','asistencia')}
+      ${moduleTile('alert','Sanciones','sanciones')}
+      ${moduleTile('file','Justificativos','justificativos')}
+      ${moduleTile('money','Entregas y trámites','tramites')}
+      ${moduleTile('calendar','Horarios y suplencias','horarios')}
+      ${moduleTile('calendar','Calendario del ciclo','calendarioCiclo')}
+      ${moduleTile('clipboard','Agenda','agenda')}
+      ${moduleTile('users','Familias','familias')}
+      ${moduleTile('chart','Resumen del alumno','resumen')}
+      ${moduleTile('chart','Vista por curso','vistaCurso')}
+      ${moduleTile('chart','Vista general','vistaGeneral')}
+      ${moduleTile('file','Valoraciones','valoraciones')}
+      ${moduleTile('check','Notas','notas')}
+      ${getUsuario()==='Napo' ? moduleTile('bell','Pendientes','pendientes', Object.values(cache.pendientes).filter(p=>!p.notificado).length) : ''}
     </div>
-
-    ${getUsuario()==='Napo' ? `
-    <p class="section-label" style="margin-top:22px;">Administración</p>
-    <div class="module-list">
-      ${moduleRow('users','Cuentas de alumnos','Faltas, notas y contacto de profesores', 'alumnosCuentas')}
-      ${moduleRow('calendar','Conexión con Drive','Emparejar y sincronizar faltas con Excel', 'conexionDrive')}
-    </div>
-    <p style="font-size:11.5px;color:var(--ink-soft);margin-top:8px;">Profesores y acceso de lectura ahora están en Configuración.</p>
-    <p style="text-align:center;margin-top:18px;">
-      <a href="#" id="cambiarUsuarioLink" style="font-size:12px;color:var(--ink-soft);text-decoration:underline;">Cambiar usuario</a>
-      &nbsp;·&nbsp;
-      <a href="#" id="importarLink" style="font-size:12px;color:var(--ink-soft);text-decoration:underline;">Importar histórico</a>
-      &nbsp;·&nbsp;
-      <a href="#" id="cerrarSesionLink" style="font-size:12px;color:var(--ink-soft);text-decoration:underline;">Cerrar sesión</a>
-    </p>
-    ` : `
-    <p style="text-align:center;margin-top:18px;">
-      <a href="#" id="cambiarUsuarioLink" style="font-size:12px;color:var(--ink-soft);text-decoration:underline;">Cambiar usuario</a>
-      &nbsp;·&nbsp;
-      <a href="#" id="cerrarSesionLink" style="font-size:12px;color:var(--ink-soft);text-decoration:underline;">Cerrar sesión</a>
-    </p>
-    `}
   `;
   attachModuleHandlers();
   if(document.getElementById('activarNotifBtn')){
@@ -1581,25 +1669,12 @@ function renderHome(){
     document.getElementById('cardTramites').addEventListener('click', () => navigate('tramites'));
   }
   animateCounts();
-  if(document.getElementById('importarLink')){
-    document.getElementById('importarLink').addEventListener('click', (e) => { e.preventDefault(); navigate('importar'); });
-  }
-  if(document.getElementById('cambiarUsuarioLink')){
-    document.getElementById('cambiarUsuarioLink').addEventListener('click', (e) => {
-      e.preventDefault();
-      localStorage.removeItem('isp_usuario');
-      currentRoute = 'quien';
-      render();
-    });
-  }
-  if(document.getElementById('cerrarSesionLink')){
-    document.getElementById('cerrarSesionLink').addEventListener('click', async (e) => {
-      e.preventDefault();
-      if(!(await customConfirm('¿Cerrar sesión? Vas a tener que volver a ingresar el mail y la contraseña.'))) return;
-      localStorage.removeItem('isp_usuario');
-      signOut(auth);
-    });
-  }
+}
+
+async function cerrarSesionAdmin(){
+  if(!(await customConfirm('¿Cerrar sesión? Vas a tener que volver a ingresar el mail y la contraseña.'))) return;
+  localStorage.removeItem('isp_usuario');
+  signOut(auth);
 }
 
 function renderDetalleAsistenciaHoy(){
@@ -1759,8 +1834,16 @@ function moduleRow(iconName, title, desc, route, disabled){
     ${disabled ? '<span class="badge-soon">Próximamente</span>' : `<span class="chevron">${icon('chevron')}</span>`}
   </div>`;
 }
+// Acceso del inicio en formato grilla (2 columnas, ícono grande arriba).
+function moduleTile(iconName, title, route, badge){
+  return `<button type="button" class="module-tile" data-route="${route}">
+    <span class="icon-chip">${icon(iconName)}</span>
+    <span class="tile-title">${title}</span>
+    ${badge ? `<span class="tile-badge">${badge}</span>` : ''}
+  </button>`;
+}
 function attachModuleHandlers(){
-  const rows = document.querySelectorAll('.module-row:not(.disabled)');
+  const rows = document.querySelectorAll('.module-row:not(.disabled), .module-tile');
   rows.forEach(r => {
     r.addEventListener('click', () => navigate(r.dataset.route));
   });
@@ -1802,7 +1885,14 @@ function renderAsistencia(){
     } else {
       metaHtml = '<p class="meta">Sin marcar</p>';
     }
-    if(soloLectura) metaHtml = metaHtml.replace(' data-edit="', ' data-noop="').replace(' data-exent="', ' data-noop2="');
+    if(tieneRetiro(rec)){
+      const txt = `Se retiró ${rec.retiro.hora}${rec.retiro.motivo ? ' · ' + escapeHtml(rec.retiro.motivo) : ''}`;
+      metaHtml += `<p class="meta retiro-meta" data-retiro="${s.id}">${icon('salida')} ${txt}</p>`;
+    } else if(estado === 'P' || estado === 'T' || estado === 'TJ' || (!estado && esPasado)){
+      // Enlace chiquito para cargar un retiro, sin sumar otro botón a la fila.
+      metaHtml += `<p class="meta"><span class="retiro-link" data-retiro="${s.id}">${icon('salida')} retiro</span></p>`;
+    }
+    if(soloLectura) metaHtml = metaHtml.replace(/ data-edit="/g, ' data-noop="').replace(/ data-exent="/g, ' data-noop2="').replace(/ data-retiro="/g, ' data-noop3="');
 
     let efHtml = '';
     if(esDiaEF){
@@ -1824,6 +1914,7 @@ function renderAsistencia(){
       return `
       <div class="student-card">
         <div class="row">
+          ${avatarAlumno(s)}
           <div style="flex:1">
             <span class="name">${s.apellido}, ${s.nombre}</span>
             ${metaHtml}
@@ -1836,6 +1927,7 @@ function renderAsistencia(){
     return `
       <div class="student-card">
         <div class="row">
+          ${avatarAlumno(s)}
           <div style="flex:1">
             <span class="name">${s.apellido}, ${s.nombre}</span>
             ${metaHtml}
@@ -1852,15 +1944,19 @@ function renderAsistencia(){
   ultimaAccionPulso = null;
 
   $app.innerHTML = `
-    <div class="appbar" style="padding:0 0 10px;">
-      <button class="back-btn" id="backBtn">${icon('back')}</button>
-      <h1>Asistencia diaria</h1>
+    <div class="sticky-head">
+      <div class="appbar" style="padding:0 0 10px;">
+        <button class="back-btn" id="backBtn">${icon('back')}</button>
+        <h1>Asistencia diaria</h1>
+      </div>
+      <div class="course-picker">
+        ${cursoBtns(soloLectura ? cursosDisponibles() : CURSOS)}
+        <input type="date" id="fechaSelect" value="${selectedFecha}" max="${maxFechaSeleccionable()}">
+      </div>
+      <p class="date-label" style="margin-bottom:${(!soloLectura && students.length) ? '8px' : '0'};">${fmtDateLong(selectedFecha)} · entrada ${cfg.entrada}, tolerancia ${cfg.toleranciaMin} min</p>
+      ${(!soloLectura && students.length) ? `<button class="btn-secondary" id="marcarTodosBtn" style="width:100%;">Marcar todos presentes</button>` : ''}
     </div>
-    <div class="course-picker">
-      ${cursoBtns(soloLectura ? cursosDisponibles() : CURSOS)}
-      <input type="date" id="fechaSelect" value="${selectedFecha}" max="${maxFechaSeleccionable()}">
-    </div>
-    <p class="date-label">${fmtDateLong(selectedFecha)} · entrada ${cfg.entrada}, tolerancia ${cfg.toleranciaMin} min</p>
+    <div style="height:12px"></div>
     ${(() => {
       const especial = getEntradaEspecial(selectedFecha, selectedCurso);
       if(especial){
@@ -1887,7 +1983,6 @@ function renderAsistencia(){
       }
       return soloLectura ? '' : `<p style="text-align:right;margin:-8px 0 14px;"><a href="#" id="sinClaseLink" style="font-size:12px;color:var(--ink-soft);text-decoration:underline;">+ Día sin clase para este curso (VCF, paro...)</a></p>`;
     })()}
-    ${(!soloLectura && students.length) ? `<button class="btn-secondary" id="marcarTodosBtn" style="width:100%;margin-bottom:14px;">Marcar todos presentes</button>` : ''}
     ${students.length ? rows : `<div class="empty-state"><h2>Sin alumnos</h2><p>Este curso no tiene alumnos cargados.</p></div>`}
     <div style="height:16px"></div>
   `;
@@ -1901,6 +1996,7 @@ function renderAsistencia(){
     document.querySelectorAll('[data-edit]').forEach(b => b.addEventListener('click', (e) => editHora(e.currentTarget.dataset.edit, selectedFecha, selectedCurso)));
     document.querySelectorAll('[data-exent]').forEach(b => b.addEventListener('click', (e) => marcarExencion(e.currentTarget.dataset.exent, selectedFecha)));
     document.querySelectorAll('[data-ef]').forEach(b => b.addEventListener('click', (e) => toggleEF(e.currentTarget.dataset.ef, selectedFecha)));
+    document.querySelectorAll('[data-retiro]').forEach(b => b.addEventListener('click', (e) => editarRetiro(e.currentTarget.dataset.retiro, selectedFecha)));
   }
   if(document.getElementById('entradaEspecialLink')){
     document.getElementById('entradaEspecialLink').addEventListener('click', (e) => { e.preventDefault(); definirEntradaEspecial(selectedFecha, selectedCurso); });
@@ -1994,6 +2090,7 @@ function renderSancionesLista(){
   const rows = students.map(s => {
     const count = (sanciones[s.id]||[]).length;
     return `<div class="module-row" data-student="${s.id}">
+      ${avatarAlumno(s)}
       <div class="txt">
         <p class="title">${s.apellido}, ${s.nombre}</p>
         ${count>0 ? `<p class="desc">${count} apercibimiento${count>1?'s':''}${count>=5?' · corresponde evaluar suspensión':''}</p>` : `<p class="desc">Sin registros</p>`}
@@ -2105,6 +2202,14 @@ function dateRange(fromISO, toISO){
   return out;
 }
 
+// Circulito con las iniciales del alumno, del color de su curso.
+function avatarAlumno(s){
+  const ini = ((s.apellido || '').trim().charAt(0) + (s.nombre || '').trim().charAt(0)).toUpperCase();
+  return `<span class="avatar-ini c${s.curso}" aria-hidden="true">${escapeHtml(ini)}</span>`;
+}
+function escapeHtml(s){
+  return String(s == null ? '' : s).replace(/[&<>"']/g, c => ({ '&':'&amp;', '<':'&lt;', '>':'&gt;', '"':'&quot;', "'":'&#39;' }[c]));
+}
 function fmtDateShort(iso){
   const d = new Date(iso + 'T00:00:00');
   return `${DOW_FULL[d.getDay()].slice(0,3)} ${d.getDate()}/${d.getMonth()+1}`;
@@ -2113,6 +2218,7 @@ function fmtDateShort(iso){
 function renderJustificativosLista(){
   const students = getStudents().filter(s => s.curso === selectedCurso).sort((a,b)=> a.apellido.localeCompare(b.apellido));
   const rows = students.map(s => `<div class="module-row" data-student="${s.id}">
+      ${avatarAlumno(s)}
       <div class="txt">
         <p class="title">${s.apellido}, ${s.nombre}</p>
         <p class="desc">Cargar certificado</p>
@@ -2305,12 +2411,23 @@ function render(){
   const hb = document.getElementById('histBanner');
   if(hb) hb.classList.toggle('show', !histAsistenciaListo);
   renderInner();
-  if($app && !skipFadeNext){
-    $app.classList.remove('fade-in');
-    void $app.offsetWidth; // reinicia la animación en cada pantalla
-    $app.classList.add('fade-in');
+  const transicion = pendingTransicion;
+  pendingTransicion = null;
+  let clase = null;
+  if(transicion === 'adelante') clase = 'slide-adelante';
+  else if(transicion === 'atras') clase = 'slide-atras';
+  else if(transicion === 'tab' || !primerRenderHecho) clase = 'fade-in';
+  // skipFadeNext solo frena el fundido de un render "en el lugar" (por ejemplo al
+  // escribir en un buscador); un cambio de pantalla siempre anima.
+  if($app && clase && (transicion || !skipFadeNext)){
+    $app.classList.remove('fade-in', 'slide-adelante', 'slide-atras');
+    void $app.offsetWidth; // reinicia la animación
+    $app.classList.add(clase);
   }
+  primerRenderHecho = true;
   skipFadeNext = false;
+  const sh = document.querySelector('.sticky-head');
+  if(sh) sh.classList.toggle('pegado', window.scrollY > 4);
   if(lastFocusedInput){
     const el = document.getElementById(lastFocusedInput.id);
     if(el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA')){
@@ -2328,9 +2445,9 @@ function render(){
 }
 
 function renderInner(){
-  const RUTAS_SOLO_NAPO = ['profesores','profesorNuevo','profesorEditar','lectura','conexionDrive','importar','alumnosCuentas'];
-  if(userRole==='admin' && getUsuario()!=='Napo' && RUTAS_SOLO_NAPO.includes(currentRoute)){
-    currentRoute = 'home';
+  const RUTAS_SOLO_NAPO = ['profesores','profesorNuevo','profesorEditar','lectura','conexionDrive','importar','alumnosCuentas','pendientes'];
+  if(RUTAS_SOLO_NAPO.includes(currentRoute) && (userRole!=='admin' || getUsuario()!=='Napo')){
+    currentRoute = userRole==='admin' ? 'home' : homeRoute();
   }
   if(currentRoute === 'bienvenida'){ currentRoute = 'profesorLogin'; }
   if(currentRoute === 'quien'){ renderQuien(); renderTabbar(); return; }
@@ -2377,6 +2494,7 @@ function renderInner(){
   else if(currentRoute === 'alumnos') renderAlumnos();
   else if(currentRoute === 'horarioEditar') renderHorarioEditar();
   else if(currentRoute === 'entradasEspeciales') renderEntradasEspeciales();
+  else if(currentRoute === 'pendientes') renderPendientes();
   else if(currentRoute === 'sincronizacion') renderSincronizacion();
   else if(currentRoute === 'configAvanzada') renderConfigAvanzada();
   else if(currentRoute === 'calendarioCiclo') renderCalendarioCiclo();
@@ -2443,6 +2561,7 @@ Saludos,`
 function renderFamiliasLista(){
   const students = getStudents().filter(s => s.curso === selectedCurso).sort((a,b)=> a.apellido.localeCompare(b.apellido));
   const rows = students.map(s => `<div class="module-row" data-student="${s.id}">
+      ${avatarAlumno(s)}
       <div class="txt">
         <p class="title">${s.apellido}, ${s.nombre}</p>
         <p class="desc">${s.familyEmails.length} contacto${s.familyEmails.length!==1?'s':''} de familia</p>
@@ -2553,6 +2672,7 @@ function renderResumenLista(){
   const rows = students.map(s => {
     const w = weights[s.id] || 0;
     return `<div class="module-row" data-student="${s.id}">
+      ${avatarAlumno(s)}
       <div class="txt">
         <p class="title">${s.apellido}, ${s.nombre}${buscandoGlobal ? ` <span style="font-weight:400;color:var(--ink-soft);">· ${s.curso}° A</span>` : ''}</p>
         <p class="desc">${w} falta${w!==1?'s':''} en el bimestre</p>
@@ -2604,17 +2724,22 @@ function subjectsAfectadasEnDia(studentId, iso){
   const subjects = subjectsForDay(curso, diaKey);
   const isFullAbsence = (rec.estado==='A'||rec.estado==='J') && !rec.llegoTarde;
   const isParcial = rec.hora && (rec.estado==='T' || (rec.estado==='A' && rec.llegoTarde));
+  const isRetiro = tieneRetiro(rec);
   let affected = [];
   if(isFullAbsence){
     affected = subjects.slice();
-  } else if(isParcial){
+  } else if(isParcial || isRetiro){
     affected = subjects.filter(subj => {
       const entries = (getSchedule()[curso][diaKey]||[]).filter(e=>e.subject===subj);
-      return entries.some(e => { const st=HOUR_TIME[e.hour]; return st && minutesOf(st)<minutesOf(rec.hora); });
+      return entries.some(e => {
+        const st = HOUR_TIME[e.hour];
+        const porLlegada = isParcial && st && minutesOf(st) < minutesOf(rec.hora);
+        return porLlegada || horaPerdidaPorRetiro(rec, e.hour);
+      });
     });
   }
   if(diaKey==='martes' || diaKey==='jueves'){
-    if(isFullAbsence){
+    if(isFullAbsence || efPerdidaPorRetiro(rec, curso)){
       affected.push('ED FIS');
     } else {
       const ef = getEF()[`${iso}|${studentId}`];
@@ -2699,7 +2824,8 @@ function renderDetalleFaltasAlumno(){
     let w = 0;
     if(rec.estado==='A' || rec.estado==='J') w = 1;
     else if(rec.estado==='T') w = 0.5;
-    if(w>0) dias.push({ fecha, w, tipo: rec.estado });
+    w += pesoRetiro(rec);
+    if(w>0) dias.push({ fecha, w, tipo: rec.estado, retiro: tieneRetiro(rec) ? rec.retiro.hora : null });
   });
   Object.entries(efMap).forEach(([key,val]) => {
     const [fecha, sid] = key.split('|');
@@ -2712,7 +2838,8 @@ function renderDetalleFaltasAlumno(){
 
   const rows = dias.map(d => {
     const materias = subjectsAfectadasEnDia(selectedStudentId, d.fecha);
-    const materiasTxt = materias.length ? materias.join(', ') : (d.tipo==='EF' ? 'Ed. Física' : '—');
+    const materiasTxt = (materias.length ? materias.join(', ') : (d.tipo==='EF' ? 'Ed. Física' : '—'))
+      + (d.retiro ? ` · se retiró ${d.retiro}` : '');
     return `<div class="dia-falta-row">
       <span class="dia-falta-fecha">${fmtDateShort(d.fecha)}</span>
       <span class="dia-falta-peso">${d.w}</span>
@@ -4009,6 +4136,7 @@ function renderValoracionesLista(){
     const key = docId(`${s.id}_${window.__valBim}_${slugify(materia)}`);
     const existe = !!cache.valoraciones[key];
     return `<div class="module-row" data-student="${s.id}">
+      ${avatarAlumno(s)}
       <div class="txt">
         <p class="title">${s.apellido}, ${s.nombre}</p>
         <p class="desc">${existe ? 'Cargada' : 'Sin cargar'}</p>
@@ -4906,10 +5034,10 @@ function renderTabbar(){
       <button class="tab ${currentRoute==='resumen'||currentRoute==='resumenAlumno'?'active':''}" id="tabResumen">${icon('chart')}<span>Resumen</span></button>
       <button class="tab ${currentRoute==='agenda'||currentRoute==='agendaNuevo'||currentRoute==='agendaDetalle'?'active':''}" id="tabAgenda">${icon('calendar')}<span>Agenda</span></button>
     `;
-    document.getElementById('tabHome').addEventListener('click', () => navigate('teacherHome'));
-    document.getElementById('tabSanciones').addEventListener('click', () => navigate('sanciones'));
-    document.getElementById('tabResumen').addEventListener('click', () => navigate('resumen'));
-    document.getElementById('tabAgenda').addEventListener('click', () => navigate('agenda'));
+    document.getElementById('tabHome').addEventListener('click', () => navigate('teacherHome', null, 'tab'));
+    document.getElementById('tabSanciones').addEventListener('click', () => navigate('sanciones', null, 'tab'));
+    document.getElementById('tabResumen').addEventListener('click', () => navigate('resumen', null, 'tab'));
+    document.getElementById('tabAgenda').addEventListener('click', () => navigate('agenda', null, 'tab'));
     return;
   }
   if(userRole === 'viewer'){
@@ -4918,9 +5046,9 @@ function renderTabbar(){
       <button class="tab ${currentRoute==='resumen'||currentRoute==='resumenAlumno'?'active':''}" id="tabResumen">${icon('users')}<span>Resumen</span></button>
       <button class="tab ${currentRoute==='detalleAlertas'?'active':''}" id="tabAlertas">${icon('alert')}<span>Alertas</span></button>
     `;
-    document.getElementById('tabHome').addEventListener('click', () => navigate('viewerHome'));
-    document.getElementById('tabResumen').addEventListener('click', () => navigate('resumen'));
-    document.getElementById('tabAlertas').addEventListener('click', () => navigate('detalleAlertas'));
+    document.getElementById('tabHome').addEventListener('click', () => navigate('viewerHome', null, 'tab'));
+    document.getElementById('tabResumen').addEventListener('click', () => navigate('resumen', null, 'tab'));
+    document.getElementById('tabAlertas').addEventListener('click', () => navigate('detalleAlertas', null, 'tab'));
     return;
   }
   if(userRole === 'student'){
@@ -4930,10 +5058,10 @@ function renderTabbar(){
       <button class="tab ${currentRoute==='studentAgenda'?'active':''}" id="tabAgenda">${icon('calendar')}<span>Agenda</span></button>
       <button class="tab ${currentRoute==='studentProfesores'?'active':''}" id="tabProfes">${icon('users')}<span>Profesores</span></button>
     `;
-    document.getElementById('tabHome').addEventListener('click', () => navigate('studentHome'));
-    document.getElementById('tabMio').addEventListener('click', () => { selectedStudentId = currentStudentAuth.studentId; navigate('resumenAlumno'); });
-    document.getElementById('tabAgenda').addEventListener('click', () => navigate('studentAgenda'));
-    document.getElementById('tabProfes').addEventListener('click', () => navigate('studentProfesores'));
+    document.getElementById('tabHome').addEventListener('click', () => navigate('studentHome', null, 'tab'));
+    document.getElementById('tabMio').addEventListener('click', () => { selectedStudentId = currentStudentAuth.studentId; navigate('resumenAlumno', null, 'tab'); });
+    document.getElementById('tabAgenda').addEventListener('click', () => navigate('studentAgenda', null, 'tab'));
+    document.getElementById('tabProfes').addEventListener('click', () => navigate('studentProfesores', null, 'tab'));
     return;
   }
   tb.innerHTML = `
@@ -4943,11 +5071,11 @@ function renderTabbar(){
     <button class="tab ${currentRoute==='agenda'||currentRoute==='agendaNuevo'||currentRoute==='agendaDetalle'?'active':''}" id="tabAgenda">${icon('clipboard')}<span>Agenda</span></button>
     <button class="tab ${currentRoute==='config'?'active':''}" id="tabConfig">${icon('gear')}<span>Config</span></button>
   `;
-  document.getElementById('tabHome').addEventListener('click', () => navigate('home'));
-  document.getElementById('tabAsist').addEventListener('click', () => navigate('asistencia'));
-  document.getElementById('tabHorarios').addEventListener('click', () => navigate('horarios'));
-  document.getElementById('tabAgenda').addEventListener('click', () => navigate('agenda'));
-  document.getElementById('tabConfig').addEventListener('click', () => navigate('config'));
+  document.getElementById('tabHome').addEventListener('click', () => navigate('home', null, 'tab'));
+  document.getElementById('tabAsist').addEventListener('click', () => navigate('asistencia', null, 'tab'));
+  document.getElementById('tabHorarios').addEventListener('click', () => navigate('horarios', null, 'tab'));
+  document.getElementById('tabAgenda').addEventListener('click', () => navigate('agenda', null, 'tab'));
+  document.getElementById('tabConfig').addEventListener('click', () => navigate('config', null, 'tab'));
 }
 
 // ---------- Identidad (PIN + Napo/Vicky) ----------
@@ -5707,6 +5835,73 @@ function renderEntradasEspeciales(){
   });
 }
 
+// ---------- Pendientes del preceptor (solo Napo) ----------
+// Recordatorios personales: se cargan hoy y llegan como notificación a las 8:00 del
+// siguiente día de clase (si se cargan un viernes, llegan el lunes). El aviso lo manda
+// la tarea programada de las 8:00 que ya existía, así que no agrega costo.
+function proximoDiaDeClase(desdeISO){
+  const d = new Date(desdeISO + 'T12:00:00');
+  for(let i = 0; i < 14; i++){
+    d.setDate(d.getDate() + 1);
+    const iso = localISODate(d);
+    const dow = d.getDay();
+    if(dow !== 0 && dow !== 6 && !FERIADOS_2026.has(iso)) return iso;
+  }
+  d.setDate(d.getDate() + 1);
+  return localISODate(d);
+}
+
+async function agregarPendiente(){
+  const input = document.getElementById('nuevoPendiente');
+  const texto = (input && input.value || '').trim();
+  if(!texto){ if(input) input.focus(); return; }
+  const fecha = proximoDiaDeClase(todayISO());
+  try{
+    await addDoc(collection(db,'pendientes'), { texto, fecha, notificado: false, creadoEn: Date.now(), usuario: getUsuario() });
+    if(input) input.value = '';
+    showToast(`Te llega el ${fmtDateShort(fecha)} a las 8:00`);
+  }catch(err){ showSaveError(err); }
+}
+
+async function borrarPendiente(id){
+  if(!(await customConfirm('¿Borrar este pendiente?', { peligro: true, textoSi: 'Borrar' }))) return;
+  deleteDoc(doc(db,'pendientes', id)).catch(err => showSaveError(err));
+}
+
+function renderPendientes(){
+  const todos = Object.values(cache.pendientes);
+  const porLlegar = todos.filter(p => !p.notificado).sort((a,b) => a.fecha.localeCompare(b.fecha) || a.creadoEn - b.creadoEn);
+  const enviados = todos.filter(p => p.notificado).sort((a,b) => b.fecha.localeCompare(a.fecha)).slice(0, 15);
+  const fila = (p) => `
+    <div class="sancion-item">
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;">
+        <div style="flex:1;min-width:0;">
+          <p class="folio" style="white-space:normal;">${escapeHtml(p.texto)}</p>
+          <p class="motivo">${p.notificado ? 'Enviado el' : 'Te llega el'} ${fmtDateShort(p.fecha)}${p.notificado ? '' : ' a las 8:00'}</p>
+        </div>
+        <button class="borrar-btn" data-borrar-pend="${p.id}">${icon('trash')}</button>
+      </div>
+    </div>`;
+
+  $app.innerHTML = `
+    <div class="appbar" style="padding:0 0 10px;">
+      <button class="back-btn" id="backBtn">${icon('back')}</button>
+      <h1>Pendientes</h1>
+    </div>
+    <p class="info-note" style="margin-top:0;">${icon('bell')}Lo que anotes acá te llega como notificación a las 8:00 del próximo día de clase. Solo lo ves vos.</p>
+    <div class="config-card" style="margin-bottom:18px;">
+      <textarea id="nuevoPendiente" rows="2" placeholder="Ej: llamar a la familia de Pérez por las faltas"></textarea>
+      <button class="btn-primary" id="agregarPendienteBtn" style="width:100%;margin-top:10px;">Agregar · llega el ${fmtDateShort(proximoDiaDeClase(todayISO()))}</button>
+    </div>
+    <p class="section-label">Por llegar (${porLlegar.length})</p>
+    ${porLlegar.length ? `<div class="sancion-list" style="margin-bottom:18px;">${porLlegar.map(fila).join('')}</div>` : `<p class="empty-inline" style="margin-bottom:18px;">No tenés pendientes cargados.</p>`}
+    ${enviados.length ? `<p class="section-label">Ya enviados</p><div class="sancion-list">${enviados.map(fila).join('')}</div>` : ''}
+  `;
+  document.getElementById('backBtn').addEventListener('click', () => goBack('home'));
+  document.getElementById('agregarPendienteBtn').addEventListener('click', agregarPendiente);
+  document.querySelectorAll('[data-borrar-pend]').forEach(b => b.addEventListener('click', () => borrarPendiente(b.dataset.borrarPend)));
+}
+
 function renderConfig(){
   const cfg = getConfig();
   const esNapo = getUsuario()==='Napo';
@@ -5718,7 +5913,16 @@ function renderConfig(){
     <p class="section-label">Tu cuenta</p>
     <div class="config-card">
       <p class="v" style="margin-bottom:10px;">Estás como <b>${getUsuario()}</b>.</p>
-      <button class="btn-secondary" id="cambiarUsuarioBtn" style="width:100%;">Cambiar usuario</button>
+      <div style="display:flex;gap:8px;">
+        <button class="btn-secondary" id="cambiarUsuarioBtn" style="flex:1;">Cambiar usuario</button>
+        <button class="btn-secondary" id="cerrarSesionBtn" style="flex:1;color:var(--stamp);">Cerrar sesión</button>
+      </div>
+    </div>
+
+    <p class="section-label" style="margin-top:20px;">Apariencia</p>
+    <div class="config-card">
+      ${pillBtnRow('tema', [{value:'auto',label:'Automático'},{value:'claro',label:'Claro'},{value:'oscuro',label:'Oscuro'}], getTema())}
+      <p style="font-size:11.5px;color:var(--ink-soft);margin:8px 0 0;">"Automático" sigue lo que tenga configurado el celular. Se guarda en este dispositivo.</p>
     </div>
 
     ${esNapo ? `
@@ -5732,32 +5936,46 @@ function renderConfig(){
       <p style="font-size:11.5px;color:var(--ink-soft);margin:8px 0 12px;">Es la contraseña con la que se crean las cuentas de alumnos en la carga masiva (en "Cuentas de alumnos"). Cada alumno la puede cambiar después por su cuenta.</p>
       <button class="btn-primary" id="guardarConfigBtn" style="width:100%;">Guardar</button>
     </div>
-    ` : ''}
 
-    ${esNapo ? `
-    <p class="section-label" style="margin-top:20px;">Mantenimiento</p>
-    <div class="config-card">
+    <p class="section-label" style="margin-top:20px;">Personas y cuentas</p>
+    <div class="module-list">
+      ${moduleRow('users','Alumnos','Agregar, editar o dar de baja', 'alumnos')}
+      ${moduleRow('users','Cuentas de alumnos','Accesos de los alumnos a la app', 'alumnosCuentas')}
+      ${moduleRow('users','Profesores','Cuentas y materias de cada profesor', 'profesores')}
+      ${moduleRow('users','Cuentas de solo lectura','Directivos y otros accesos de consulta', 'lectura')}
+    </div>
+
+    <p class="section-label" style="margin-top:20px;">Colegio</p>
+    <div class="module-list">
+      ${moduleRow('calendar','Horario de materias','Qué materia y profesor va en cada hora', 'horarioEditar')}
+      ${moduleRow('clock','Entradas especiales','Las cargadas, para revisar o borrar', 'entradasEspeciales')}
+      ${moduleRow('calendar','Feriados, bimestres y umbrales','Calendario, horas de clase y alertas', 'configAvanzada')}
+    </div>
+
+    <p class="section-label" style="margin-top:20px;">Datos</p>
+    <div class="module-list">
+      ${moduleRow('file','Conexión con Drive','Emparejar y sincronizar faltas con Excel', 'conexionDrive')}
+      ${moduleRow('file','Importar histórico','Cargar asistencia y datos desde archivo', 'importar')}
+      ${moduleRow('clock','Última sincronización','Cuándo se actualizó cada parte de la app', 'sincronizacion')}
+      ${moduleRow('clipboard','Registro de actividad','Quién cambió qué y cuándo', 'auditoria')}
+    </div>
+    <div class="config-card" style="margin-top:10px;">
+      <p style="font-size:12.5px;color:var(--ink-soft);margin-bottom:10px;">Importar notas desde un archivo (reemplaza TODAS las notas actuales).</p>
+      <input type="file" id="notasImportInput" accept="application/json" style="margin-bottom:10px;">
+      <p id="notasImportEstado" style="font-size:12px;color:var(--ink-soft);"></p>
+    </div>
+    <div class="config-card" style="margin-top:10px;">
       <p style="font-size:12.5px;color:var(--ink-soft);margin-bottom:10px;">Actualiza los registros viejos de asistencia para que tengan el dato del alumno guardado correctamente (necesario para el acceso de alumnos).</p>
       <button class="btn-secondary" id="migrarBtn" style="width:100%;">Actualizar registros viejos</button>
       <p id="migracionEstado" style="font-size:12px;color:var(--ink-soft);margin-top:8px;"></p>
     </div>
-    <button class="btn-secondary" id="irAlumnosBtn" style="width:100%;margin-top:10px;">Alumnos (agregar / dar de baja)</button>
-    <button class="btn-secondary" id="irProfesoresCfgBtn" style="width:100%;margin-top:10px;">Profesores</button>
-    <button class="btn-secondary" id="irViewersBtn" style="width:100%;margin-top:10px;">Cuentas de solo lectura</button>
-    <button class="btn-secondary" id="irHorarioEditarBtn" style="width:100%;margin-top:10px;">Horario de materias</button>
-    <button class="btn-secondary" id="irEntradasEspecialesBtn" style="width:100%;margin-top:10px;">Entradas especiales cargadas</button>
-    <button class="btn-secondary" id="irSincronizacionBtn" style="width:100%;margin-top:10px;">Última sincronización</button>
-    <button class="btn-secondary" id="irAuditoriaBtn" style="width:100%;margin-top:10px;">Ver registro de actividad</button>
-    <button class="btn-secondary" id="irAvanzadaBtn" style="width:100%;margin-top:10px;">Feriados, bimestres, horarios y umbrales</button>
-    <button class="btn-secondary" id="irRespaldoBtn" style="width:100%;margin-top:10px;">Descargar respaldo completo (Excel)</button>
-    <p class="section-label" style="margin-top:16px;">Respaldos por separado</p>
-    <button class="btn-secondary" id="irRespaldoSancionesBtn" style="width:100%;">Sanciones (Excel)</button>
-    <button class="btn-secondary" id="irRespaldoCertificadosBtn" style="width:100%;margin-top:10px;">Certificados (Excel)</button>
-    <button class="btn-secondary" id="irRespaldoTramitesBtn" style="width:100%;margin-top:10px;">Trámites (Excel)</button>
-    <div class="config-card" style="margin-top:16px;">
-      <p style="font-size:12.5px;color:var(--ink-soft);margin-bottom:10px;">Importar notas desde un archivo (reemplaza TODAS las notas actuales).</p>
-      <input type="file" id="notasImportInput" accept="application/json" style="margin-bottom:10px;">
-      <p id="notasImportEstado" style="font-size:12px;color:var(--ink-soft);"></p>
+
+    <p class="section-label" style="margin-top:20px;">Respaldos</p>
+    <button class="btn-secondary" id="irRespaldoBtn" style="width:100%;">Respaldo completo (Excel)</button>
+    <div style="display:flex;gap:8px;margin-top:10px;">
+      <button class="btn-secondary" id="irRespaldoSancionesBtn" style="flex:1;">Sanciones</button>
+      <button class="btn-secondary" id="irRespaldoCertificadosBtn" style="flex:1;">Certificados</button>
+      <button class="btn-secondary" id="irRespaldoTramitesBtn" style="flex:1;">Trámites</button>
     </div>
     ` : ''}
 
@@ -5772,6 +5990,9 @@ function renderConfig(){
     currentRoute = 'quien';
     render();
   });
+  document.getElementById('cerrarSesionBtn').addEventListener('click', cerrarSesionAdmin);
+  attachPillBtns('tema', (v) => { setTema(v); render(); });
+  attachModuleHandlers();
   if(document.getElementById('guardarConfigBtn')){
     document.getElementById('guardarConfigBtn').addEventListener('click', guardarConfigGeneral);
   }

@@ -18,8 +18,10 @@
   --ruled-rgb:31,42,58;
 }
 
+/* Modo oscuro: automático según el celular, salvo que en Configuración se haya
+   elegido Claro (data-tema="claro") u Oscuro (data-tema="oscuro"). */
 @media (prefers-color-scheme: dark){
-  :root{
+  :root:not([data-tema="claro"]){
     --ink:#EDE9DD;
     --ink-soft:#9BA3B0;
     --paper:#161B23;
@@ -36,6 +38,22 @@
     --ruled-rgb:255,255,255;
   }
 }
+:root[data-tema="oscuro"]{
+  --ink:#EDE9DD;
+  --ink-soft:#9BA3B0;
+  --paper:#161B23;
+  --paper-2:#10141A;
+  --card:#20262F;
+  --border:#333B48;
+  --stamp:#E08D71;
+  --stamp-bg:#3A2621;
+  --sage:#84BC9E;
+  --sage-bg:#1E2E27;
+  --gold:#DCBB6E;
+  --gold-bg:#39311D;
+  --noise-rgb:1, 1, 1;
+  --ruled-rgb:255,255,255;
+}
 *{box-sizing:border-box;}
 html,body{margin:0;padding:0;}
 body{
@@ -48,8 +66,13 @@ body{
   overscroll-behavior-y:none;
 }
 @media (prefers-color-scheme: dark){
-  body{ background-image:none; }
+  :root:not([data-tema="claro"]) body{ background-image:none; }
 }
+:root[data-tema="oscuro"] body{ background-image:none; }
+/* Que los controles nativos (selector de fecha, listas) acompañen el tema elegido. */
+:root{ color-scheme: light dark; }
+:root[data-tema="claro"]{ color-scheme: light; }
+:root[data-tema="oscuro"]{ color-scheme: dark; }
 
 .brand-bar{
   display:flex;align-items:center;gap:8px;
@@ -332,6 +355,10 @@ main.fade-in{animation:screenFadeIn 0.22s ease;}
 .state-btn[disabled]{background:transparent;border-style:dashed;border-color:var(--border);color:#B7AF9A;opacity:1;cursor:default;}
 .hora-btn{display:flex;align-items:center;justify-content:center;color:var(--ink-soft);}
 .hora-btn svg{width:16px;height:16px;}
+/* Retiro anticipado */
+.student-card .meta.retiro-meta{color:var(--gold);cursor:pointer;}
+.student-card .retiro-link{color:var(--ink-soft);opacity:.75;cursor:pointer;text-decoration:underline dotted;padding:2px 0;}
+.student-card .retiro-link svg{width:10px;height:10px;}
 .curso-check-label{display:inline-flex;align-items:center;gap:6px;font-size:13px;white-space:nowrap;flex:0 0 auto;}
 .curso-check-label input{flex-shrink:0;margin:0;width:16px;height:16px;}
 
@@ -579,3 +606,67 @@ textarea{resize:vertical;}
   .boletin-page:last-child{break-after:auto;}
 }
 .boletin-page{margin-bottom:24px;}
+
+
+/* ---------- Inicio en grilla ---------- */
+.module-grid{
+  display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:4px;
+}
+.module-tile{
+  position:relative;
+  display:flex;flex-direction:column;align-items:flex-start;justify-content:space-between;gap:12px;
+  min-height:96px;padding:14px 14px 13px;
+  background:var(--card);border:0.5px solid var(--border);border-radius:14px;
+  box-shadow:0 1px 2px rgba(31,42,58,0.05);
+  font:inherit;color:var(--ink);text-align:left;cursor:pointer;
+  transition:transform .12s ease, box-shadow .12s ease;
+}
+.module-tile:active{transform:scale(0.97);box-shadow:none;}
+.module-tile .icon-chip{margin:0;}
+.module-tile .tile-title{font-size:13.5px;font-weight:600;line-height:1.25;}
+.module-tile .tile-badge{
+  position:absolute;top:10px;right:10px;
+  min-width:20px;height:20px;padding:0 6px;border-radius:10px;
+  background:var(--stamp);color:#fff;font-size:11px;font-weight:600;
+  display:flex;align-items:center;justify-content:center;
+}
+
+/* ---------- Transiciones entre pantallas ---------- */
+/* Al entrar a una pantalla se desliza desde la derecha; al volver, desde la izquierda.
+   overflow-x:clip en el body evita la barra horizontal durante el deslizamiento sin
+   crear un contenedor de scroll (que rompería el encabezado fijo). */
+body{overflow-x:clip;}
+main.slide-adelante{animation:slideAdelante .26s cubic-bezier(.2,.7,.3,1);}
+main.slide-atras{animation:slideAtras .26s cubic-bezier(.2,.7,.3,1);}
+@keyframes slideAdelante{ from{transform:translateX(24%);opacity:0;} to{transform:none;opacity:1;} }
+@keyframes slideAtras{ from{transform:translateX(-24%);opacity:0;} to{transform:none;opacity:1;} }
+@media (prefers-reduced-motion: reduce){
+  main.slide-adelante, main.slide-atras, main.fade-in{animation:none;}
+}
+
+/* ---------- Encabezado fijo en Asistencia diaria ---------- */
+.sticky-head{
+  position:sticky;
+  top:calc(env(safe-area-inset-top) + 40px); /* debajo de la franja fija de arriba */
+  z-index:15;
+  margin:0 -18px;padding:0 18px 8px;
+  background:var(--paper);
+  border-bottom:0.5px solid transparent;
+  transition:border-color .15s, box-shadow .15s;
+}
+.sticky-head.pegado{border-bottom-color:var(--border);box-shadow:0 6px 12px -10px rgba(0,0,0,0.25);}
+
+/* ---------- Iniciales de color de cada alumno ---------- */
+.avatar-ini{
+  display:inline-flex;align-items:center;justify-content:center;flex-shrink:0;
+  width:28px;height:28px;border-radius:50%;
+  font-size:11px;font-weight:600;letter-spacing:0.3px;color:#fff;
+  margin-right:9px;vertical-align:middle;
+}
+.avatar-ini.c1{background:#5C6F80;}
+.avatar-ini.c2{background:#5C7F6B;}
+.avatar-ini.c3{background:#9B7418;}
+.avatar-ini.c4{background:#8A5A44;}
+.avatar-ini.c5{background:#6B5B8A;}
+.module-row .avatar-ini{margin-right:0;}
+.student-card .row .avatar-ini{margin-right:0;width:26px;height:26px;font-size:10.5px;}
