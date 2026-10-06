@@ -24,6 +24,7 @@ import {
 import {
   getMessaging, getToken, onMessage, isSupported as messagingIsSupported
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-messaging.js";
+import { getFunctions, httpsCallable } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-functions.js";
 
 // Clave pública VAPID para notificaciones push (Firebase Console → Configuración del
 // proyecto → Cloud Messaging → Certificados push web → "Generar par de claves").
@@ -39,17 +40,13 @@ const firebaseConfig = {
   appId: "1:1052109436240:web:f5e6a49100db6fb85d6855"
 };
 
-// ---------- Google Drive / Sheets (sincronización de faltas a los Excel del colegio) ----------
-const GOOGLE_CLIENT_ID = "847063469157-7o02cri2bhusekpo2qicqtini48u0vbr.apps.googleusercontent.com";
-const GOOGLE_SCOPES = "https://www.googleapis.com/auth/drive.readonly https://www.googleapis.com/auth/spreadsheets";
+// ---------- Google Drive / Sheets (sincronización de faltas a las planillas del colegio) ----------
+// La sincronización la hace el servidor (Cloud Function "sincronizarDrive") con la cuenta
+// robot del proyecto, así que la app ya no inicia sesión con Google.
 const DRIVE_ROOT_FOLDER_ID = "1RdXfK8BOS_Tj4RTT-DCcCGMwHSsqBZGt";
 
-let gapiListo = false;
-let gisListo = false;
-let googleTokenClient = null;
-let driveConectado = false;
-
 const fbApp = initializeApp(firebaseConfig);
+const fbFunctions = getFunctions(fbApp, 'southamerica-east1');
 const auth = getAuth(fbApp);
 setPersistence(auth, browserLocalPersistence).catch(err=>console.error(err));
 // App secundaria: se usa SOLO para crear cuentas de profesor sin cerrar la sesión del admin
@@ -3268,62 +3265,11 @@ function renderProfesores(){
   });
 }
 
-// ---------- Conexión con Google ----------
+// ---------- Conexión con Drive (vía servidor) ----------
 function normalizeNombre(s){
   return String(s).trim().toLowerCase()
-    .normalize('NFD').replace(/[\u0300-\u036f]/g,'')
+    .normalize('NFD').replace(/[̀-ͯ]/g,'')
     .replace(/[^a-z ,]/g,' ').replace(/\s+/g,' ').trim();
-}
-
-window.onGapiLoad = function(){
-  gapi.load('client', async () => {
-    await gapi.client.init({});
-    await gapi.client.load('https://sheets.googleapis.com/$discovery/rest?version=v4');
-    await gapi.client.load('https://www.googleapis.com/discovery/v1/apis/drive/v3/rest');
-    gapiListo = true;
-  });
-};
-if(window.gapi) window.onGapiLoad();
-else window.addEventListener('load', () => { if(window.gapi) window.onGapiLoad(); });
-
-function initGoogleTokenClient(){
-  if(gisListo || !window.google || !google.accounts) return;
-  googleTokenClient = google.accounts.oauth2.initTokenClient({
-    client_id: GOOGLE_CLIENT_ID,
-    scope: GOOGLE_SCOPES,
-    callback: (resp) => {
-      if(resp.error){ customAlert('No se pudo conectar con Google: ' + resp.error); return; }
-      gapi.client.setToken({ access_token: resp.access_token });
-      driveConectado = true;
-      showToast('Conectado con Google Drive');
-      render();
-    },
-  });
-  gisListo = true;
-}
-
-async function conectarDrive(){
-  initGoogleTokenClient();
-  if(!gapiListo || !googleTokenClient){
-    await customAlert('Todavía está cargando Google, esperá unos segundos y volvé a tocar el botón.');
-    return;
-  }
-  googleTokenClient.requestAccessToken({ prompt: driveConectado ? '' : 'consent' });
-}
-
-async function listarSubcarpetas(parentId){
-  const res = await gapi.client.drive.files.list({
-    q: `'${parentId}' in parents and mimeType='application/vnd.google-apps.folder' and trashed=false`,
-    fields: 'files(id,name)', pageSize: 100
-  });
-  return res.result.files || [];
-}
-async function listarPlanillas(folderId){
-  const res = await gapi.client.drive.files.list({
-    q: `'${folderId}' in parents and mimeType='application/vnd.google-apps.spreadsheet' and trashed=false`,
-    fields: 'files(id,name)', pageSize: 200
-  });
-  return res.result.files || [];
 }
 
 function cursoDesdeNombreCarpeta(nombre){
@@ -3351,119 +3297,56 @@ function emparejarAlumno(nombreArchivo, curso){
   return (conNombre[0] || candidatos[0]);
 }
 
-async function escanearCarpetaDrive(){
-  if(!driveConectado){ await customAlert('Primero conectá con Google Drive.'); return; }
-  const estadoEl = document.getElementById('driveEstado');
-  if(estadoEl) estadoEl.textContent = 'Buscando subcarpetas por curso...';
-  try{
-    const subcarpetas = await listarSubcarpetas(DRIVE_ROOT_FOLDER_ID);
-    const relevantes = subcarpetas.filter(f => cursoDesdeNombreCarpeta(f.name));
-    if(relevantes.length === 0){
-      if(estadoEl) estadoEl.textContent = 'No encontré subcarpetas con nombre de curso (ej: "1ER AÑO"). Revisá los nombres en Drive.';
-      return;
-    }
-    const mapeo = {};
-    const sinMatch = [];
-    let totalArchivos = 0;
-    for(const carpeta of relevantes){
-      const curso = cursoDesdeNombreCarpeta(carpeta.name);
-      if(estadoEl) estadoEl.textContent = `Revisando ${carpeta.name}...`;
-      const archivos = await listarPlanillas(carpeta.id);
-      totalArchivos += archivos.length;
-      archivos.forEach(a => {
-        const alumno = emparejarAlumno(a.name, curso);
-        if(alumno) mapeo[alumno.id] = { spreadsheetId: a.id, nombreArchivo: a.name, curso };
-        else sinMatch.push(`${carpeta.name} / ${a.name}`);
-      });
-    }
-    window.__driveMapeoPendiente = { mapeo, sinMatch, totalArchivos };
-    if(estadoEl){
-      estadoEl.innerHTML = `Encontrados ${totalArchivos} archivos en ${relevantes.length} carpetas.<br>
-        Emparejados con un alumno: <b>${Object.keys(mapeo).length}</b><br>
-        Sin poder emparejar: <b>${sinMatch.length}</b>${sinMatch.length ? '<br>' + sinMatch.slice(0,15).map(x=>'· '+x).join('<br>') : ''}`;
-    }
-    document.getElementById('guardarMapeoBtn').style.display = 'block';
-  }catch(err){
-    console.error(err);
-    if(estadoEl) estadoEl.textContent = 'Hubo un error buscando en Drive: ' + (err.result ? err.result.error.message : err.message);
+// Llama a la Cloud Function. Puede tardar varios minutos si hay mucho pendiente.
+async function llamarDrive(datos){
+  const fn = httpsCallable(fbFunctions, 'sincronizarDrive', { timeout: 540000 });
+  const r = await fn(datos);
+  return r.data;
+}
+
+// Traduce los errores de Google a algo que se entienda y diga qué hacer.
+function explicarErrorDrive(msg){
+  msg = String(msg || '');
+  if(msg.startsWith('API_DESHABILITADA')){
+    return 'Falta activar las APIs de Google Sheets y Google Drive en el proyecto (se hace una sola vez). Abrí los dos enlaces de abajo y tocá "Habilitar" en cada uno.';
   }
-}
-
-function guardarMapeoDrive(){
-  const pendiente = window.__driveMapeoPendiente;
-  if(!pendiente) return;
-  const ops = Object.entries(pendiente.mapeo).map(([studentId, info]) =>
-    setDoc(doc(db,'driveMapping', studentId), info)
-  );
-  Promise.all(ops).then(() => showToast('Emparejamiento guardado')).catch(err=>showSaveError(err));
-}
-
-// Busca la próxima fila vacía mirando SOLO la columna B (fecha), para no confundirse
-// con fórmulas de otras columnas (como la de faltas acumuladas) que bajan mucho más.
-async function proximaFilaLibre(spreadsheetId){
-  const res = await gapi.client.sheets.spreadsheets.values.get({
-    spreadsheetId, range: "'2026'!B:B"
-  });
-  const valores = res.result.values || [];
-  let ultima = 0;
-  valores.forEach((fila, idx) => { if(fila[0] !== undefined && fila[0] !== '') ultima = idx + 1; });
-  return ultima + 1; // fila 1-indexed siguiente a la última con fecha
-}
-
-async function escribirFilaSheet(spreadsheetId, fechaTexto, tipo, peso){
-  const fila = await proximaFilaLibre(spreadsheetId);
-  await gapi.client.sheets.spreadsheets.values.update({
-    spreadsheetId,
-    range: `'2026'!B${fila}:D${fila}`,
-    valueInputOption: 'USER_ENTERED',
-    resource: { values: [[fechaTexto, tipo, peso===undefined?'':peso]] }
-  });
-}
-
-async function probarEscrituraSheet(studentId){
-  const estadoEl = document.getElementById('pruebaEstado');
-  const info = cache.driveMapping[studentId];
-  if(!info){ if(estadoEl) estadoEl.textContent = 'Este alumno no tiene planilla emparejada.'; return; }
-  if(estadoEl) estadoEl.textContent = 'Escribiendo...';
-  try{
-    const fechaTexto = fmtDateShort(todayISO());
-    await escribirFilaSheet(info.spreadsheetId, fechaTexto, 'PRUEBA — se puede borrar esta fila', '');
-    if(estadoEl) estadoEl.innerHTML = '✓ Escrita justo debajo de la última fecha cargada. Andá a revisar la planilla de ese alumno en Drive y confirmá que quedó en el lugar correcto. Después borrala a mano.';
-  }catch(err){
-    console.error(err);
-    if(estadoEl) estadoEl.textContent = 'Error al escribir: ' + (err.result ? err.result.error.message : err.message);
+  if(msg.startsWith('SIN_ACCESO')){
+    return 'La cuenta robot todavía no ve la carpeta. Revisá que esté compartida con la dirección de arriba como Editor.';
   }
+  return msg;
 }
 
-// Traduce el estado interno de la app al vocabulario que ya usás en tus planillas
-function filaParaSheet(rec, tipoManual){
-  if(tipoManual) return { tipo: tipoManual, peso: '' };
-  if(rec.exencion) return { tipo: rec.exencion, peso: '' };
-  if(rec.estado === 'A') return { tipo: 'Clase', peso: 1 };
-  if(rec.estado === 'J') return { tipo: 'Clase (Justificado)', peso: 1 };
-  if(rec.estado === 'T') return { tipo: 'Tarde', peso: 0.5 };
-  if(rec.estado === 'TJ') return { tipo: 'Tarde (Justificado)', peso: '' };
-  return null; // Presente no se escribe (igual que en tu Excel: solo figuran los ausentes)
+// Filas que va a generar cada registro (mismo criterio que el servidor), solo para
+// contar lo pendiente: presente no se escribe, tarde + retiro son dos filas.
+function filasPlanilla(rec){
+  let n = 0;
+  if(rec.exencion || rec.estado === 'A' || rec.estado === 'J' || rec.estado === 'T' || rec.estado === 'TJ') n++;
+  if(tieneRetiro(rec)) n++;
+  return n;
 }
 
 function registrosPendientesDeSync(){
-  const pendientesAsistencia = [];
-  Object.entries(cache.attendance).forEach(([key, rec]) => {
+  const asistencia = [];
+  let filas = 0;
+  Object.entries(cache.attendance).forEach(([id, rec]) => {
     if(rec.driveSynced) return;
-    const [fecha, studentId] = key.split('|');
+    const studentId = rec.studentId || id.split('|')[1];
     if(!cache.driveMapping[studentId]) return;
-    const fila = filaParaSheet(rec);
-    if(!fila) return;
-    pendientesAsistencia.push({ key, studentId, fecha, fila });
+    const n = filasPlanilla(rec);
+    if(!n) return;
+    asistencia.push(id);
+    filas += n;
   });
-  const pendientesEF = [];
+  const ef = [];
   Object.entries(cache.ef).forEach(([key, rec]) => {
     if(rec.driveSynced) return;
     const [fecha, studentId] = key.split('|');
     if(!cache.driveMapping[studentId]) return;
-    pendientesEF.push({ key, studentId, fecha, tipo: rec.tipo });
+    if(rec.tipo !== 'falta' && rec.tipo !== 'saf') return;
+    ef.push(docId(`${fecha}_${studentId}`));
+    filas++;
   });
-  return { pendientesAsistencia, pendientesEF };
+  return { asistencia, ef, filas };
 }
 
 async function marcarTodoComoYaSincronizado(){
@@ -3504,139 +3387,181 @@ async function marcarTodoComoYaSincronizado(){
   }
 }
 
-function esperar(ms){ return new Promise(resolve => setTimeout(resolve, ms)); }
-function conTimeout(promise, ms){
-  return Promise.race([
-    promise,
-    new Promise((_, reject) => setTimeout(() => reject(new Error('TIMEOUT: no respondió Google a tiempo')), ms))
-  ]);
+let driveInfo = { email: null, acceso: null, error: null, subcarpetas: 0, cargando: false };
+let driveMapeoPendiente = null;
+let driveTrabajando = false;
+
+async function cargarEstadoDrive(probarCarpeta){
+  driveInfo.cargando = true; render();
+  try{
+    const r = await llamarDrive({ accion: 'estado', carpetaId: probarCarpeta ? DRIVE_ROOT_FOLDER_ID : undefined });
+    driveInfo.email = r.email || driveInfo.email;
+    if(probarCarpeta){
+      driveInfo.acceso = !!r.acceso;
+      driveInfo.error = r.acceso ? null : explicarErrorDrive(r.error);
+      driveInfo.errorCrudo = r.acceso ? null : String(r.error || '');
+      driveInfo.subcarpetas = r.subcarpetas || 0;
+    }
+  }catch(err){
+    driveInfo.error = 'No se pudo hablar con el servidor: ' + (err.message || err);
+  }
+  driveInfo.cargando = false; render();
 }
-function esErrorDeAutenticacion(err){
-  const status = (err && err.status) || (err && err.result && err.result.error && err.result.error.status);
-  const code = err && err.result && err.result.error && err.result.error.code;
-  return status === 'UNAUTHENTICATED' || status === 'PERMISSION_DENIED' || code === 401 || code === 403;
-}
 
-let syncCancelado = false;
-
-async function sincronizarPendientesConDrive(){
-  if(!driveConectado){ await customAlert('Primero conectá con Google Drive.'); return; }
-  const { pendientesAsistencia, pendientesEF } = registrosPendientesDeSync();
-  const total = pendientesAsistencia.length + pendientesEF.length;
-  const estadoEl = document.getElementById('syncEstado');
-  if(total === 0){ if(estadoEl) estadoEl.textContent = 'No hay nada pendiente para sincronizar.'; return; }
-  syncCancelado = false;
-  const cancelarBtn = document.getElementById('cancelarSyncBtn');
-  if(cancelarBtn) cancelarBtn.style.display = 'block';
-  if(estadoEl) estadoEl.textContent = `Sincronizando ${total} registros...`;
-  let ok = 0, error = 0, cortadoPorAuth = false;
-
-  async function procesar(spreadsheetId, fechaTexto, tipo, peso){
-    await conTimeout(escribirFilaSheet(spreadsheetId, fechaTexto, tipo, peso), 15000);
+async function emparejarPlanillasDrive(){
+  if(driveTrabajando) return;
+  driveTrabajando = true;
+  const estado = document.getElementById('emparejarEstado');
+  if(estado) estado.textContent = 'Buscando planillas en Drive...';
+  try{
+    const r = await llamarDrive({ accion: 'listar', carpetaId: DRIVE_ROOT_FOLDER_ID });
+    const mapeo = {}; const sinMatch = []; let total = 0; let carpetasCurso = 0;
+    r.carpetas.forEach(c => {
+      const curso = cursoDesdeNombreCarpeta(c.name);
+      if(!curso) return;
+      carpetasCurso++;
+      c.archivos.forEach(a => {
+        total++;
+        const alumno = emparejarAlumno(a.name, curso);
+        if(alumno) mapeo[alumno.id] = { spreadsheetId: a.id, nombreArchivo: a.name, curso };
+        else sinMatch.push(`${c.name} / ${a.name}`);
+      });
+    });
+    driveMapeoPendiente = { mapeo, sinMatch, total, carpetasCurso };
+  }catch(err){
+    driveMapeoPendiente = null;
+    if(estado) estado.textContent = explicarErrorDrive(err.message);
+    driveTrabajando = false;
+    return;
   }
-
-  for(const p of pendientesAsistencia){
-    if(syncCancelado) break;
-    if(!cache.driveMapping[p.studentId]) continue;
-    try{
-      await procesar(cache.driveMapping[p.studentId].spreadsheetId, fmtDateShort(p.fecha), p.fila.tipo, p.fila.peso);
-      await setDoc(doc(db,'attendance', docId(p.key)), { driveSynced: true }, { merge: true });
-      tocarHistorico(p.key, { driveSynced: true }); // puede ser una fecha vieja
-      ok++;
-    }catch(err){
-      console.error(err);
-      error++;
-      if(esErrorDeAutenticacion(err)){ cortadoPorAuth = true; break; }
-    }
-    if(estadoEl) estadoEl.textContent = `Sincronizando... ${ok+error}/${total}`;
-    await esperar(300);
-  }
-  if(!cortadoPorAuth){
-    for(const p of pendientesEF){
-      if(syncCancelado) break;
-      if(!cache.driveMapping[p.studentId]) continue;
-      try{
-        const etiqueta = p.tipo === 'saf' ? 'SAF' : 'Ed. fisica';
-        const peso = p.tipo === 'saf' ? '' : 0.5;
-        await procesar(cache.driveMapping[p.studentId].spreadsheetId, fmtDateShort(p.fecha), etiqueta, peso);
-        await setDoc(doc(db,'ef', docId(`${p.fecha}_${p.studentId}`)), { driveSynced: true }, { merge: true });
-        ok++;
-      }catch(err){
-        console.error(err);
-        error++;
-        if(esErrorDeAutenticacion(err)){ cortadoPorAuth = true; break; }
-      }
-      if(estadoEl) estadoEl.textContent = `Sincronizando... ${ok+error}/${total}`;
-      await esperar(300);
-    }
-  }
-
-  if(cancelarBtn) cancelarBtn.style.display = 'none';
-  if(estadoEl){
-    if(cortadoPorAuth){
-      estadoEl.innerHTML = `Se cortó: la conexión con Google venció a mitad de camino. Se sincronizaron ${ok} antes de cortarse. Tocá "Reconectar con Google Drive" arriba y después "Sincronizar ahora" de nuevo para seguir con el resto.`;
-    } else if(syncCancelado){
-      estadoEl.textContent = `Cancelado. Se sincronizaron ${ok} antes de parar (${error} con error).`;
-    } else {
-      estadoEl.textContent = `Listo: ${ok} sincronizados${error?`, ${error} con error (revisá la consola)`:''}.`;
-    }
-  }
+  driveTrabajando = false;
   render();
 }
 
+function guardarMapeoDrive(){
+  if(!driveMapeoPendiente) return;
+  const ops = Object.entries(driveMapeoPendiente.mapeo).map(([studentId, info]) => setDoc(doc(db,'driveMapping', studentId), info));
+  Promise.all(ops).then(() => { showToast('Emparejamiento guardado'); driveMapeoPendiente = null; render(); }).catch(err=>showSaveError(err));
+}
+
+async function filaDePruebaDrive(){
+  const sid = document.getElementById('alumnoPruebaSelect').value;
+  const info = cache.driveMapping[sid];
+  const estado = document.getElementById('pruebaEstado');
+  if(!info){ estado.textContent = 'Ese alumno no tiene planilla emparejada.'; return; }
+  estado.textContent = 'Escribiendo...';
+  try{
+    const r = await llamarDrive({ accion: 'prueba', spreadsheetId: info.spreadsheetId });
+    estado.textContent = `Listo: quedó en la fila ${r.fila} de la planilla de ese alumno. Revisala en Drive y después borrá esa fila a mano.`;
+  }catch(err){
+    estado.textContent = explicarErrorDrive(err.message);
+  }
+}
+
+async function sincronizarAhoraDrive(){
+  if(driveTrabajando) return;
+  const { asistencia, ef, filas } = registrosPendientesDeSync();
+  const estado = document.getElementById('syncEstado');
+  if(!asistencia.length && !ef.length){ if(estado) estado.textContent = 'No hay nada pendiente para pasar a Drive.'; return; }
+  if(!(await customConfirm(`Se van a agregar ${filas} fila${filas!==1?'s':''} en las planillas de Drive. Puede tardar un par de minutos; podés seguir usando la app mientras tanto. ¿Sincronizar?`, { textoSi: 'Sincronizar' }))) return;
+  driveTrabajando = true;
+  render();
+  try{
+    const r = await llamarDrive({ accion: 'sincronizar', asistencia, ef });
+    // Lo de fechas viejas no lo ve el listener en vivo: se actualiza la copia local.
+    (r.sincronizados.asistencia || []).forEach(id => tocarHistorico(id, { driveSynced: true }));
+    let msg = `Listo: ${r.filas} fila${r.filas!==1?'s':''} en las planillas de ${r.alumnos} alumno${r.alumnos!==1?'s':''}.`;
+    if(r.errores && r.errores.length){
+      msg += ` ${r.errores.length} con problema: ` + r.errores.slice(0,3).map(e => `${e.archivo || e.studentId} (${explicarErrorDrive(e.mensaje)})`).join('; ');
+    }
+    driveTrabajando = false;
+    render();
+    await customAlert(msg);
+  }catch(err){
+    driveTrabajando = false;
+    render();
+    await customAlert('No se pudo sincronizar: ' + explicarErrorDrive(err.message) + ' Lo que no se llegó a pasar queda pendiente para la próxima vez.');
+  }
+}
+
 function renderConexionDrive(){
-  const mapeados = Object.entries(cache.driveMapping || {});
-  const { pendientesAsistencia, pendientesEF } = driveConectado ? registrosPendientesDeSync() : { pendientesAsistencia:[], pendientesEF:[] };
-  const totalPendiente = pendientesAsistencia.length + pendientesEF.length;
+  if(driveInfo.email === null && !driveInfo.cargando) setTimeout(() => cargarEstadoDrive(true), 0);
+  const mapeados = Object.keys(cache.driveMapping || {}).length;
+  const pend = registrosPendientesDeSync();
+  const enlacesApi = `
+    <p style="font-size:12.5px;margin:8px 0 0;line-height:1.7;">
+      <a href="https://console.cloud.google.com/apis/library/sheets.googleapis.com?project=app-isp-f601c" target="_blank" rel="noopener">Activar Google Sheets API</a><br>
+      <a href="https://console.cloud.google.com/apis/library/drive.googleapis.com?project=app-isp-f601c" target="_blank" rel="noopener">Activar Google Drive API</a>
+    </p>`;
+  const estadoAcceso = driveInfo.cargando
+    ? `<p class="drive-estado">Comprobando…</p>`
+    : (driveInfo.acceso === true
+        ? `<p class="drive-estado ok">${icon('check')} La cuenta robot ve la carpeta (${driveInfo.subcarpetas} subcarpetas).</p>`
+        : (driveInfo.error ? `<p class="drive-estado error">${escapeHtml(driveInfo.error)}</p>${(driveInfo.errorCrudo||'').startsWith('API_DESHABILITADA') ? enlacesApi : ''}` : ''));
+
   $app.innerHTML = `
     <div class="appbar" style="padding:0 0 10px;">
       <button class="back-btn" id="backBtn">${icon('back')}</button>
       <h1>Conexión con Drive</h1>
     </div>
-    <p style="font-size:13px;color:var(--ink-soft);margin-bottom:14px;">Etapa 1: conectar y emparejar los archivos con cada alumno (no escribe nada todavía).</p>
-    <button class="btn-primary" id="conectarDriveBtn" style="margin-bottom:12px;">${driveConectado ? 'Reconectar con Google Drive' : 'Conectar con Google Drive'}</button>
-    ${driveConectado ? `<button class="btn-secondary" id="escanearBtn" style="width:100%;margin-bottom:12px;">Buscar y emparejar archivos</button>` : ''}
-    <p id="driveEstado" style="font-size:12.5px;color:var(--ink-soft);line-height:1.5;"></p>
-    <button class="btn-primary" id="guardarMapeoBtn" style="display:none;margin-top:10px;">Guardar emparejamiento</button>
+    <p class="info-note" style="margin-top:0;">${icon('info')}Las faltas se pasan a las planillas desde el servidor de la app: no hace falta iniciar sesión con Google ni tener la app abierta mientras sincroniza.</p>
 
-    ${mapeados.length && driveConectado ? `
-      <p class="section-label" style="margin-top:20px;">Etapa 2: prueba con un alumno</p>
-      <p style="font-size:12.5px;color:var(--ink-soft);margin-bottom:10px;">Escribe una fila de prueba bien marcada (no una falta real) en la planilla de un solo alumno, para que revises que no rompe nada.</p>
+    <p class="section-label">1 · Compartir la carpeta (una sola vez)</p>
+    <div class="config-card">
+      <p style="font-size:12.5px;color:var(--ink-soft);margin:0 0 8px;">En Drive, abrí la carpeta de las planillas de los alumnos, tocá <b>Compartir</b> y agregá esta dirección como <b>Editor</b> (sin enviar notificación):</p>
+      <div class="drive-email">
+        <span id="robotEmail">${driveInfo.email ? escapeHtml(driveInfo.email) : 'cargando…'}</span>
+        ${driveInfo.email ? `<button class="btn-chip" id="copiarEmailBtn">Copiar</button>` : ''}
+      </div>
+      <button class="btn-secondary" id="probarAccesoBtn" style="width:100%;margin-top:10px;">Comprobar acceso</button>
+      ${estadoAcceso}
+    </div>
+
+    <p class="section-label" style="margin-top:20px;">2 · Emparejar planillas con alumnos</p>
+    <div class="config-card">
+      <p style="font-size:12.5px;color:var(--ink-soft);margin:0 0 8px;">${mapeados} alumno${mapeados!==1?'s':''} con planilla emparejada. Volvé a hacerlo cuando agregues alumnos o planillas nuevas.</p>
+      <button class="btn-secondary" id="emparejarBtn" style="width:100%;">Buscar y emparejar planillas</button>
+      <p id="emparejarEstado" style="font-size:12.5px;color:var(--ink-soft);margin-top:8px;line-height:1.5;">${driveMapeoPendiente ? `Encontré ${driveMapeoPendiente.total} planillas en ${driveMapeoPendiente.carpetasCurso} carpetas de curso.<br>Emparejadas: <b>${Object.keys(driveMapeoPendiente.mapeo).length}</b> · Sin emparejar: <b>${driveMapeoPendiente.sinMatch.length}</b>${driveMapeoPendiente.sinMatch.length ? '<br>' + driveMapeoPendiente.sinMatch.slice(0,15).map(x=>'· '+escapeHtml(x)).join('<br>') : ''}` : ''}</p>
+      ${driveMapeoPendiente ? `<button class="btn-primary" id="guardarMapeoBtn" style="width:100%;margin-top:8px;">Guardar emparejamiento</button>` : ''}
+    </div>
+
+    ${mapeados ? `
+    <p class="section-label" style="margin-top:20px;">3 · Probar con un alumno</p>
+    <div class="config-card">
+      <p style="font-size:12.5px;color:var(--ink-soft);margin:0 0 8px;">Escribe una fila marcada como PRUEBA en la planilla de un solo alumno, para que confirmes que queda en el lugar correcto.</p>
       <select id="alumnoPruebaSelect" style="margin-bottom:10px;">
-        ${getStudents().filter(s => cache.driveMapping[s.id]).sort((a,b)=>a.apellido.localeCompare(b.apellido)).map(s => `<option value="${s.id}">${s.apellido}, ${s.nombre}</option>`).join('')}
+        ${getStudents().filter(s => cache.driveMapping[s.id]).sort((a,b)=>a.apellido.localeCompare(b.apellido)).map(s => `<option value="${s.id}">${s.curso}° · ${s.apellido}, ${s.nombre}</option>`).join('')}
       </select>
       <button class="btn-secondary" id="probarEscrituraBtn" style="width:100%;">Escribir fila de prueba</button>
       <p id="pruebaEstado" style="font-size:12.5px;color:var(--ink-soft);margin-top:8px;"></p>
+    </div>
 
-      <p class="section-label" style="margin-top:20px;">Etapa 3: sincronizar cuando quieras</p>
-      <p style="font-size:12.5px;color:var(--ink-soft);margin-bottom:10px;">Cargás la asistencia normal en la app, y cuando quieras mandarla a Drive, entrás acá y tocás sincronizar. Si es la primera vez, marcá primero lo ya cargado como "ya sincronizado" para que no se duplique con lo que ya tenés a mano en el Excel.</p>
-      <button class="btn-secondary" id="marcarSyncBtn" style="width:100%;margin-bottom:10px;">Marcar todo lo actual como ya sincronizado</button>
-      <button class="btn-primary" id="sincronizarBtn" style="width:100%;">Sincronizar ahora (${totalPendiente} pendiente${totalPendiente!==1?'s':''})</button>
-      <button class="btn-secondary" id="cancelarSyncBtn" style="width:100%;margin-top:8px;display:none;color:var(--stamp);">Cancelar sincronización</button>
+    <p class="section-label" style="margin-top:20px;">4 · Sincronizar</p>
+    <div class="config-card">
+      <p style="font-size:12.5px;color:var(--ink-soft);margin:0 0 10px;">Pendiente: <b>${pend.filas}</b> fila${pend.filas!==1?'s':''} (faltas, tardanzas, retiros y Ed. Física que todavía no están en las planillas).</p>
+      <button class="btn-primary" id="sincronizarBtn" style="width:100%;" ${driveTrabajando ? 'disabled' : ''}>${driveTrabajando ? 'Sincronizando… puede tardar unos minutos' : 'Sincronizar ahora'}</button>
       <p id="syncEstado" style="font-size:12.5px;color:var(--ink-soft);margin-top:8px;"></p>
+      <details style="margin-top:6px;">
+        <summary style="font-size:12px;color:var(--ink-soft);cursor:pointer;">¿Ya lo tenés cargado a mano en las planillas?</summary>
+        <p style="font-size:12px;color:var(--ink-soft);margin:8px 0;">Si lo pendiente ya lo pasaste vos a mano, marcalo como sincronizado para que no se duplique.</p>
+        <button class="btn-secondary" id="marcarSyncBtn" style="width:100%;">Marcar todo lo actual como ya sincronizado</button>
+      </details>
+    </div>
     ` : ''}
   `;
-  document.getElementById('backBtn').addEventListener('click', () => goBack('home'));
-  document.getElementById('conectarDriveBtn').addEventListener('click', conectarDrive);
-  if(document.getElementById('escanearBtn')){
-    document.getElementById('escanearBtn').addEventListener('click', escanearCarpetaDrive);
-  }
-  document.getElementById('guardarMapeoBtn').addEventListener('click', guardarMapeoDrive);
-  if(document.getElementById('probarEscrituraBtn')){
-    document.getElementById('probarEscrituraBtn').addEventListener('click', () => {
-      const sid = document.getElementById('alumnoPruebaSelect').value;
-      probarEscrituraSheet(sid);
+  document.getElementById('backBtn').addEventListener('click', () => goBack('config'));
+  document.getElementById('probarAccesoBtn').addEventListener('click', () => cargarEstadoDrive(true));
+  if(document.getElementById('copiarEmailBtn')){
+    document.getElementById('copiarEmailBtn').addEventListener('click', async () => {
+      try{ await navigator.clipboard.writeText(driveInfo.email); showToast('Dirección copiada'); }
+      catch(e){ await customAlert(driveInfo.email); }
     });
   }
-  if(document.getElementById('marcarSyncBtn')){
-    document.getElementById('marcarSyncBtn').addEventListener('click', marcarTodoComoYaSincronizado);
-  }
-  if(document.getElementById('sincronizarBtn')){
-    document.getElementById('sincronizarBtn').addEventListener('click', sincronizarPendientesConDrive);
-  }
-  if(document.getElementById('cancelarSyncBtn')){
-    document.getElementById('cancelarSyncBtn').addEventListener('click', () => { syncCancelado = true; });
-  }
+  document.getElementById('emparejarBtn').addEventListener('click', emparejarPlanillasDrive);
+  if(document.getElementById('guardarMapeoBtn')) document.getElementById('guardarMapeoBtn').addEventListener('click', guardarMapeoDrive);
+  if(document.getElementById('probarEscrituraBtn')) document.getElementById('probarEscrituraBtn').addEventListener('click', filaDePruebaDrive);
+  if(document.getElementById('sincronizarBtn')) document.getElementById('sincronizarBtn').addEventListener('click', sincronizarAhoraDrive);
+  if(document.getElementById('marcarSyncBtn')) document.getElementById('marcarSyncBtn').addEventListener('click', marcarTodoComoYaSincronizado);
 }
 
 function renderProfesorNuevo(){
