@@ -1349,6 +1349,19 @@ function icon(name){
 }
 
 let navHistory = [];
+// Foto de cada pantalla que se dejó atrás (va a la par de navHistory). Se usa para
+// mostrarla de fondo mientras se desliza con el dedo para volver.
+let navFotos = [];
+function fotoPantalla(){
+  if(!$app || !$app.firstElementChild) return null;
+  const rect = $app.getBoundingClientRect();
+  const f = $app.cloneNode(true);
+  f.removeAttribute('id');
+  f.querySelectorAll('[id]').forEach(el => el.removeAttribute('id'));
+  f.classList.remove('fade-in', 'slide-adelante', 'slide-atras', 'arrastrando', 'volviendo-lugar');
+  // Al volver, la pantalla aparece desde arriba de todo: la foto también.
+  return { nodo: f, top: rect.top + window.scrollY };
+}
 
 // Sombra del encabezado fijo solo cuando ya quedó pegado arriba (al scrollear).
 window.addEventListener('scroll', () => {
@@ -1371,6 +1384,9 @@ function navigate(route, params, transicion){
   }
   if(currentRoute && currentRoute !== route){
     navHistory.push(currentRoute);
+    navFotos.push(fotoPantalla());
+    // Solo se guardan las fotos de las últimas pantallas (para no gastar memoria).
+    if(navFotos.length > 6) navFotos[navFotos.length - 7] = null;
     lastFocusedInput = null; // al cambiar de pantalla, que no reaparezca el teclado de la anterior
   }
   currentRoute = route;
@@ -1382,6 +1398,7 @@ function navigate(route, params, transicion){
 function goBack(fallback){
   pendingTransicion = 'atras';
   const prev = navHistory.pop();
+  navFotos.pop();
   currentRoute = prev || fallback || 'home';
   lastFocusedInput = null;
   render();
@@ -2408,6 +2425,7 @@ document.addEventListener('input', (e) => {
 // en el mismo lugar, para que se vea deslizarse (hacia la izquierda al avanzar, hacia
 // la derecha al volver) mientras entra la nueva. Se borra sola al terminar.
 let arrastreDesdePx = 0;
+let entradaDesde = null; // desde dónde entra la pantalla al soltar el gesto de volver
 const movimientoReducido = window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 
 function crearPantallaSaliente(transicion){
@@ -2435,7 +2453,30 @@ function crearPantallaSaliente(transicion){
 // así vuelve exactamente a donde volvería la flecha) y no se activa sobre campos de texto,
 // listas que se desplazan de costado, o con un cartel abierto.
 (function gestoVolver(){
-  let x0 = 0, y0 = 0, t0 = 0, activo = false, decidido = false, horizontal = false, back = null;
+  let x0 = 0, y0 = 0, t0 = 0, activo = false, decidido = false, horizontal = false, back = null, fondo = null, ancho = 1;
+  // La pantalla anterior aparece de fondo y va entrando de a poco mientras se arrastra.
+  function ponerFondo(){
+    quitarFondos();
+    const foto = navHistory.length ? navFotos[navFotos.length - 1] : null;
+    if(!foto || movimientoReducido) return;
+    const rect = $app.getBoundingClientRect();
+    ancho = rect.width || window.innerWidth || 1;
+    fondo = foto.nodo.cloneNode(true);
+    fondo.classList.add('pantalla-fondo');
+    fondo.setAttribute('aria-hidden', 'true');
+    fondo.style.cssText = `position:fixed;top:${foto.top}px;left:${rect.left}px;width:${rect.width}px;margin:0;`;
+    moverFondo(0);
+    document.body.appendChild(fondo);
+  }
+  function moverFondo(p){
+    if(!fondo) return;
+    fondo.style.transform = `translateX(${(-30 * (1 - p)).toFixed(2)}%)`;
+    fondo.style.opacity = (0.6 + 0.4 * p).toFixed(3);
+  }
+  function quitarFondos(){
+    document.querySelectorAll('.pantalla-fondo').forEach(el => el.remove());
+    fondo = null;
+  }
   function puedeEmpezar(target){
     const modal = document.getElementById('modalOverlay');
     if(modal && modal.classList.contains('show')) return false;
@@ -2467,9 +2508,12 @@ function crearPantallaSaliente(transicion){
       if(!horizontal){ activo = false; return; }
       $app.classList.remove('volviendo-lugar');
       $app.classList.add('arrastrando');
+      ponerFondo();
     }
     e.preventDefault(); // mientras se arrastra de costado, que la pantalla no scrollee
+    if(!$app.classList.contains('arrastrando')) $app.classList.add('arrastrando');
     $app.style.transform = `translateX(${Math.max(0, dx)}px)`;
+    moverFondo(Math.min(1, Math.max(0, dx) / ancho));
   }, { passive: false });
   function terminar(e){
     if(!activo || !horizontal){ activo = false; return; }
@@ -2478,15 +2522,23 @@ function crearPantallaSaliente(transicion){
     const velocidad = dx / Math.max(1, Date.now() - t0); // px por ms
     if(dx > 90 || (dx > 35 && velocidad > 0.5)){
       arrastreDesdePx = dx;
+      // La pantalla real arranca justo donde estaba la de fondo, así no hay salto.
+      const p = Math.min(1, dx / ancho);
+      entradaDesde = fondo ? { x: -30 * (1 - p), op: 0.6 + 0.4 * p } : null;
       back.click();
       arrastreDesdePx = 0;
+      entradaDesde = null;
+      quitarFondos();
       $app.style.transform = '';
       $app.classList.remove('arrastrando');
     } else {
       // No llegó: vuelve suave a su lugar.
       $app.classList.add('volviendo-lugar');
       $app.style.transform = '';
-      setTimeout(() => { $app.classList.remove('arrastrando', 'volviendo-lugar'); }, 260);
+      const f = fondo;
+      if(f){ f.classList.add('volviendo-lugar'); moverFondo(0); }
+      fondo = null;
+      setTimeout(() => { $app.classList.remove('arrastrando', 'volviendo-lugar'); if(f) f.remove(); }, 260);
     }
   }
   document.addEventListener('touchend', terminar, { passive: true });
@@ -2513,6 +2565,13 @@ function render(){
   // escribir en un buscador); un cambio de pantalla siempre anima.
   if($app && clase && (transicion || !skipFadeNext)){
     $app.classList.remove('fade-in', 'slide-adelante', 'slide-atras');
+    if(transicion === 'atras' && entradaDesde){
+      $app.style.setProperty('--entra-x', entradaDesde.x.toFixed(2) + '%');
+      $app.style.setProperty('--entra-op', entradaDesde.op.toFixed(3));
+    } else {
+      $app.style.removeProperty('--entra-x');
+      $app.style.removeProperty('--entra-op');
+    }
     void $app.offsetWidth; // reinicia la animación
     $app.classList.add(clase);
   }

@@ -655,14 +655,17 @@ main.slide-atras{animation:entraAtras .42s cubic-bezier(.32,.72,0,1);}
 }
 @keyframes entraAdelante{ from{transform:translateX(100%);} to{transform:none;} }
 @keyframes saleAdelante{ from{transform:none;opacity:1;} to{transform:translateX(-30%);opacity:.6;} }
-@keyframes entraAtras{ from{transform:translateX(-30%);opacity:.6;} to{transform:none;opacity:1;} }
+@keyframes entraAtras{ from{transform:translateX(var(--entra-x, -30%));opacity:var(--entra-op, .6);} to{transform:none;opacity:1;} }
 @keyframes saleAtras{ from{transform:translateX(var(--desde, 0px));} to{transform:translateX(100%);} }
 /* Mientras se arrastra con el dedo para volver */
-main.arrastrando{
+main.arrastrando{min-height:100vh;
   position:relative;z-index:2;background-color:var(--paper);
   box-shadow:-10px 0 28px rgba(0,0,0,0.14);will-change:transform;
 }
 main.volviendo-lugar{transition:transform .25s cubic-bezier(.32,.72,0,1);}
+/* La pantalla anterior, de fondo, mientras se arrastra para volver */
+.pantalla-fondo{z-index:1;pointer-events:none;box-sizing:border-box;will-change:transform,opacity;}
+.pantalla-fondo.volviendo-lugar{transition:transform .25s cubic-bezier(.32,.72,0,1), opacity .25s;}
 @media (prefers-reduced-motion: reduce){
   main.slide-adelante, main.slide-atras, main.fade-in, .pantalla-saliente{animation:none;}
 }
