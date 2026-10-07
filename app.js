@@ -780,6 +780,33 @@ function computeFechaAlerta(studentId, range){
 }
 
 
+// Peso de un registro de asistencia en el total de faltas (mismo criterio en toda la app):
+// ausente o justificada 1, tarde 0,5, tarde justificada nada, retiro anticipado +0,5.
+function pesoAsistencia(rec){
+  if(!rec || rec.exencion) return 0;
+  let w = 0;
+  if(rec.estado === 'A' || rec.estado === 'J') w = 1;
+  else if(rec.estado === 'T') w = 0.5;
+  return w + pesoRetiro(rec);
+}
+
+// Cuántas faltas más puede tener en una materia antes de quedar debajo del 85% anual.
+// El total cuenta todas las clases del año (también las que faltan dar), así que el
+// número es "si de acá a diciembre no falta más que esto, no queda SCP".
+// Negativo = ya se pasó (está en SCP) por esa cantidad.
+const CERCA_SCP = 2;
+function faltasRestantes(st){
+  if(!st || !st.total) return null;
+  return Math.floor((1 - UMBRAL_SCP) * st.total + 1e-9) - st.faltas;
+}
+function textoRestantes(r){
+  if(r === null) return '';
+  if(r > 1) return `le quedan ${r} faltas`;
+  if(r === 1) return 'le queda 1 falta';
+  if(r === 0) return 'no puede faltar más';
+  return `se pasó por ${-r} ${-r === 1 ? 'falta' : 'faltas'}`;
+}
+
 function todayISO(){
   return localISODate(new Date());
 }
@@ -2637,6 +2664,7 @@ function renderInner(){
   else if(currentRoute === 'vistaCursoMateria') renderVistaCursoMateria();
   else if(currentRoute === 'vistaCursoAlerta') renderVistaCursoAlerta();
   else if(currentRoute === 'vistaCursoSCP') renderVistaCursoSCP();
+  else if(currentRoute === 'vistaCursoCerca') renderVistaCursoCerca();
   else if(currentRoute === 'conexionDrive') renderConexionDrive();
   else if(currentRoute === 'valoraciones') renderValoracionesLista();
   else if(currentRoute === 'valoracionAlumno') renderValoracionAlumno();
@@ -3042,8 +3070,10 @@ function renderResumenAlumno(){
     const pct = s.total>0 ? (1 - s.faltas/s.total) : 1;
     const pctDisplay = Math.round(pct*1000)/10;
     const scp = pct < UMBRAL_SCP;
-    return `<div class="materia-row ${scp?'scp':''}">
-      <span class="materia-name">${subj}</span>
+    const resta = faltasRestantes(s);
+    const cerca = !scp && resta !== null && resta <= CERCA_SCP;
+    return `<div class="materia-row ${scp?'scp':''} ${cerca?'cerca':''}">
+      <span class="materia-name">${subj}${resta !== null ? `<span class="materia-resta">${textoRestantes(resta)}</span>` : ''}</span>
       <span class="materia-detail">${s.faltas}/${s.total}</span>
       <span class="materia-pct">${pctDisplay}%${scp?' · SCP':''}</span>
     </div>`;
@@ -3088,7 +3118,7 @@ function renderResumenAlumno(){
 
     <p class="section-label" style="margin-top:16px;">Faltas por materia (ciclo lectivo completo)</p>
     <div class="sancion-list">${materiaRows || '<p style="font-size:13px;color:var(--ink-soft);padding:12px;">Sin datos para este período.</p>'}</div>
-    <p class="info-note">${icon('info')}SCP = por debajo del 85% de asistencia anual en esa materia (recupera en el PIA).</p>
+    <p class="info-note">${icon('info')}SCP = por debajo del 85% de asistencia anual en esa materia (recupera en el PIA). "Le quedan" cuenta todas las clases del año, también las que faltan dar.</p>
 
     <p class="section-label" style="margin-top:16px;">Apercibimientos</p>
     ${sanciones.length ? `<div class="sancion-list">${sanciones.map(h => `
@@ -4616,6 +4646,7 @@ function computeVistaCurso(curso){
   const alertaList = [];
   const porMateria = {}; // materia -> [ {id,nombre,pct} ]
   const scpMap = {}; // studentId -> [ {materia,pct} ]
+  const cercaMap = {}; // studentId -> [ {materia,resta} ] (todavía no SCP, pero le quedan pocas)
 
   students.forEach(s => {
     const w = weights[s.id] || 0;
@@ -4629,14 +4660,25 @@ function computeVistaCurso(curso){
         porMateria[materia].push({ id: s.id, nombre: `${s.apellido}, ${s.nombre}`, pct: pctR });
         if(!scpMap[s.id]) scpMap[s.id] = { id: s.id, nombre: `${s.apellido}, ${s.nombre}`, materias: [] };
         scpMap[s.id].materias.push({ materia, pct: pctR });
+      } else {
+        const resta = faltasRestantes(st);
+        if(resta !== null && resta <= CERCA_SCP){
+          if(!cercaMap[s.id]) cercaMap[s.id] = { id: s.id, nombre: `${s.apellido}, ${s.nombre}`, materias: [] };
+          cercaMap[s.id].materias.push({ materia, resta });
+        }
       }
     });
   });
 
   alertaList.sort((a,b)=> b.valor - a.valor);
   const scpList = Object.values(scpMap).sort((a,b)=> a.nombre.localeCompare(b.nombre));
+  const cercaList = Object.values(cercaMap).map(c => {
+    c.materias.sort((a,b)=> a.resta - b.resta);
+    c.minimo = c.materias[0].resta;
+    return c;
+  }).sort((a,b)=> a.minimo - b.minimo || a.nombre.localeCompare(b.nombre));
 
-  return { total: students.length, enAlerta: alertaList.length, conSCP: scpList.length, alertaList, scpList, porMateria };
+  return { total: students.length, enAlerta: alertaList.length, conSCP: scpList.length, alertaList, scpList, cercaList, porMateria };
 }
 
 function descargarRespaldoCompleto(){
@@ -4922,16 +4964,61 @@ function computeTendenciaDiaSemana(curso){
   const idsCurso = new Set(students.map(s=>s.id));
   Object.entries(att).forEach(([key, rec]) => {
     const [fecha, sid] = key.split('|');
-    if(!idsCurso.has(sid) || rec.exencion) return;
+    if(!idsCurso.has(sid)) return;
     const dia = diaKeyFor(fecha);
     if(!dia || !(dia in porDia)) return;
-    if(rec.estado==='A') porDia[dia] += 1;
-    else if(rec.estado==='T') porDia[dia] += 0.5;
+    porDia[dia] += pesoAsistencia(rec);
+  });
+  Object.entries(getEF()).forEach(([key, val]) => {
+    const [fecha, sid] = key.split('|');
+    const dia = diaKeyFor(fecha);
+    if(idsCurso.has(sid) && dia && val && val.tipo === 'falta') porDia[dia] += 0.5;
   });
   const labels = { lunes:'Lun', martes:'Mar', miercoles:'Mié', jueves:'Jue', viernes:'Vie' };
   return Object.entries(porDia).map(([dia, total]) => ({
     label: labels[dia], promedio: students.length ? Math.round((total/students.length)*100)/100 : 0
   }));
+}
+
+// Faltas de todo el curso, semana por semana (las últimas 8 semanas con clases).
+function computeTendenciaSemanal(curso){
+  const ids = new Set(getStudents().filter(s => s.curso === curso).map(s => s.id));
+  const lunesDe = (iso) => {
+    const d = new Date(iso + 'T00:00:00');
+    d.setDate(d.getDate() - ((d.getDay() + 6) % 7));
+    return localISODate(d);
+  };
+  const hoy = todayISO();
+  const semanas = [];
+  let lunes = lunesDe(hoy);
+  for(let i = 0; i < 30 && semanas.length < 8; i++){
+    const d = new Date(lunes + 'T00:00:00'); d.setDate(d.getDate() + 4);
+    const viernes = localISODate(d);
+    const huboClase = bimestreDe(lunes) || bimestreDe(viernes);
+    const diasHabiles = eachDateInRange(lunes, viernes < hoy ? viernes : hoy).filter(x => diaKeyFor(x) && !getDiaSinClase(x, curso));
+    if(huboClase && diasHabiles.length) semanas.unshift({ lunes, viernes, total: 0 });
+    const ant = new Date(lunes + 'T00:00:00'); ant.setDate(ant.getDate() - 7);
+    lunes = localISODate(ant);
+  }
+  if(!semanas.length) return [];
+  const desde = semanas[0].lunes;
+  const sumar = (fecha, w) => {
+    if(!w || fecha < desde) return;
+    const sem = semanas.find(x => fecha >= x.lunes && fecha <= x.viernes);
+    if(sem) sem.total += w;
+  };
+  Object.entries(getAttendance()).forEach(([key, rec]) => {
+    const [fecha, sid] = key.split('|');
+    if(ids.has(sid)) sumar(fecha, pesoAsistencia(rec));
+  });
+  Object.entries(getEF()).forEach(([key, val]) => {
+    const [fecha, sid] = key.split('|');
+    if(ids.has(sid) && val && val.tipo === 'falta') sumar(fecha, 0.5);
+  });
+  return semanas.map(x => {
+    const [, m, d] = x.lunes.split('-');
+    return { label: `${Number(d)}/${Number(m)}`, promedio: Math.round(x.total * 10) / 10 };
+  });
 }
 
 function svgTendencia(datos, opts){
@@ -4947,8 +5034,8 @@ function svgTendencia(datos, opts){
     const y = h - padB - barH;
     const color = (opts && opts.colorPorValor) ? opts.colorPorValor(d.promedio) : 'var(--sage)';
     return `<rect x="${x}" y="${y}" width="${barW*0.6}" height="${barH}" rx="3" fill="${color}"/>
-      <text x="${x+barW*0.3}" y="${h-padB+18}" text-anchor="middle" font-size="12" fill="var(--ink-soft)">${d.label}</text>
-      <text x="${x+barW*0.3}" y="${y-9}" text-anchor="middle" font-family="'Source Serif 4',serif" font-size="16" font-weight="700" fill="var(--ink)">${d.promedio}${suffix}</text>`;
+      <text x="${x+barW*0.3}" y="${h-padB+18}" text-anchor="middle" font-size="${datos.length > 6 ? 10.5 : 12}" fill="var(--ink-soft)">${d.label}</text>
+      <text x="${x+barW*0.3}" y="${y-9}" text-anchor="middle" font-family="'Source Serif 4',serif" font-size="${datos.length > 6 ? 13 : 16}" font-weight="700" fill="${'var(--ink)'}">${d.promedio}${suffix}</text>`;
   }).join('');
   return `<svg viewBox="0 0 ${w} ${h}" style="width:100%;height:auto;display:block;">
     <line x1="${padL}" y1="${h-padB}" x2="${w-5}" y2="${h-padB}" stroke="var(--border)"/>
@@ -4988,6 +5075,16 @@ function renderVistaCurso(){
         <p class="value">${v.conSCP}<span class="sub"> / ${v.total}</span></p>
       </div>
     </div>
+    <div class="module-list" style="margin-bottom:14px;">
+      <div class="module-row" id="cardCercaCurso">
+        <div class="txt">
+          <p class="title">Cerca del SCP</p>
+          <p class="desc">Les quedan ${CERCA_SCP} faltas o menos en alguna materia</p>
+        </div>
+        <span class="badge-soon" style="${v.cercaList.length ? 'background:var(--gold-bg);color:var(--gold);' : ''}">${v.cercaList.length}</span>
+        <span class="chevron">${icon('chevron')}</span>
+      </div>
+    </div>
 
     ${userRole!=='student' ? `
     <div class="field-row" style="margin-bottom:10px;">
@@ -4996,6 +5093,10 @@ function renderVistaCurso(){
     <button class="btn-secondary" id="exportarOficialBtn" style="width:100%;margin-bottom:10px;"><span class="btn-icon-fix">${icon('file')}</span> Exportar planilla oficial del mes (día por día)</button>
     <button class="btn-secondary" id="exportarResumenMesBtn" style="width:100%;margin-bottom:10px;"><span class="btn-icon-fix">${icon('file')}</span> Exportar resumen del mes</button>
     <button class="btn-secondary" id="exportarBtn" style="width:100%;margin-bottom:16px;"><span class="btn-icon-fix">${icon('file')}</span> Exportar asistencia a Excel (bimestre)</button>` : ''}
+
+    ${(() => { const sem = computeTendenciaSemanal(selectedCurso); return sem.length ? `
+    <p class="section-label">Faltas del curso, semana por semana</p>
+    <div class="config-card" style="margin-bottom:16px;">${svgTendencia(sem)}</div>` : ''; })()}
 
     <p class="section-label">Faltas promedio por alumno, por bimestre</p>
     <div class="config-card" style="margin-bottom:16px;">${svgTendencia(computeTendenciaCurso(selectedCurso))}</div>
@@ -5010,6 +5111,7 @@ function renderVistaCurso(){
   attachCursoBtns((c) => { selectedCurso = c; render(); });
   document.getElementById('cardAlertaCurso').addEventListener('click', () => navigate('vistaCursoAlerta'));
   document.getElementById('cardSCPCurso').addEventListener('click', () => navigate('vistaCursoSCP'));
+  document.getElementById('cardCercaCurso').addEventListener('click', () => navigate('vistaCursoCerca'));
   if(document.getElementById('exportarBtn')){
     document.getElementById('exportarBtn').addEventListener('click', () => exportarAsistenciaCurso(selectedCurso));
   }
@@ -5096,6 +5198,33 @@ function renderVistaCursoSCP(){
     </div>
     <p class="date-label">${selectedCurso}° A · debajo del 85% anual en al menos una materia</p>
     ${rows ? `<div class="module-list">${rows}</div>` : `<p class="empty-inline">Nadie en riesgo en este curso.</p>`}
+  `;
+  document.getElementById('backBtn').addEventListener('click', () => goBack('vistaCurso'));
+  document.querySelectorAll('[data-student]').forEach(el => {
+    el.addEventListener('click', () => { selectedStudentId = el.dataset.student; navigate('resumenAlumno'); });
+  });
+}
+
+function renderVistaCursoCerca(){
+  const v = computeVistaCurso(selectedCurso);
+  const rows = v.cercaList.map(a => `
+    <div class="module-row" data-student="${a.id}">
+      ${avatarAlumno(getStudents().find(s => s.id === a.id) || { nombre: a.nombre, apellido: '' })}
+      <div class="txt">
+        <p class="title">${a.nombre}</p>
+        <p class="desc">${a.materias.map(m => `${m.materia}: ${textoRestantes(m.resta)}`).join(' · ')}</p>
+      </div>
+      <span class="chevron">${icon('chevron')}</span>
+    </div>
+  `).join('');
+  $app.innerHTML = `
+    <div class="appbar" style="padding:0 0 10px;">
+      <button class="back-btn" id="backBtn">${icon('back')}</button>
+      <h1>Cerca del SCP</h1>
+    </div>
+    <p class="date-label">${selectedCurso}° A · todavía no están en SCP, pero les quedan pocas faltas</p>
+    ${rows ? `<div class="module-list">${rows}</div>` : `<p class="empty-inline">Nadie está cerca del SCP en este curso.</p>`}
+    <p class="info-note">${icon('info')}Cuenta todas las clases del año, también las que faltan dar: si no falta más que eso hasta diciembre, no queda SCP en esa materia.</p>
   `;
   document.getElementById('backBtn').addEventListener('click', () => goBack('vistaCurso'));
   document.querySelectorAll('[data-student]').forEach(el => {
