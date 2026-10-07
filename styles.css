@@ -716,3 +716,11 @@ input, textarea, select, [contenteditable="true"]{-webkit-user-select:text;user-
 .drive-estado svg{width:15px;height:15px;flex-shrink:0;margin-top:1px;}
 .drive-estado.ok{color:var(--sage);}
 .drive-estado.error{color:var(--stamp);}
+
+/* Franja del modo de prueba */
+.franja-prueba{display:flex;align-items:center;justify-content:space-between;gap:10px;
+  background:var(--gold-bg);color:var(--ink);border:1px solid var(--gold);border-radius:var(--radius-sm);
+  padding:8px 10px 8px 12px;margin:0 0 12px;font-size:12.5px;}
+.franja-prueba span{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}
+.franja-prueba button{flex:0 0 auto;border:1px solid var(--gold);background:var(--card);color:var(--ink);
+  border-radius:8px;padding:5px 12px;font-size:12.5px;font-weight:600;font-family:inherit;}

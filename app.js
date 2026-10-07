@@ -14,16 +14,35 @@ const HOUR_TIME = {1:'7:45',2:'8:25',3:'9:20',4:'10:00',5:'10:55',6:'11:35',7:'1
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-app.js";
 import {
   initializeFirestore, persistentLocalCache, persistentMultipleTabManager,
-  collection, doc, setDoc, deleteDoc, addDoc, onSnapshot, getDoc, writeBatch,
+  collection, doc, setDoc as _setDoc, deleteDoc as _deleteDoc, addDoc as _addDoc, onSnapshot, getDoc, writeBatch as _writeBatch,
   query, where, getDocs, getDocsFromCache
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
 import {
   getAuth, onAuthStateChanged, signInWithEmailAndPassword,
-  createUserWithEmailAndPassword, updatePassword, signOut, setPersistence, browserLocalPersistence
+  createUserWithEmailAndPassword, updatePassword as _updatePassword, signOut as _signOut, setPersistence, browserLocalPersistence
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-auth.js";
 import {
-  getMessaging, getToken, onMessage, isSupported as messagingIsSupported
+  getMessaging, getToken as _getToken, onMessage, isSupported as messagingIsSupported
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-messaging.js";
+
+// ---------- Modo de prueba (solo Napo) ----------
+// Permite ver la app como la ve un docente, un alumno o una cuenta de solo lectura,
+// con los datos reales de esa persona pero SIN GUARDAR NADA: todas las escrituras
+// pasan por estas funciones y, en modo prueba, no llegan a Firestore.
+let modoPrueba = null; // { rol, nombre }
+function avisoPrueba(){ try{ showToast('Vista de prueba: no se guardó nada'); }catch(e){} }
+function modoPruebaBloquea(){ if(modoPrueba){ avisoPrueba(); return true; } return false; }
+function setDoc(...a){ if(modoPrueba){ avisoPrueba(); return Promise.resolve(); } return _setDoc(...a); }
+function deleteDoc(...a){ if(modoPrueba){ avisoPrueba(); return Promise.resolve(); } return _deleteDoc(...a); }
+function addDoc(...a){ if(modoPrueba){ avisoPrueba(); return Promise.resolve({ id: 'prueba' }); } return _addDoc(...a); }
+function writeBatch(...a){
+  if(modoPrueba) return { set(){}, update(){}, delete(){}, commit(){ avisoPrueba(); return Promise.resolve(); } };
+  return _writeBatch(...a);
+}
+function updatePassword(...a){ if(modoPrueba){ avisoPrueba(); return Promise.reject(new Error('modo prueba')); } return _updatePassword(...a); }
+function getToken(...a){ if(modoPrueba) return Promise.reject(new Error('modo prueba')); return _getToken(...a); }
+// "Salir" en la vista de prueba vuelve a tu usuario (no cierra la sesión de verdad).
+function signOut(a){ if(modoPrueba && a === auth){ salirModoPrueba(); return Promise.resolve(); } return _signOut(a); }
 import { getFunctions, httpsCallable } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-functions.js";
 
 // Clave pública VAPID para notificaciones push (Firebase Console → Configuración del
@@ -670,6 +689,22 @@ function efPerdidaPorRetiro(rec, curso){
   return tieneRetiro(rec) && !!b && minutesOf(rec.retiro.hora) < minutesOf(b.fin);
 }
 
+// ¿Esa hora no se dictó porque faltó el/la docente? Solo si faltan TODOS los docentes del
+// bloque (en Inglés por niveles o Artes en pareja, si falta uno la clase igual se dio) y
+// ninguno tiene suplente cargado (con suplente la clase se dictó).
+const _cacheBloques = {};
+function horaSinDocente(fecha, curso, diaKey, hour){
+  const porFecha = cache.substitutions;
+  const k = `${curso}|${diaKey}`;
+  const sched = (getSchedule()[curso] && getSchedule()[curso][diaKey]) || [];
+  if(!_cacheBloques[k] || _cacheBloques[k].src !== sched) _cacheBloques[k] = { src: sched, blocks: buildBlocks(sched) };
+  const b = _cacheBloques[k].blocks.find(x => hour >= x.startHour && hour <= x.endHour);
+  if(!b || !b.teachers.length) return false;
+  const rec = porFecha[`${fecha}|${curso}|${diaKey}|${b.startHour}`];
+  if(!rec) return false;
+  return b.teachers.every(t => rec[t] && !(rec[t].suplente || '').trim());
+}
+
 function computeMateriaStats(studentId, bim){
   const student = getStudents().find(s => s.id === studentId);
   const curso = student.curso;
@@ -685,16 +720,20 @@ function computeMateriaStats(studentId, bim){
     const subjects = subjectsForDay(curso, diaKey);
     const rec = att[`${iso}|${studentId}`];
     const isFullAbsence = rec && (rec.estado==='A' || rec.estado==='J') && !rec.exencion && !rec.llegoTarde;
-    const isParcial = rec && rec.hora && (rec.estado==='T' || (rec.estado==='A' && rec.llegoTarde && !rec.exencion));
+    // Tarde justificada (TJ, alumno con autorización) no suma al total de faltas, pero
+    // las materias que ya habían empezado cuando llegó sí cuentan como falta en esa materia.
+    const isParcial = rec && rec.hora && (rec.estado==='T' || rec.estado==='TJ' || (rec.estado==='A' && rec.llegoTarde && !rec.exencion));
     const isRetiro = tieneRetiro(rec);
 
     subjects.forEach(subj => {
+      // Las horas en que faltó el/la docente no cuentan: ni como clase ni como falta.
+      const entries = (getSchedule()[curso][diaKey]||[]).filter(e => e.subject === subj && !horaSinDocente(iso, curso, diaKey, e.hour));
+      if(!entries.length) return;
       if(!stats[subj]) stats[subj] = { faltas:0, total:0 };
       stats[subj].total++;
       if(isFullAbsence){
         stats[subj].faltas++;
       } else if(isParcial || isRetiro){
-        const entries = (getSchedule()[curso][diaKey]||[]).filter(e => e.subject === subj);
         const perdida = entries.some(e => {
           const startTime = HOUR_TIME[e.hour];
           const porLlegada = isParcial && startTime && minutesOf(startTime) < minutesOf(rec.hora);
@@ -1056,19 +1095,41 @@ async function toggleEF(studentId, fecha){
   }
 }
 
-async function gestionarAutorizacion(studentId){
+// Autorización de tardanza: horario hasta el que entra sin tardanza (queda TJ) y motivo.
+// Se puede agregar, editar (horario y/o motivo, sin cerrarla) o cerrar.
+async function pedirDatosAutorizacion(actual){
+  const horaTope = await customPrompt('Entra sin tardanza hasta (HH:MM):', actual ? actual.horaTope : '09:00');
+  if(horaTope === null) return null;
+  const h = horaTope.trim();
+  if(!/^\d{1,2}:\d{2}$/.test(h)){ await customAlert('Formato inválido. Usá HH:MM, por ejemplo 09:30.'); return null; }
+  const motivo = await customPrompt('Motivo (ej: Médico, Deportivo, Transporte). Puede quedar vacío:', actual ? (actual.motivo || '') : '');
+  if(motivo === null) return null;
+  return { horaTope: h.padStart(5, '0'), motivo: motivo.trim() };
+}
+async function agregarAutorizacion(studentId){
+  if(modoPruebaBloquea()) return;
+  const datos = await pedirDatosAutorizacion(null);
+  if(!datos) return;
+  setDoc(doc(db,'autorizaciones',studentId), Object.assign(datos, { activa:true, desde: todayISO(), autor: getUsuario() }))
+    .catch(err=>showSaveError(err));
+}
+async function editarAutorizacion(studentId){
+  if(modoPruebaBloquea()) return;
   const auth = getAutorizaciones()[studentId];
-  if(auth && auth.activa){
-    if(await customConfirm(`Autorización activa: hasta ${auth.horaTope} (${auth.motivo}).\n\n¿Cerrarla?`)){
-      setDoc(doc(db,'autorizaciones',studentId), Object.assign({}, auth, { activa:false }));
-    }
-    return;
+  if(!auth) return agregarAutorizacion(studentId);
+  const datos = await pedirDatosAutorizacion(auth);
+  if(!datos) return;
+  setDoc(doc(db,'autorizaciones',studentId), Object.assign({}, auth, datos, { modificada: todayISO(), autor: getUsuario() }))
+    .catch(err=>showSaveError(err));
+}
+async function cerrarAutorizacion(studentId){
+  if(modoPruebaBloquea()) return;
+  const auth = getAutorizaciones()[studentId];
+  if(!auth) return;
+  if(await customConfirm(`¿Cerrar la autorización (hasta ${auth.horaTope})? Desde mañana las llegadas tarde vuelven a contar normal.`, { textoSi: 'Cerrar', peligro: true })){
+    setDoc(doc(db,'autorizaciones',studentId), Object.assign({}, auth, { activa:false, hasta: todayISO() }))
+      .catch(err=>showSaveError(err));
   }
-  const motivo = await customPrompt('Motivo de la autorización (ej: Médico, Deportivo):', '');
-  if(motivo === null || !motivo.trim()) return;
-  const horaTope = await customPrompt('Entra sin tardanza hasta (HH:MM):', '09:00');
-  if(!horaTope || !/^\d{2}:\d{2}$/.test(horaTope)){ await customAlert('Formato inválido.'); return; }
-  setDoc(doc(db,'autorizaciones',studentId), { motivo: motivo.trim(), horaTope, activa:true, desde: todayISO(), autor: getUsuario() });
 }
 
 // ---------- Horarios y suplencias ----------
@@ -2582,6 +2643,7 @@ function render(){
   if((pendingTransicion === 'adelante' || pendingTransicion === 'atras') && primerRenderHecho) crearPantallaSaliente(pendingTransicion);
   if($app){ $app.style.transform = ''; $app.classList.remove('arrastrando', 'volviendo-lugar'); }
   renderInner();
+  franjaPrueba();
   const transicion = pendingTransicion;
   pendingTransicion = null;
   let clase = null;
@@ -2623,7 +2685,7 @@ function render(){
 }
 
 function renderInner(){
-  const RUTAS_SOLO_NAPO = ['profesores','profesorNuevo','profesorEditar','lectura','conexionDrive','importar','alumnosCuentas','pendientes'];
+  const RUTAS_SOLO_NAPO = ['profesores','profesorNuevo','profesorEditar','lectura','conexionDrive','importar','alumnosCuentas','pendientes','pruebaDocente','pruebaAlumno','pruebaLectura'];
   if(RUTAS_SOLO_NAPO.includes(currentRoute) && (userRole!=='admin' || getUsuario()!=='Napo')){
     currentRoute = userRole==='admin' ? 'home' : homeRoute();
   }
@@ -2665,6 +2727,7 @@ function renderInner(){
   else if(currentRoute === 'vistaCursoAlerta') renderVistaCursoAlerta();
   else if(currentRoute === 'vistaCursoSCP') renderVistaCursoSCP();
   else if(currentRoute === 'vistaCursoCerca') renderVistaCursoCerca();
+  else if(currentRoute === 'pruebaDocente' || currentRoute === 'pruebaAlumno' || currentRoute === 'pruebaLectura') renderPruebaElegir();
   else if(currentRoute === 'conexionDrive') renderConexionDrive();
   else if(currentRoute === 'valoraciones') renderValoracionesLista();
   else if(currentRoute === 'valoracionAlumno') renderValoracionAlumno();
@@ -2902,14 +2965,15 @@ function subjectsAfectadasEnDia(studentId, iso){
   if(!rec || rec.exencion) return [];
   const subjects = subjectsForDay(curso, diaKey);
   const isFullAbsence = (rec.estado==='A'||rec.estado==='J') && !rec.llegoTarde;
-  const isParcial = rec.hora && (rec.estado==='T' || (rec.estado==='A' && rec.llegoTarde));
+  const isParcial = rec.hora && (rec.estado==='T' || rec.estado==='TJ' || (rec.estado==='A' && rec.llegoTarde));
   const isRetiro = tieneRetiro(rec);
   let affected = [];
+  const dictadas = (subj) => (getSchedule()[curso][diaKey]||[]).filter(e => e.subject===subj && !horaSinDocente(iso, curso, diaKey, e.hour));
   if(isFullAbsence){
-    affected = subjects.slice();
+    affected = subjects.filter(subj => dictadas(subj).length);
   } else if(isParcial || isRetiro){
     affected = subjects.filter(subj => {
-      const entries = (getSchedule()[curso][diaKey]||[]).filter(e=>e.subject===subj);
+      const entries = dictadas(subj);
       return entries.some(e => {
         const st = HOUR_TIME[e.hour];
         const porLlegada = isParcial && st && minutesOf(st) < minutesOf(rec.hora);
@@ -3005,6 +3069,8 @@ function renderDetalleFaltasAlumno(){
     else if(rec.estado==='T') w = 0.5;
     w += pesoRetiro(rec);
     if(w>0) dias.push({ fecha, w, tipo: rec.estado, retiro: tieneRetiro(rec) ? rec.retiro.hora : null });
+    // Tarde justificada: no suma, pero se muestra si le hizo perder materias.
+    else if(rec.estado==='TJ' && subjectsAfectadasEnDia(selectedStudentId, fecha).length) dias.push({ fecha, w: 0, tipo: 'TJ', hora: rec.hora });
   });
   Object.entries(efMap).forEach(([key,val]) => {
     const [fecha, sid] = key.split('|');
@@ -3018,7 +3084,8 @@ function renderDetalleFaltasAlumno(){
   const rows = dias.map(d => {
     const materias = subjectsAfectadasEnDia(selectedStudentId, d.fecha);
     const materiasTxt = (materias.length ? materias.join(', ') : (d.tipo==='EF' ? 'Ed. Física' : '—'))
-      + (d.retiro ? ` · se retiró ${d.retiro}` : '');
+      + (d.retiro ? ` · se retiró ${d.retiro}` : '')
+      + (d.tipo === 'TJ' ? ` · tarde justificada${d.hora ? ' ('+d.hora+')' : ''}, no suma` : '');
     return `<div class="dia-falta-row">
       <span class="dia-falta-fecha">${fmtDateShort(d.fecha)}</span>
       <span class="dia-falta-peso">${d.w}</span>
@@ -3138,12 +3205,23 @@ function renderResumenAlumno(){
     <p class="section-label" style="margin-top:16px;">Autorización de tardanza</p>
     ${(() => {
       const auth = getAutorizaciones()[selectedStudentId];
+      const puede = userRole!=='viewer' && userRole!=='student';
       if(auth && auth.activa){
-        return `<div class="config-card"><p class="v">Hasta ${auth.horaTope} · ${auth.motivo}</p><p class="k">Desde ${auth.desde}</p></div>`;
+        return `<div class="config-card">
+          <div style="display:flex;gap:14px;flex-wrap:wrap;">
+            <div><p class="k">Entra sin tardanza hasta</p><p class="v">${escapeHtml(auth.horaTope)}</p></div>
+            <div style="flex:1;min-width:120px;"><p class="k">Motivo</p><p class="v">${auth.motivo ? escapeHtml(auth.motivo) : '<span style="color:var(--ink-soft);font-weight:400;">Sin motivo</span>'}</p></div>
+          </div>
+          <p class="k" style="margin-top:8px;">Activa desde el ${auth.desde ? fmtDateShort(auth.desde) : '—'}${auth.modificada ? ' · modificada el ' + fmtDateShort(auth.modificada) : ''}</p>
+        </div>
+        ${puede ? `<div style="display:flex;gap:8px;margin-top:8px;">
+          <button class="btn-secondary" id="authEditarBtn" style="flex:1;">Editar horario o motivo</button>
+          <button class="btn-secondary" id="authCerrarBtn" style="flex:0 0 auto;">Cerrar</button>
+        </div>` : ''}`;
       }
-      return `<p class="empty-inline">Sin autorización activa.</p>`;
+      return `<p class="empty-inline">Sin autorización activa.</p>
+        ${puede ? `<button class="btn-secondary" id="authAgregarBtn" style="width:100%;margin-top:8px;">Agregar autorización</button>` : ''}`;
     })()}
-    ${(userRole!=='viewer' && userRole!=='student') ? `<button class="btn-secondary" id="authBtn" style="width:100%;margin-top:8px;">${(getAutorizaciones()[selectedStudentId]||{}).activa ? 'Cerrar autorización' : 'Agregar autorización'}</button>` : ''}
 
     ${userRole!=='student' ? `
     <p class="section-label" style="margin-top:16px;">Docencia</p>
@@ -3166,9 +3244,9 @@ function renderResumenAlumno(){
   attachPillBtns('bim', (v) => { selectedBimestreN = Number(v); render(); });
   document.getElementById('cardFaltasBim').addEventListener('click', () => navigate('detalleFaltasAlumno'));
   document.getElementById('compararBimBtn').addEventListener('click', () => navigate('compararBimestres'));
-  if(document.getElementById('authBtn')){
-    document.getElementById('authBtn').addEventListener('click', () => gestionarAutorizacion(selectedStudentId));
-  }
+  if(document.getElementById('authAgregarBtn')) document.getElementById('authAgregarBtn').addEventListener('click', () => agregarAutorizacion(selectedStudentId));
+  if(document.getElementById('authEditarBtn')) document.getElementById('authEditarBtn').addEventListener('click', () => editarAutorizacion(selectedStudentId));
+  if(document.getElementById('authCerrarBtn')) document.getElementById('authCerrarBtn').addEventListener('click', () => cerrarAutorizacion(selectedStudentId));
   if(document.getElementById('verValoracionesBtn')){
     document.getElementById('verValoracionesBtn').addEventListener('click', () => navigate('resumenValoraciones'));
   }
@@ -3793,6 +3871,7 @@ function renderProfesorNuevo(){
 
 // ---------- Home del profesor ----------
 async function cambiarPasswordProfesor(){
+  if(modoPruebaBloquea()) return;
   const nueva = await customPrompt('Nueva contraseña (mínimo 6 caracteres):');
   if(!nueva) return;
   if(nueva.length < 6){ await customAlert('Debe tener al menos 6 caracteres.'); return; }
@@ -5092,7 +5171,8 @@ function renderVistaCurso(){
     </div>
     <button class="btn-secondary" id="exportarOficialBtn" style="width:100%;margin-bottom:10px;"><span class="btn-icon-fix">${icon('file')}</span> Exportar planilla oficial del mes (día por día)</button>
     <button class="btn-secondary" id="exportarResumenMesBtn" style="width:100%;margin-bottom:10px;"><span class="btn-icon-fix">${icon('file')}</span> Exportar resumen del mes</button>
-    <button class="btn-secondary" id="exportarBtn" style="width:100%;margin-bottom:16px;"><span class="btn-icon-fix">${icon('file')}</span> Exportar asistencia a Excel (bimestre)</button>` : ''}
+    <button class="btn-secondary" id="exportarBtn" style="width:100%;margin-bottom:10px;"><span class="btn-icon-fix">${icon('file')}</span> Exportar asistencia a Excel (bimestre)</button>
+    ${userRole==='admin' ? `<button class="btn-secondary" id="exportarPIABtn" style="width:100%;margin-bottom:16px;"><span class="btn-icon-fix">${icon('file')}</span> Planilla del PIA (todos los cursos)</button>` : '<div style="height:6px;"></div>'}` : ''}
 
     ${(() => { const sem = computeTendenciaSemanal(selectedCurso); return sem.length ? `
     <p class="section-label">Faltas del curso, semana por semana</p>
@@ -5112,6 +5192,7 @@ function renderVistaCurso(){
   document.getElementById('cardAlertaCurso').addEventListener('click', () => navigate('vistaCursoAlerta'));
   document.getElementById('cardSCPCurso').addEventListener('click', () => navigate('vistaCursoSCP'));
   document.getElementById('cardCercaCurso').addEventListener('click', () => navigate('vistaCursoCerca'));
+  if(document.getElementById('exportarPIABtn')) document.getElementById('exportarPIABtn').addEventListener('click', exportarPlanillaPIA);
   if(document.getElementById('exportarBtn')){
     document.getElementById('exportarBtn').addEventListener('click', () => exportarAsistenciaCurso(selectedCurso));
   }
@@ -5203,6 +5284,122 @@ function renderVistaCursoSCP(){
   document.querySelectorAll('[data-student]').forEach(el => {
     el.addEventListener('click', () => { selectedStudentId = el.dataset.student; navigate('resumenAlumno'); });
   });
+}
+
+// Planilla del PIA: una pestaña por curso, una fila por alumno con las materias en las
+// que queda SCP (debajo del 85% anual). Antes de diciembre es una proyección: las clases
+// que faltan dar se cuentan como presentes.
+function exportarPlanillaPIA(){
+  const anio = { from: BIMESTRES[0].from, to: BIMESTRES[BIMESTRES.length-1].to };
+  const wb = XLSX.utils.book_new();
+  let totalAlumnos = 0;
+  CURSOS.forEach(curso => {
+    const alumnos = getStudents().filter(s => s.curso === curso).sort((a,b)=> a.apellido.localeCompare(b.apellido));
+    const filas = [];
+    alumnos.forEach(s => {
+      const stats = computeMateriaStats(s.id, anio);
+      const scp = Object.entries(stats)
+        .map(([materia, st]) => ({ materia, st, pct: st.total ? 1 - st.faltas/st.total : 1 }))
+        .filter(x => x.pct < UMBRAL_SCP)
+        .sort((a,b)=> a.materia.localeCompare(b.materia));
+      if(!scp.length) return;
+      totalAlumnos++;
+      filas.push({
+        'Alumno': `${s.apellido}, ${s.nombre}`,
+        'Cantidad de materias': scp.length,
+        'Materias a recuperar (asistencia anual)': scp.map(x => `${x.materia} (${Math.round(x.pct*1000)/10}% · ${x.st.faltas}/${x.st.total})`).join('; '),
+      });
+    });
+    const hoja = filas.length ? XLSX.utils.json_to_sheet(filas) : XLSX.utils.aoa_to_sheet([['Ningún alumno de este curso queda en SCP.']]);
+    if(filas.length) hoja['!cols'] = [{ wch: 30 }, { wch: 12 }, { wch: 90 }];
+    XLSX.utils.book_append_sheet(wb, hoja, `${curso}° A`);
+  });
+  const hoy = todayISO();
+  XLSX.writeFile(wb, `PIA_${hoy}.xlsx`);
+  const fin = BIMESTRES[BIMESTRES.length-1].to;
+  showToast(`Planilla del PIA descargada (${totalAlumnos} ${totalAlumnos===1?'alumno':'alumnos'})${hoy < fin ? ' · proyección al día de hoy' : ''}`);
+}
+
+// Elegir a quién simular en el modo de prueba.
+function renderPruebaElegir(){
+  const tipo = currentRoute === 'pruebaDocente' ? 'teacher' : currentRoute === 'pruebaAlumno' ? 'student' : 'viewer';
+  let lista = '';
+  let extra = '';
+  if(tipo === 'teacher'){
+    const ts = Object.values(cache.teachers).filter(t => t.activo !== false).sort((a,b)=> (a.nombre||'').localeCompare(b.nombre||''));
+    lista = ts.map(t => `<div class="module-row" data-prueba="${t.uid}">
+      <div class="txt"><p class="title">${escapeHtml(t.nombre || t.email || t.uid)}</p><p class="desc">${(t.cursos||[]).map(c=>c+'°').join(', ') || 'Sin cursos'} · ${(t.materias||[]).join(', ') || 'Sin materias'}</p></div>
+      <span class="chevron">${icon('chevron')}</span></div>`).join('');
+  } else if(tipo === 'student'){
+    extra = `<div class="course-picker">${cursoBtns(CURSOS)}</div>`;
+    const conCuenta = new Set(Object.values(cache.students_auth || {}).map(a => a.studentId));
+    lista = getStudents().filter(s => s.curso === selectedCurso).sort((a,b)=> a.apellido.localeCompare(b.apellido)).map(s => `<div class="module-row" data-prueba="${s.id}">
+      ${avatarAlumno(s)}
+      <div class="txt"><p class="title">${escapeHtml(s.apellido)}, ${escapeHtml(s.nombre)}</p>${conCuenta.has(s.id) ? '' : '<p class="desc">Todavía sin cuenta (se ve igual)</p>'}</div>
+      <span class="chevron">${icon('chevron')}</span></div>`).join('');
+  } else {
+    const vs = Object.values(cache.viewers).filter(v => v.activo !== false).sort((a,b)=> (a.nombre||'').localeCompare(b.nombre||''));
+    lista = vs.map(v => `<div class="module-row" data-prueba="${v.uid}">
+      <div class="txt"><p class="title">${escapeHtml(v.nombre || v.email || v.uid)}</p>${v.email ? `<p class="desc">${escapeHtml(v.email)}</p>` : ''}</div>
+      <span class="chevron">${icon('chevron')}</span></div>`).join('');
+  }
+  const titulo = tipo === 'teacher' ? 'Ver como docente' : tipo === 'student' ? 'Ver como alumno' : 'Ver como solo lectura';
+  $app.innerHTML = `
+    <div class="appbar" style="padding:0 0 10px;">
+      <button class="back-btn" id="backBtn">${icon('back')}</button>
+      <h1>${titulo}</h1>
+    </div>
+    <p class="info-note" style="margin-top:0;">${icon('info')}Vas a ver la app como la ve esa persona, con sus datos reales. No se guarda nada de lo que toques. Para volver, tocá "Salir" en la franja de arriba.</p>
+    ${extra}
+    ${lista ? `<div class="module-list">${lista}</div>` : `<p class="empty-inline">No hay cuentas para elegir.</p>`}
+  `;
+  document.getElementById('backBtn').addEventListener('click', () => goBack('config'));
+  if(tipo === 'student') attachCursoBtns((c) => { selectedCurso = c; render(); });
+  document.querySelectorAll('[data-prueba]').forEach(el => el.addEventListener('click', () => entrarModoPrueba(tipo, el.dataset.prueba)));
+}
+
+function entrarModoPrueba(rol, id){
+  if(userRole !== 'admin') return;
+  let nombre = '';
+  if(rol === 'teacher'){
+    const t = cache.teachers[id]; if(!t) return;
+    currentTeacher = Object.assign({ cursos: [], materias: [] }, t, { uid: id });
+    nombre = t.nombre || t.email || 'Docente';
+  } else if(rol === 'student'){
+    const s = getStudents().find(x => x.id === id); if(!s) return;
+    const cuenta = Object.values(cache.students_auth || {}).find(a => a.studentId === id);
+    currentStudentAuth = Object.assign({ uid: 'prueba', email: '' }, cuenta || {}, { studentId: s.id, curso: s.curso, nombre: (cuenta && cuenta.nombre) || `${s.nombre} ${s.apellido}` });
+    nombre = `${s.apellido}, ${s.nombre}`;
+  } else {
+    const v = cache.viewers[id]; if(!v) return;
+    currentViewer = Object.assign({}, v, { uid: id });
+    nombre = v.nombre || v.email || 'Solo lectura';
+  }
+  modoPrueba = { rol, nombre };
+  userRole = rol;
+  navHistory = []; navFotos = [];
+  currentRoute = homeRoute();
+  render();
+  window.scrollTo(0, 0);
+}
+
+function salirModoPrueba(){
+  if(!modoPrueba) return;
+  modoPrueba = null;
+  userRole = 'admin';
+  currentTeacher = null; currentStudentAuth = null; currentViewer = null;
+  navHistory = []; navFotos = [];
+  currentRoute = 'config';
+  render();
+  window.scrollTo(0, 0);
+}
+
+function franjaPrueba(){
+  if(!modoPrueba) return;
+  const rolTxt = modoPrueba.rol === 'teacher' ? 'Docente' : modoPrueba.rol === 'student' ? 'Alumno' : 'Solo lectura';
+  $app.insertAdjacentHTML('afterbegin', `<div class="franja-prueba"><span><b>Vista de prueba</b> · ${rolTxt}: ${escapeHtml(modoPrueba.nombre)}</span><button type="button" id="salirPruebaBtn">Salir</button></div>`);
+  const b = document.getElementById('salirPruebaBtn');
+  if(b) b.addEventListener('click', salirModoPrueba);
 }
 
 function renderVistaCursoCerca(){
@@ -6177,6 +6374,14 @@ function renderConfig(){
       <button class="btn-secondary" id="migrarBtn" style="width:100%;">Actualizar registros viejos</button>
       <p id="migracionEstado" style="font-size:12px;color:var(--ink-soft);margin-top:8px;"></p>
     </div>
+
+    <p class="section-label" style="margin-top:20px;">Modo de prueba</p>
+    <div class="module-list">
+      ${moduleRow('users','Ver como docente','Elegí un profesor y mirá la app como la ve', 'pruebaDocente')}
+      ${moduleRow('users','Ver como alumno','Elegí un alumno y mirá la app como la ve', 'pruebaAlumno')}
+      ${moduleRow('users','Ver como solo lectura','Directivos y otras cuentas de consulta', 'pruebaLectura')}
+    </div>
+    <p style="font-size:11.5px;color:var(--ink-soft);margin:8px 2px 0;">Se ven los datos reales de esa persona, pero no se guarda nada de lo que toques.</p>
 
     <p class="section-label" style="margin-top:20px;">Respaldos</p>
     <button class="btn-secondary" id="irRespaldoBtn" style="width:100%;">Respaldo completo (Excel)</button>
