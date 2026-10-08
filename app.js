@@ -288,7 +288,8 @@ function startListeners(){
     snap.forEach(d => {
       const data = d.data();
       if(!byStudent[data.studentId]) byStudent[data.studentId] = [];
-      byStudent[data.studentId].push({ id: d.id, fecha: data.fecha, motivo: data.motivo, createdAt: data.createdAt||0 });
+      byStudent[data.studentId].push({ id: d.id, fecha: data.fecha, motivo: data.motivo, createdAt: data.createdAt||0,
+        materia: data.materia || '', profesor: data.profesor || '', notificado: data.notificado || '', observacion: data.observacion || '' });
     });
     Object.keys(byStudent).forEach(sid => {
       byStudent[sid].sort((a,b)=>a.createdAt-b.createdAt);
@@ -1837,6 +1838,12 @@ function renderDetalleAlertas(){
 }
 
 // ---------- Importar histórico ----------
+// Los apercibimientos importados tienen un ID fijo (alumno + fecha + motivo): si se
+// importa dos veces el mismo archivo, se pisan en vez de duplicarse.
+function idSancionImportada(s){ return docId(`imp_${s.studentId}_${s.fecha}_${slugify(s.motivo || '').slice(0, 40)}`); }
+function sancionYaCargada(s, id){
+  return (getSanciones()[s.studentId] || []).some(h => h.fecha === s.fecha && h.id !== id);
+}
 async function ejecutarImportacion(data){
   const ops = [];
   (data.attendance||[]).forEach(ev => {
@@ -1854,8 +1861,13 @@ async function ejecutarImportacion(data){
     ops.push({ type:'set', ref: doc(db,'autorizaciones', a.studentId), data: { motivo: a.motivo, horaTope: a.horaTope, activa: a.activa, desde: a.desde, autor: 'Importación histórica' } });
   });
   (data.sanciones||[]).forEach((s, idx) => {
+    // Si ese día ya hay un apercibimiento cargado a mano para ese alumno, no se duplica.
+    const id = idSancionImportada(s);
+    if(sancionYaCargada(s, id)) return;
     const createdAt = new Date(s.fecha+'T12:00:00').getTime() + idx;
-    ops.push({ type:'set', ref: doc(collection(db,'sanciones')), data: { studentId: s.studentId, fecha: s.fecha, motivo: s.motivo, createdAt, autor: 'Importación histórica' } });
+    const payload = { studentId: s.studentId, fecha: s.fecha, motivo: s.motivo, createdAt, autor: 'Importación histórica' };
+    ['curso','materia','profesor','notificado','observacion'].forEach(k => { if(s[k]) payload[k] = s[k]; });
+    ops.push({ type:'set', ref: doc(db,'sanciones', id), data: payload });
   });
   (data.valoraciones||[]).forEach(v => {
     const key = docId(`${v.studentId}_${v.bimestre}_${slugify(v.materia)}`);
@@ -1904,7 +1916,7 @@ function renderImportar(){
       try{
         pendingData = JSON.parse(reader.result);
         document.getElementById('importPreview').innerHTML =
-          `<p style="font-size:13px;">Se van a cargar <b>${(pendingData.attendance||[]).length}</b> registros de asistencia, <b>${(pendingData.ef||[]).length}</b> de Educación Física, <b>${(pendingData.autorizaciones||[]).length}</b> autorizaciones de tardanza, <b>${(pendingData.sanciones||[]).length}</b> apercibimientos, <b>${(pendingData.valoraciones||[]).length}</b> valoraciones pedagógicas, y se van a borrar <b>${(pendingData.deletes||[]).length}</b> registros viejos incorrectos.</p>`;
+          `<p style="font-size:13px;">Se van a cargar <b>${(pendingData.attendance||[]).length}</b> registros de asistencia, <b>${(pendingData.ef||[]).length}</b> de Educación Física, <b>${(pendingData.autorizaciones||[]).length}</b> autorizaciones de tardanza, <b>${(pendingData.sanciones||[]).length}</b> apercibimientos${(() => { const n = (pendingData.sanciones||[]).filter(x => sancionYaCargada(x, idSancionImportada(x))).length; return n ? ` (${n} no se cargan porque ese alumno ya tiene un apercibimiento ese mismo día)` : ''; })()}, <b>${(pendingData.valoraciones||[]).length}</b> valoraciones pedagógicas, y se van a borrar <b>${(pendingData.deletes||[]).length}</b> registros viejos incorrectos.</p>`;
         document.getElementById('importBtn').style.display = 'block';
       }catch(err){
         document.getElementById('importPreview').innerHTML = `<p style="font-size:13px;color:var(--stamp);">Archivo inválido.</p>`;
@@ -2030,7 +2042,7 @@ function renderAsistencia(){
     }
 
     return `
-      <div class="student-card">
+      <div class="student-card" data-menu="${s.id}">
         <div class="row">
           ${avatarAlumno(s)}
           <div style="flex:1">
@@ -2251,8 +2263,10 @@ function renderSancionDetalle(){
     <div class="sancion-item">
       <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;">
         <div>
-          <p class="folio">${ordinal(h.folio)} · ${h.fecha}</p>
-          <p class="motivo">${h.motivo}</p>
+          <p class="folio">${ordinal(h.folio)} · ${h.fecha ? fmtDateShort(h.fecha) : '—'}</p>
+          <p class="motivo">${escapeHtml(h.motivo)}</p>
+          ${(h.materia || h.profesor || h.notificado) ? `<p class="sancion-meta">${[h.materia, h.profesor, h.notificado ? 'Notificado: ' + h.notificado : ''].filter(Boolean).map(escapeHtml).join(' · ')}</p>` : ''}
+          ${h.observacion ? `<p class="sancion-obs">${escapeHtml(h.observacion)}</p>` : ''}
         </div>
         <button class="borrar-btn" data-borrar="${h.id}">${icon('trash')}</button>
       </div>
@@ -2508,6 +2522,110 @@ document.addEventListener('input', (e) => {
   }
 }, true);
 
+// ---------- Menú rápido en asistencia (mantener apretado un alumno) ----------
+function abrirMenuAlumno(studentId){
+  const s = getStudents().find(x => x.id === studentId);
+  if(!s) return;
+  cerrarMenuAlumno(true);
+  const fecha = selectedFecha;
+  const rec = getAttendance()[`${fecha}|${studentId}`];
+  const faltas = (computeAbsenceWeights(bimestreActual())[studentId] || 0);
+  const auth = getAutorizaciones()[studentId];
+  const authActiva = auth && auth.activa;
+  const aperc = (getSanciones()[studentId] || []).length;
+  const puedeRetiro = !rec || rec.estado === 'P' || rec.estado === 'T' || rec.estado === 'TJ';
+  const chips = [
+    `<span class="mr-chip ${faltas >= UMBRAL_ALERTA ? 'alerta' : ''}">${String(faltas).replace('.', ',')} ${faltas === 1 ? 'falta' : 'faltas'} en el bimestre</span>`,
+    aperc ? `<span class="mr-chip">${aperc} ${aperc === 1 ? 'apercibimiento' : 'apercibimientos'}</span>` : '',
+    authActiva ? `<span class="mr-chip auth">Autorizado hasta ${escapeHtml(auth.horaTope)}</span>` : '',
+  ].join('');
+  const accion = (id, ic, titulo, desc) => `<button type="button" class="mr-accion" data-mr="${id}"><span class="mr-ic">${icon(ic)}</span><span class="mr-txt"><b>${titulo}</b>${desc ? `<small>${desc}</small>` : ''}</span></button>`;
+  const html = `
+    <div class="menu-rapido" id="menuRapido" role="dialog" aria-label="Acciones rápidas">
+      <div class="mr-fondo" data-mr="cerrar"></div>
+      <div class="mr-hoja">
+        <div class="mr-agarre"></div>
+        <div class="mr-cab">
+          ${avatarAlumno(s)}
+          <div style="min-width:0;">
+            <p class="mr-nombre">${escapeHtml(s.apellido)}, ${escapeHtml(s.nombre)}</p>
+            <p class="mr-sub">${s.curso}° A · ${fmtDateShort(fecha)}</p>
+          </div>
+        </div>
+        <div class="mr-chips">${chips}</div>
+        <div class="mr-lista">
+          ${puedeRetiro ? accion('retiro', 'salida', tieneRetiro(rec) ? 'Editar retiro anticipado' : 'Retiro anticipado', tieneRetiro(rec) ? `Se retiró ${escapeHtml(rec.retiro.hora)}` : 'Cargar hora y motivo') : ''}
+          ${accion('apercibimiento', 'alert', 'Cargar apercibimiento', 'Va a sus sanciones')}
+          ${accion('justificativo', 'file', 'Cargar certificado', 'Justificar faltas con un certificado')}
+          ${accion('autorizacion', 'clock', authActiva ? 'Editar autorización de tardanza' : 'Agregar autorización de tardanza', authActiva ? `Hasta ${escapeHtml(auth.horaTope)}${auth.motivo ? ' · ' + escapeHtml(auth.motivo) : ''}` : 'Para alumnos que llegan tarde con permiso')}
+          ${accion('resumen', 'users', 'Ver resumen del alumno', 'Faltas por materia, notas y más')}
+        </div>
+        <button type="button" class="mr-cancelar" data-mr="cerrar">Cancelar</button>
+      </div>
+    </div>`;
+  document.body.insertAdjacentHTML('beforeend', html);
+  const m = document.getElementById('menuRapido');
+  requestAnimationFrame(() => m.classList.add('abierto'));
+  m.addEventListener('click', (e) => {
+    const b = e.target.closest('[data-mr]');
+    if(!b) return;
+    const a = b.dataset.mr;
+    cerrarMenuAlumno();
+    if(a === 'retiro') editarRetiro(studentId, fecha);
+    else if(a === 'apercibimiento'){ selectedStudentId = studentId; navigate('sancionDetalle'); }
+    else if(a === 'justificativo'){ selectedStudentId = studentId; pendingFileDataUrl = null; navigate('justificativoAlumno'); }
+    else if(a === 'autorizacion'){ authActiva ? editarAutorizacion(studentId) : agregarAutorizacion(studentId); }
+    else if(a === 'resumen'){ selectedStudentId = studentId; selectedBimestreN = null; navigate('resumenAlumno'); }
+  });
+}
+function cerrarMenuAlumno(inmediato){
+  const m = document.getElementById('menuRapido');
+  if(!m) return;
+  if(inmediato){ m.remove(); return; }
+  m.classList.remove('abierto');
+  setTimeout(() => m.remove(), 260);
+}
+(function mantenerApretado(){
+  let timer = null, x0 = 0, y0 = 0, tragarClick = 0;
+  const cancelar = () => { if(timer){ clearTimeout(timer); timer = null; } };
+  const puede = (t) => currentRoute === 'asistencia' && userRole === 'admin' && t && t.closest && t.closest('[data-menu]');
+  document.addEventListener('touchstart', (e) => {
+    cancelar();
+    const card = e.touches.length === 1 && puede(e.target);
+    if(!card) return;
+    x0 = e.touches[0].clientX; y0 = e.touches[0].clientY;
+    card.classList.add('apretando');
+    timer = setTimeout(() => {
+      timer = null;
+      card.classList.remove('apretando');
+      tragarClick = Date.now();
+      try{ if(navigator.vibrate) navigator.vibrate(12); }catch(err){}
+      abrirMenuAlumno(card.dataset.menu);
+    }, 480);
+  }, { passive: true });
+  document.addEventListener('touchmove', (e) => {
+    if(!timer) return;
+    if(Math.abs(e.touches[0].clientX - x0) > 8 || Math.abs(e.touches[0].clientY - y0) > 8){
+      cancelar();
+      document.querySelectorAll('.apretando').forEach(el => el.classList.remove('apretando'));
+    }
+  }, { passive: true });
+  const fin = () => { cancelar(); document.querySelectorAll('.apretando').forEach(el => el.classList.remove('apretando')); };
+  document.addEventListener('touchend', fin, { passive: true });
+  document.addEventListener('touchcancel', fin, { passive: true });
+  // Después de abrir el menú, el dedo al levantarse no tiene que "tocar" el botón de abajo.
+  document.addEventListener('click', (e) => {
+    if(tragarClick && Date.now() - tragarClick < 700 && !e.target.closest('#menuRapido')){ e.stopPropagation(); e.preventDefault(); tragarClick = 0; }
+  }, true);
+  // En la compu: clic derecho sobre el alumno.
+  document.addEventListener('contextmenu', (e) => {
+    const card = puede(e.target);
+    if(!card) return;
+    e.preventDefault();
+    abrirMenuAlumno(card.dataset.menu);
+  });
+})();
+
 // ---------- Transición tipo iOS y gesto para volver ----------
 // Antes de dibujar la pantalla nueva se hace una copia de la actual y se la pone fija
 // en el mismo lugar, para que se vea deslizarse (hacia la izquierda al avanzar, hacia
@@ -2642,6 +2760,7 @@ function render(){
   if(hb) hb.classList.toggle('show', !histAsistenciaListo);
   if((pendingTransicion === 'adelante' || pendingTransicion === 'atras') && primerRenderHecho) crearPantallaSaliente(pendingTransicion);
   if($app){ $app.style.transform = ''; $app.classList.remove('arrastrando', 'volviendo-lugar'); }
+  if(currentRoute !== 'asistencia') cerrarMenuAlumno(true);
   renderInner();
   franjaPrueba();
   const transicion = pendingTransicion;
