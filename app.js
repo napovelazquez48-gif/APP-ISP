@@ -120,6 +120,13 @@ function setTema(t){
 }
 aplicarTema();
 
+// ---------- Tamaño de letra (por dispositivo) ----------
+const ESCALAS_LETRA = { chica: 0.92, normal: 1, grande: 1.12 };
+function getLetra(){ const t = DB.get('isp_letra', 'normal'); return ESCALAS_LETRA[t] ? t : 'normal'; }
+function aplicarLetra(){ document.documentElement.style.setProperty('--fs', String(ESCALAS_LETRA[getLetra()])); }
+function setLetra(t){ DB.set('isp_letra', t); aplicarLetra(); }
+aplicarLetra();
+
 // ---------- In-memory cache (mirrors Firestore in real time) ----------
 let cache = {
   attendance: {},      // la vista completa que usa toda la app (histórico + en vivo)
@@ -1330,8 +1337,8 @@ function renderAusentismoDocente(){
       <p class="folio">${nombre}</p>
       <p class="motivo">${fechas.length} ${fechas.length===1?'día de ausencia registrado':'días de ausencia registrados'}</p>
       <details style="margin-top:4px;">
-        <summary style="font-size:11.5px;color:var(--ink-soft);cursor:pointer;">Ver fechas</summary>
-        <p style="font-size:12px;color:var(--ink-soft);margin-top:4px;">${fechas.map(f=>fmtDateShort(f)).join(' · ')}</p>
+        <summary style="font-size:calc(11.5px * var(--fs, 1));color:var(--ink-soft);cursor:pointer;">Ver fechas</summary>
+        <p style="font-size:calc(12px * var(--fs, 1));color:var(--ink-soft);margin-top:4px;">${fechas.map(f=>fmtDateShort(f)).join(' · ')}</p>
       </details>
     </div>
   `).join('');
@@ -1916,10 +1923,10 @@ function renderImportar(){
       try{
         pendingData = JSON.parse(reader.result);
         document.getElementById('importPreview').innerHTML =
-          `<p style="font-size:13px;">Se van a cargar <b>${(pendingData.attendance||[]).length}</b> registros de asistencia, <b>${(pendingData.ef||[]).length}</b> de Educación Física, <b>${(pendingData.autorizaciones||[]).length}</b> autorizaciones de tardanza, <b>${(pendingData.sanciones||[]).length}</b> apercibimientos${(() => { const n = (pendingData.sanciones||[]).filter(x => sancionYaCargada(x, idSancionImportada(x))).length; return n ? ` (${n} no se cargan porque ese alumno ya tiene un apercibimiento ese mismo día)` : ''; })()}, <b>${(pendingData.valoraciones||[]).length}</b> valoraciones pedagógicas, y se van a borrar <b>${(pendingData.deletes||[]).length}</b> registros viejos incorrectos.</p>`;
+          `<p style="font-size:calc(13px * var(--fs, 1));">Se van a cargar <b>${(pendingData.attendance||[]).length}</b> registros de asistencia, <b>${(pendingData.ef||[]).length}</b> de Educación Física, <b>${(pendingData.autorizaciones||[]).length}</b> autorizaciones de tardanza, <b>${(pendingData.sanciones||[]).length}</b> apercibimientos${(() => { const n = (pendingData.sanciones||[]).filter(x => sancionYaCargada(x, idSancionImportada(x))).length; return n ? ` (${n} no se cargan porque ese alumno ya tiene un apercibimiento ese mismo día)` : ''; })()}, <b>${(pendingData.valoraciones||[]).length}</b> valoraciones pedagógicas, y se van a borrar <b>${(pendingData.deletes||[]).length}</b> registros viejos incorrectos.</p>`;
         document.getElementById('importBtn').style.display = 'block';
       }catch(err){
-        document.getElementById('importPreview').innerHTML = `<p style="font-size:13px;color:var(--stamp);">Archivo inválido.</p>`;
+        document.getElementById('importPreview').innerHTML = `<p style="font-size:calc(13px * var(--fs, 1));color:var(--stamp);">Archivo inválido.</p>`;
       }
     };
     reader.readAsText(file);
@@ -2011,6 +2018,10 @@ function renderAsistencia(){
     }
     if(soloLectura) metaHtml = metaHtml.replace(/ data-edit="/g, ' data-noop="').replace(/ data-exent="/g, ' data-noop2="').replace(/ data-retiro="/g, ' data-noop3="');
 
+    const estadoVis = !rec ? (esPasado ? 'p' : 'none')
+      : rec.exencion ? 'ex'
+      : rec.estado === 'P' ? 'p' : rec.estado === 'T' ? 't' : rec.estado === 'TJ' ? 'tj'
+      : rec.estado === 'J' ? 'j' : rec.estado === 'A' ? 'a' : 'none';
     let efHtml = '';
     if(esDiaEF){
       const efRec = getEF()[key];
@@ -2029,7 +2040,7 @@ function renderAsistencia(){
 
     if(soloLectura){
       return `
-      <div class="student-card">
+      <div class="student-card" data-estado="${estadoVis}">
         <div class="row">
           ${avatarAlumno(s)}
           <div style="flex:1">
@@ -2042,7 +2053,7 @@ function renderAsistencia(){
     }
 
     return `
-      <div class="student-card" data-menu="${s.id}">
+      <div class="student-card" data-menu="${s.id}" data-estado="${estadoVis}">
         <div class="row">
           ${avatarAlumno(s)}
           <div style="flex:1">
@@ -2060,6 +2071,32 @@ function renderAsistencia(){
   }).join('');
   ultimaAccionPulso = null;
 
+  // Contador en vivo: presentes (incluye tardes), ausentes y sin marcar.
+  const cuenta = { p:0, t:0, a:0, x:0, sin:0 };
+  students.forEach(s => {
+    const r = att[`${selectedFecha}|${s.id}`];
+    if(!r) { if(esPasado) cuenta.p++; else cuenta.sin++; return; }
+    if(r.exencion) cuenta.x++;
+    else if(r.estado === 'P') cuenta.p++;
+    else if(r.estado === 'T' || r.estado === 'TJ') cuenta.t++;
+    else if(r.estado === 'A' || r.estado === 'J') cuenta.a++;
+    else cuenta.sin++;
+  });
+  const totalCurso = students.length;
+  const pct = (n) => totalCurso ? (100 * n / totalCurso).toFixed(2) + '%' : '0%';
+  const contadorHtml = totalCurso ? `
+    <div class="contador-asis ${cuenta.sin === 0 ? 'completo' : ''}">
+      <p class="ca-txt">
+        <span class="ca-p"><b>${cuenta.p + cuenta.t}/${totalCurso}</b> presentes${cuenta.t ? ` (<b style="color:var(--gold)">${cuenta.t}</b> tarde)` : ''}</span>
+        <span class="ca-a"><b>${cuenta.a}</b> ${cuenta.a === 1 ? 'ausente' : 'ausentes'}</span>
+        ${cuenta.x ? `<span><b>${cuenta.x}</b> ${cuenta.x === 1 ? 'exento' : 'exentos'}</span>` : ''}
+        <span class="ca-falta">${cuenta.sin ? `<b>${cuenta.sin}</b> sin marcar` : '✓ todos marcados'}</span>
+      </p>
+      <div class="ca-barra" aria-hidden="true">
+        <span class="bp" style="width:${pct(cuenta.p)}"></span><span class="bt" style="width:${pct(cuenta.t)}"></span><span class="ba" style="width:${pct(cuenta.a)}"></span><span class="bx" style="width:${pct(cuenta.x)}"></span>
+      </div>
+    </div>` : '';
+
   $app.innerHTML = `
     <div class="sticky-head">
       <div class="appbar" style="padding:0 0 10px;">
@@ -2070,7 +2107,8 @@ function renderAsistencia(){
         ${cursoBtns(soloLectura ? cursosDisponibles() : CURSOS)}
         <input type="date" id="fechaSelect" value="${selectedFecha}" max="${maxFechaSeleccionable()}">
       </div>
-      <p class="date-label" style="margin-bottom:${(!soloLectura && students.length) ? '8px' : '0'};">${fmtDateLong(selectedFecha)} · entrada ${cfg.entrada}, tolerancia ${cfg.toleranciaMin} min</p>
+      <p class="date-label" style="margin-bottom:8px;">${fmtDateLong(selectedFecha)} · entrada ${cfg.entrada}, tolerancia ${cfg.toleranciaMin} min</p>
+      ${contadorHtml}
       ${(!soloLectura && students.length) ? `<button class="btn-secondary" id="marcarTodosBtn" style="width:100%;">Marcar todos presentes</button>` : ''}
     </div>
     <div style="height:12px"></div>
@@ -2080,12 +2118,12 @@ function renderAsistencia(){
         return `<div class="alert-banner" style="background:var(--sage-bg);margin-bottom:14px;border-left-color:var(--sage);">
           <p class="alert-text" style="color:var(--sage);">Entrada especial hoy: hasta las ${especial.horaTope}${especial.motivo?' · '+especial.motivo:''}</p>
           ${soloLectura ? '' : `<div style="display:flex;gap:8px;margin-top:8px;">
-            <button class="btn-secondary" id="editarEspecialBtn" style="flex:1;font-size:12px;padding:6px;">Editar</button>
-            <button class="btn-secondary" id="borrarEspecialBtn" style="flex:1;font-size:12px;padding:6px;color:var(--stamp);">Sacar</button>
+            <button class="btn-secondary" id="editarEspecialBtn" style="flex:1;font-size:calc(12px * var(--fs, 1));padding:6px;">Editar</button>
+            <button class="btn-secondary" id="borrarEspecialBtn" style="flex:1;font-size:calc(12px * var(--fs, 1));padding:6px;color:var(--stamp);">Sacar</button>
           </div>`}
         </div>`;
       }
-      return soloLectura ? '' : `<p style="text-align:right;margin:-8px 0 10px;"><a href="#" id="entradaEspecialLink" style="font-size:12px;color:var(--ink-soft);text-decoration:underline;">+ Entrada especial para este curso hoy</a></p>`;
+      return soloLectura ? '' : `<p style="text-align:right;margin:-8px 0 10px;"><a href="#" id="entradaEspecialLink" style="font-size:calc(12px * var(--fs, 1));color:var(--ink-soft);text-decoration:underline;">+ Entrada especial para este curso hoy</a></p>`;
     })()}
     ${(() => {
       const sinClase = getDiaSinClase(selectedFecha, selectedCurso);
@@ -2093,12 +2131,12 @@ function renderAsistencia(){
         return `<div class="alert-banner" style="background:var(--gold-bg);margin-bottom:14px;border-left-color:var(--gold);">
           <p class="alert-text" style="color:var(--gold);">Sin clase hoy para este curso · ${sinClase.motivo} — no suma faltas ni afecta el % por materia.</p>
           ${soloLectura ? '' : `<div style="display:flex;gap:8px;margin-top:8px;">
-            <button class="btn-secondary" id="editarSinClaseBtn" style="flex:1;font-size:12px;padding:6px;">Editar</button>
-            <button class="btn-secondary" id="borrarSinClaseBtn" style="flex:1;font-size:12px;padding:6px;color:var(--stamp);">Sacar</button>
+            <button class="btn-secondary" id="editarSinClaseBtn" style="flex:1;font-size:calc(12px * var(--fs, 1));padding:6px;">Editar</button>
+            <button class="btn-secondary" id="borrarSinClaseBtn" style="flex:1;font-size:calc(12px * var(--fs, 1));padding:6px;color:var(--stamp);">Sacar</button>
           </div>`}
         </div>`;
       }
-      return soloLectura ? '' : `<p style="text-align:right;margin:-8px 0 14px;"><a href="#" id="sinClaseLink" style="font-size:12px;color:var(--ink-soft);text-decoration:underline;">+ Día sin clase para este curso (VCF, paro...)</a></p>`;
+      return soloLectura ? '' : `<p style="text-align:right;margin:-8px 0 14px;"><a href="#" id="sinClaseLink" style="font-size:calc(12px * var(--fs, 1));color:var(--ink-soft);text-decoration:underline;">+ Día sin clase para este curso (VCF, paro...)</a></p>`;
     })()}
     ${students.length ? rows : `<div class="empty-state"><h2>Sin alumnos</h2><p>Este curso no tiene alumnos cargados.</p></div>`}
     <div style="height:16px"></div>
@@ -2294,7 +2332,7 @@ function renderSancionDetalle(){
 
     <p class="section-label" style="margin-top:16px;">Nuevo apercibimiento</p>
     <div style="margin-bottom:10px;">
-      <label style="font-size:12.5px;color:var(--ink-soft);display:block;margin-bottom:4px;">Fecha</label>
+      <label style="font-size:calc(12.5px * var(--fs, 1));color:var(--ink-soft);display:block;margin-bottom:4px;">Fecha</label>
       <input type="date" id="fechaApercibimiento" value="${todayISO()}" max="${todayISO()}">
     </div>
     <textarea id="motivoInput" rows="3" placeholder="Describí lo que pasó..."></textarea>
@@ -2367,7 +2405,7 @@ function updatePreview(){
   const to = document.getElementById('fechaHasta').value;
   const box = document.getElementById('previewBox');
   if(!from || !to || from > to){
-    box.innerHTML = `<p style="font-size:12px;color:var(--ink-soft);">Elegí un rango de fechas válido.</p>`;
+    box.innerHTML = `<p style="font-size:calc(12px * var(--fs, 1));color:var(--ink-soft);">Elegí un rango de fechas válido.</p>`;
     return;
   }
   const student = getStudents().find(s => s.id === selectedStudentId);
@@ -2466,12 +2504,12 @@ function renderJustificativoAlumno(){
         Adjuntar archivo
       </label>
     </div>
-    <p id="fileStatus" style="font-size:12px;color:var(--ink-soft);margin:-10px 0 16px;">Sin adjunto todavía</p>
+    <p id="fileStatus" style="font-size:calc(12px * var(--fs, 1));color:var(--ink-soft);margin:-10px 0 16px;">Sin adjunto todavía</p>
 
     <p class="section-label">Rango que cubre</p>
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:16px;">
       <input type="date" id="fechaDesde" value="${today}">
-      <span style="font-size:12px;color:var(--ink-soft);">al</span>
+      <span style="font-size:calc(12px * var(--fs, 1));color:var(--ink-soft);">al</span>
       <input type="date" id="fechaHasta" value="${today}">
     </div>
 
@@ -2975,7 +3013,7 @@ function renderFamiliaAlumno(){
 
     <div class="config-card">
       <p class="k">Familia</p>
-      ${student.familyEmails.map(e => `<p class="v" style="font-size:13px;font-weight:400;">${e}</p>`).join('')}
+      ${student.familyEmails.map(e => `<p class="v" style="font-size:calc(13px * var(--fs, 1));font-weight:400;">${e}</p>`).join('')}
     </div>
 
     <p class="section-label">Enviar mail</p>
@@ -3303,7 +3341,7 @@ function renderResumenAlumno(){
     </div>
 
     <p class="section-label" style="margin-top:16px;">Faltas por materia (ciclo lectivo completo)</p>
-    <div class="sancion-list">${materiaRows || '<p style="font-size:13px;color:var(--ink-soft);padding:12px;">Sin datos para este período.</p>'}</div>
+    <div class="sancion-list">${materiaRows || '<p style="font-size:calc(13px * var(--fs, 1));color:var(--ink-soft);padding:12px;">Sin datos para este período.</p>'}</div>
     <p class="info-note">${icon('info')}SCP = por debajo del 85% de asistencia anual en esa materia (recupera en el PIA). "Le quedan" cuenta todas las clases del año, también las que faltan dar.</p>
 
     <p class="section-label" style="margin-top:16px;">Apercibimientos</p>
@@ -3474,7 +3512,7 @@ function countSAFenBimestre(studentId, bim){
 function renderProfesorSinAcceso(){
   $app.innerHTML = `
     <div style="padding-top:80px;text-align:center;">
-      <p style="font-size:14px;color:var(--ink-soft);max-width:260px;margin:0 auto 16px;">Tu cuenta no tiene acceso activo. Consultá con la preceptoría.</p>
+      <p style="font-size:calc(14px * var(--fs, 1));color:var(--ink-soft);max-width:260px;margin:0 auto 16px;">Tu cuenta no tiene acceso activo. Consultá con la preceptoría.</p>
       <button class="btn-primary" style="max-width:200px;margin:0 auto;" id="salirBtn">Salir</button>
     </div>
   `;
@@ -3568,7 +3606,7 @@ function renderProfesorEditar(){
     </div>
     ${conocido ? `
       <div class="config-card" style="margin-bottom:16px;">
-        <p class="v" style="font-size:13px;margin-bottom:8px;">Este nombre coincide con el horario cargado — se puede recalcular la asignación exacta (qué materia da en qué curso) con un toque.</p>
+        <p class="v" style="font-size:calc(13px * var(--fs, 1));margin-bottom:8px;">Este nombre coincide con el horario cargado — se puede recalcular la asignación exacta (qué materia da en qué curso) con un toque.</p>
         <button class="btn-secondary" id="recalcularBtn" style="width:100%;">Recalcular desde el horario</button>
       </div>
     ` : ''}
@@ -3870,7 +3908,7 @@ function renderConexionDrive(){
   const mapeados = Object.keys(cache.driveMapping || {}).length;
   const pend = registrosPendientesDeSync();
   const enlacesApi = `
-    <p style="font-size:12.5px;margin:8px 0 0;line-height:1.7;">
+    <p style="font-size:calc(12.5px * var(--fs, 1));margin:8px 0 0;line-height:1.7;">
       <a href="https://console.cloud.google.com/apis/library/sheets.googleapis.com?project=app-isp-f601c" target="_blank" rel="noopener">Activar Google Sheets API</a><br>
       <a href="https://console.cloud.google.com/apis/library/drive.googleapis.com?project=app-isp-f601c" target="_blank" rel="noopener">Activar Google Drive API</a>
     </p>`;
@@ -3889,7 +3927,7 @@ function renderConexionDrive(){
 
     <p class="section-label">1 · Compartir la carpeta (una sola vez)</p>
     <div class="config-card">
-      <p style="font-size:12.5px;color:var(--ink-soft);margin:0 0 8px;">En Drive, abrí la carpeta de las planillas de los alumnos, tocá <b>Compartir</b> y agregá esta dirección como <b>Editor</b> (sin enviar notificación):</p>
+      <p style="font-size:calc(12.5px * var(--fs, 1));color:var(--ink-soft);margin:0 0 8px;">En Drive, abrí la carpeta de las planillas de los alumnos, tocá <b>Compartir</b> y agregá esta dirección como <b>Editor</b> (sin enviar notificación):</p>
       <div class="drive-email">
         <span id="robotEmail">${driveInfo.email ? escapeHtml(driveInfo.email) : 'cargando…'}</span>
         ${driveInfo.email ? `<button class="btn-chip" id="copiarEmailBtn">Copiar</button>` : ''}
@@ -3900,31 +3938,31 @@ function renderConexionDrive(){
 
     <p class="section-label" style="margin-top:20px;">2 · Emparejar planillas con alumnos</p>
     <div class="config-card">
-      <p style="font-size:12.5px;color:var(--ink-soft);margin:0 0 8px;">${mapeados} alumno${mapeados!==1?'s':''} con planilla emparejada. Volvé a hacerlo cuando agregues alumnos o planillas nuevas.</p>
+      <p style="font-size:calc(12.5px * var(--fs, 1));color:var(--ink-soft);margin:0 0 8px;">${mapeados} alumno${mapeados!==1?'s':''} con planilla emparejada. Volvé a hacerlo cuando agregues alumnos o planillas nuevas.</p>
       <button class="btn-secondary" id="emparejarBtn" style="width:100%;">Buscar y emparejar planillas</button>
-      <p id="emparejarEstado" style="font-size:12.5px;color:var(--ink-soft);margin-top:8px;line-height:1.5;">${driveMapeoPendiente ? `Encontré ${driveMapeoPendiente.total} planillas en ${driveMapeoPendiente.carpetasCurso} carpetas de curso.<br>Emparejadas: <b>${Object.keys(driveMapeoPendiente.mapeo).length}</b> · Sin emparejar: <b>${driveMapeoPendiente.sinMatch.length}</b>${driveMapeoPendiente.sinMatch.length ? '<br>' + driveMapeoPendiente.sinMatch.slice(0,15).map(x=>'· '+escapeHtml(x)).join('<br>') : ''}` : ''}</p>
+      <p id="emparejarEstado" style="font-size:calc(12.5px * var(--fs, 1));color:var(--ink-soft);margin-top:8px;line-height:1.5;">${driveMapeoPendiente ? `Encontré ${driveMapeoPendiente.total} planillas en ${driveMapeoPendiente.carpetasCurso} carpetas de curso.<br>Emparejadas: <b>${Object.keys(driveMapeoPendiente.mapeo).length}</b> · Sin emparejar: <b>${driveMapeoPendiente.sinMatch.length}</b>${driveMapeoPendiente.sinMatch.length ? '<br>' + driveMapeoPendiente.sinMatch.slice(0,15).map(x=>'· '+escapeHtml(x)).join('<br>') : ''}` : ''}</p>
       ${driveMapeoPendiente ? `<button class="btn-primary" id="guardarMapeoBtn" style="width:100%;margin-top:8px;">Guardar emparejamiento</button>` : ''}
     </div>
 
     ${mapeados ? `
     <p class="section-label" style="margin-top:20px;">3 · Probar con un alumno</p>
     <div class="config-card">
-      <p style="font-size:12.5px;color:var(--ink-soft);margin:0 0 8px;">Escribe una fila marcada como PRUEBA en la planilla de un solo alumno, para que confirmes que queda en el lugar correcto.</p>
+      <p style="font-size:calc(12.5px * var(--fs, 1));color:var(--ink-soft);margin:0 0 8px;">Escribe una fila marcada como PRUEBA en la planilla de un solo alumno, para que confirmes que queda en el lugar correcto.</p>
       <select id="alumnoPruebaSelect" style="margin-bottom:10px;">
         ${getStudents().filter(s => cache.driveMapping[s.id]).sort((a,b)=>a.apellido.localeCompare(b.apellido)).map(s => `<option value="${s.id}">${s.curso}° · ${s.apellido}, ${s.nombre}</option>`).join('')}
       </select>
       <button class="btn-secondary" id="probarEscrituraBtn" style="width:100%;">Escribir fila de prueba</button>
-      <p id="pruebaEstado" style="font-size:12.5px;color:var(--ink-soft);margin-top:8px;"></p>
+      <p id="pruebaEstado" style="font-size:calc(12.5px * var(--fs, 1));color:var(--ink-soft);margin-top:8px;"></p>
     </div>
 
     <p class="section-label" style="margin-top:20px;">4 · Sincronizar</p>
     <div class="config-card">
-      <p style="font-size:12.5px;color:var(--ink-soft);margin:0 0 10px;">Pendiente: <b>${pend.filas}</b> fila${pend.filas!==1?'s':''} (faltas, tardanzas, retiros y Ed. Física que todavía no están en las planillas).</p>
+      <p style="font-size:calc(12.5px * var(--fs, 1));color:var(--ink-soft);margin:0 0 10px;">Pendiente: <b>${pend.filas}</b> fila${pend.filas!==1?'s':''} (faltas, tardanzas, retiros y Ed. Física que todavía no están en las planillas).</p>
       <button class="btn-primary" id="sincronizarBtn" style="width:100%;" ${driveTrabajando ? 'disabled' : ''}>${driveTrabajando ? 'Sincronizando… puede tardar unos minutos' : 'Sincronizar ahora'}</button>
-      <p id="syncEstado" style="font-size:12.5px;color:var(--ink-soft);margin-top:8px;"></p>
+      <p id="syncEstado" style="font-size:calc(12.5px * var(--fs, 1));color:var(--ink-soft);margin-top:8px;"></p>
       <details style="margin-top:6px;">
-        <summary style="font-size:12px;color:var(--ink-soft);cursor:pointer;">¿Ya lo tenés cargado a mano en las planillas?</summary>
-        <p style="font-size:12px;color:var(--ink-soft);margin:8px 0;">Si lo pendiente ya lo pasaste vos a mano, marcalo como sincronizado para que no se duplique.</p>
+        <summary style="font-size:calc(12px * var(--fs, 1));color:var(--ink-soft);cursor:pointer;">¿Ya lo tenés cargado a mano en las planillas?</summary>
+        <p style="font-size:calc(12px * var(--fs, 1));color:var(--ink-soft);margin:8px 0;">Si lo pendiente ya lo pasaste vos a mano, marcalo como sincronizado para que no se duplique.</p>
         <button class="btn-secondary" id="marcarSyncBtn" style="width:100%;">Marcar todo lo actual como ya sincronizado</button>
       </details>
     </div>
@@ -3963,16 +4001,16 @@ function renderProfesorNuevo(){
     <div class="field-row"><label>Nombre</label><input id="nuevoProfNombre" type="text"></div>
     <div class="field-row"><label>Mail</label><input id="nuevoProfEmail" type="email"></div>
     <div class="field-row"><label>Contraseña</label><input id="nuevoProfPass" type="text" placeholder="mínimo 6 caracteres"></div>
-    <p style="font-size:12.5px;color:var(--ink-soft);margin:10px 0 6px;">Materias</p>
+    <p style="font-size:calc(12.5px * var(--fs, 1));color:var(--ink-soft);margin:10px 0 6px;">Materias</p>
     <div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:14px;">
       ${materias.map(m => `<label class="curso-check-label"><input type="checkbox" class="materia-check" value="${m}"> ${m}</label>`).join('')}
     </div>
-    <p style="font-size:12.5px;color:var(--ink-soft);margin:10px 0 6px;">Cursos a cargo</p>
+    <p style="font-size:calc(12.5px * var(--fs, 1));color:var(--ink-soft);margin:10px 0 6px;">Cursos a cargo</p>
     <div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:14px;">
       ${CURSOS.map(c => `<label class="curso-check-label"><input type="checkbox" class="curso-check" value="${c}"> <span class="curso-dot c${c}"></span>${c}° A</label>`).join('')}
     </div>
-    <p style="font-size:11.5px;color:var(--ink-soft);margin:-8px 0 12px;">Si elegís un/a profesor/a de la lista, las materias y cursos se marcan solos según el horario — revisalos y ajustá si hace falta.</p>
-    <p id="nuevoProfError" style="font-size:12px;color:var(--stamp);min-height:16px;margin:0 0 8px;"></p>
+    <p style="font-size:calc(11.5px * var(--fs, 1));color:var(--ink-soft);margin:-8px 0 12px;">Si elegís un/a profesor/a de la lista, las materias y cursos se marcan solos según el horario — revisalos y ajustá si hace falta.</p>
+    <p id="nuevoProfError" style="font-size:calc(12px * var(--fs, 1));color:var(--stamp);min-height:16px;margin:0 0 8px;"></p>
     <button class="btn-primary" id="crearProfBtn">Crear cuenta</button>
   `;
   document.getElementById('backBtn').addEventListener('click', () => goBack('profesores'));
@@ -4026,9 +4064,9 @@ function renderTeacherHome(){
     </div>
 
     <p style="text-align:center;margin-top:18px;">
-      <a href="#" id="cambiarPassLink" style="font-size:12px;color:var(--ink-soft);text-decoration:underline;">Cambiar contraseña</a>
+      <a href="#" id="cambiarPassLink" style="font-size:calc(12px * var(--fs, 1));color:var(--ink-soft);text-decoration:underline;">Cambiar contraseña</a>
       &nbsp;·&nbsp;
-      <a href="#" id="salirProfLink" style="font-size:12px;color:var(--ink-soft);text-decoration:underline;">Salir</a>
+      <a href="#" id="salirProfLink" style="font-size:calc(12px * var(--fs, 1));color:var(--ink-soft);text-decoration:underline;">Salir</a>
     </p>
   `;
   document.querySelectorAll('.module-row').forEach(r => r.addEventListener('click', () => navigate(r.dataset.route)));
@@ -4067,9 +4105,9 @@ function renderStudentHome(){
     </div>
 
     <p style="text-align:center;margin-top:18px;">
-      <a href="#" id="cambiarPassLink" style="font-size:12px;color:var(--ink-soft);text-decoration:underline;">Cambiar contraseña</a>
+      <a href="#" id="cambiarPassLink" style="font-size:calc(12px * var(--fs, 1));color:var(--ink-soft);text-decoration:underline;">Cambiar contraseña</a>
       &nbsp;·&nbsp;
-      <a href="#" id="salirProfLink" style="font-size:12px;color:var(--ink-soft);text-decoration:underline;">Salir</a>
+      <a href="#" id="salirProfLink" style="font-size:calc(12px * var(--fs, 1));color:var(--ink-soft);text-decoration:underline;">Salir</a>
     </p>
   `;
   marcarAvisosVistos(avisos);
@@ -4135,9 +4173,9 @@ function renderViewerHome(){
     <p class="info-note">${icon('info')}Acceso de solo lectura — no podés cargar ni modificar nada desde acá.</p>
 
     <p style="text-align:center;margin-top:18px;">
-      <a href="#" id="cambiarPassLink" style="font-size:12px;color:var(--ink-soft);text-decoration:underline;">Cambiar contraseña</a>
+      <a href="#" id="cambiarPassLink" style="font-size:calc(12px * var(--fs, 1));color:var(--ink-soft);text-decoration:underline;">Cambiar contraseña</a>
       &nbsp;·&nbsp;
-      <a href="#" id="salirProfLink" style="font-size:12px;color:var(--ink-soft);text-decoration:underline;">Salir</a>
+      <a href="#" id="salirProfLink" style="font-size:calc(12px * var(--fs, 1));color:var(--ink-soft);text-decoration:underline;">Salir</a>
     </p>
   `;
   document.querySelectorAll('.module-row').forEach(r => r.addEventListener('click', () => navigate(r.dataset.route)));
@@ -4266,15 +4304,15 @@ function renderAlumnosCuentas(){
     </div>
     <input type="text" id="filtroAlumnoCuenta" placeholder="Buscar por nombre..." style="margin-bottom:12px;" value="${window.__alumnoFiltro||''}">
     <p class="section-label">Cuentas existentes (${visibles.length} de ${cuentas.length})</p>
-    ${visibles.length ? `<div class="sancion-list" style="margin-bottom:18px;">${rows}</div>` : `<p style="font-size:13px;color:var(--ink-soft);margin-bottom:18px;">${cuentas.length ? 'Nadie coincide con esa búsqueda.' : 'Todavía no hay cuentas de alumnos.'}</p>`}
+    ${visibles.length ? `<div class="sancion-list" style="margin-bottom:18px;">${rows}</div>` : `<p style="font-size:calc(13px * var(--fs, 1));color:var(--ink-soft);margin-bottom:18px;">${cuentas.length ? 'Nadie coincide con esa búsqueda.' : 'Todavía no hay cuentas de alumnos.'}</p>`}
 
     <p class="section-label">Carga masiva</p>
     <div class="config-card" style="margin-bottom:18px;">
-      <p style="font-size:12.5px;color:var(--ink-soft);margin-bottom:10px;">Subí el archivo de alumnos emparejados con su mail (JSON), y creá todas esas cuentas de una vez con la contraseña genérica <b>${getPasswordGenerica()}</b> (cada alumno la puede cambiar después; se edita en Configuración).</p>
+      <p style="font-size:calc(12.5px * var(--fs, 1));color:var(--ink-soft);margin-bottom:10px;">Subí el archivo de alumnos emparejados con su mail (JSON), y creá todas esas cuentas de una vez con la contraseña genérica <b>${getPasswordGenerica()}</b> (cada alumno la puede cambiar después; se edita en Configuración).</p>
       <input type="file" id="cargaMasivaInput" accept="application/json" style="margin-bottom:10px;">
-      <p id="masivoPreview" style="font-size:12.5px;color:var(--ink-soft);margin-bottom:10px;"></p>
+      <p id="masivoPreview" style="font-size:calc(12.5px * var(--fs, 1));color:var(--ink-soft);margin-bottom:10px;"></p>
       <button class="btn-primary" id="crearMasivoBtn" style="width:100%;display:none;">Crear todas las cuentas</button>
-      <p id="masivoEstado" style="font-size:12.5px;color:var(--ink-soft);margin-top:8px;"></p>
+      <p id="masivoEstado" style="font-size:calc(12.5px * var(--fs, 1));color:var(--ink-soft);margin-top:8px;"></p>
     </div>
 
     <p class="section-label">Nueva cuenta (una por una)</p>
@@ -4287,7 +4325,7 @@ function renderAlumnosCuentas(){
     </div>
     <div class="field-row"><label>Mail</label><input id="nuevoAlumnoEmail" type="email"></div>
     <div class="field-row"><label>Contraseña</label><input id="nuevoAlumnoPass" type="text" placeholder="mínimo 6 caracteres"></div>
-    <p id="nuevoAlumnoError" style="font-size:12px;color:var(--stamp);min-height:16px;margin:0 0 8px;"></p>
+    <p id="nuevoAlumnoError" style="font-size:calc(12px * var(--fs, 1));color:var(--stamp);min-height:16px;margin:0 0 8px;"></p>
     <button class="btn-primary" id="crearAlumnoBtn">Crear cuenta</button>
   `;
   document.getElementById('backBtn').addEventListener('click', () => goBack('home'));
@@ -4344,13 +4382,13 @@ function renderLectura(){
       <h1>Acceso de lectura</h1>
     </div>
     <p class="section-label">Cuentas existentes</p>
-    ${viewers.length ? `<div class="sancion-list" style="margin-bottom:18px;">${rows}</div>` : `<p style="font-size:13px;color:var(--ink-soft);margin-bottom:18px;">Todavía no hay cuentas de lectura.</p>`}
+    ${viewers.length ? `<div class="sancion-list" style="margin-bottom:18px;">${rows}</div>` : `<p style="font-size:calc(13px * var(--fs, 1));color:var(--ink-soft);margin-bottom:18px;">Todavía no hay cuentas de lectura.</p>`}
 
     <p class="section-label">Nueva cuenta</p>
     <div class="field-row"><label>Nombre</label><input id="nuevoViewerNombre" type="text"></div>
     <div class="field-row"><label>Mail</label><input id="nuevoViewerEmail" type="email"></div>
     <div class="field-row"><label>Contraseña</label><input id="nuevoViewerPass" type="text" placeholder="mínimo 6 caracteres"></div>
-    <p id="nuevoViewerError" style="font-size:12px;color:var(--stamp);min-height:16px;margin:0 0 8px;"></p>
+    <p id="nuevoViewerError" style="font-size:calc(12px * var(--fs, 1));color:var(--stamp);min-height:16px;margin:0 0 8px;"></p>
     <button class="btn-primary" id="crearViewerBtn">Crear cuenta</button>
   `;
   document.getElementById('backBtn').addEventListener('click', () => goBack('home'));
@@ -4517,25 +4555,25 @@ function renderValoracionAlumno(){
     </div>
     <p class="date-label">${materia} · ${bim}° bimestre</p>
 
-    <label style="font-size:12.5px;color:var(--ink-soft);">¿Participa en las clases?</label>
+    <label style="font-size:calc(12.5px * var(--fs, 1));color:var(--ink-soft);">¿Participa en las clases?</label>
     ${selectHtml('valParticipa', OPCIONES_VALORACION.participa, existente.participa)}
 
-    <label style="font-size:12.5px;color:var(--ink-soft);">¿Cumple con las tareas?</label>
+    <label style="font-size:calc(12.5px * var(--fs, 1));color:var(--ink-soft);">¿Cumple con las tareas?</label>
     ${selectHtml('valCumple', OPCIONES_VALORACION.cumpleTareas, existente.cumpleTareas)}
 
-    <label style="font-size:12.5px;color:var(--ink-soft);">La calidad de sus trabajos es</label>
+    <label style="font-size:calc(12.5px * var(--fs, 1));color:var(--ink-soft);">La calidad de sus trabajos es</label>
     ${selectHtml('valCalidad', OPCIONES_VALORACION.calidad, existente.calidad)}
 
-    <label style="font-size:12.5px;color:var(--ink-soft);">Su comportamiento en clase es</label>
+    <label style="font-size:calc(12.5px * var(--fs, 1));color:var(--ink-soft);">Su comportamiento en clase es</label>
     ${selectHtml('valComportamiento', OPCIONES_VALORACION.comportamiento, existente.comportamiento)}
 
-    <label style="font-size:12.5px;color:var(--ink-soft);">Objetivos de aprendizaje alcanzados</label>
+    <label style="font-size:calc(12.5px * var(--fs, 1));color:var(--ink-soft);">Objetivos de aprendizaje alcanzados</label>
     ${selectHtml('valObjetivos', OPCIONES_VALORACION.objetivos, existente.objetivos)}
 
-    <label style="font-size:12.5px;color:var(--ink-soft);">En función de lo trabajado hasta ahora, podría decir...</label>
+    <label style="font-size:calc(12.5px * var(--fs, 1));color:var(--ink-soft);">En función de lo trabajado hasta ahora, podría decir...</label>
     ${selectHtml('valProyeccion', OPCIONES_VALORACION.proyeccion, existente.proyeccion)}
 
-    <label style="font-size:12.5px;color:var(--ink-soft);">Observaciones generales (opcional)</label>
+    <label style="font-size:calc(12.5px * var(--fs, 1));color:var(--ink-soft);">Observaciones generales (opcional)</label>
     <textarea id="valObservaciones" rows="3" style="margin-bottom:12px;">${existente.observaciones||''}</textarea>
 
     <button class="btn-primary" id="guardarValBtn">Guardar valoración</button>
@@ -5842,13 +5880,13 @@ function renderTramiteNuevo(){
     </div>
     <div class="field-row"><label>Nombre</label><input id="tramiteNombre" type="text" placeholder="Ej: Salida Museo del Holocausto"></div>
     <div class="field-row"><label>Qué entregan</label><input id="tramiteItems" type="text" placeholder="Ej: Autorización, Dinero"></div>
-    <p style="font-size:11.5px;color:var(--ink-soft);margin:-8px 0 12px;">Separá con comas si son varias cosas distintas (ej: autorización y dinero por separado).</p>
+    <p style="font-size:calc(11.5px * var(--fs, 1));color:var(--ink-soft);margin:-8px 0 12px;">Separá con comas si son varias cosas distintas (ej: autorización y dinero por separado).</p>
     <div class="field-row"><label>Fecha límite (opcional)</label><input id="tramiteFecha" type="date"></div>
-    <p style="font-size:12.5px;color:var(--ink-soft);margin:10px 0 6px;">Cursos que participan</p>
+    <p style="font-size:calc(12.5px * var(--fs, 1));color:var(--ink-soft);margin:10px 0 6px;">Cursos que participan</p>
     <div style="display:flex;flex-wrap:wrap;gap:10px;margin-bottom:16px;">
       ${CURSOS.map(c => `<label class="curso-check-label"><input type="checkbox" class="tramite-curso" value="${c}"> <span class="curso-dot c${c}"></span>${c}° A</label>`).join('')}
     </div>
-    <p id="tramiteError" style="font-size:12px;color:var(--stamp);min-height:16px;margin:0 0 8px;"></p>
+    <p id="tramiteError" style="font-size:calc(12px * var(--fs, 1));color:var(--stamp);min-height:16px;margin:0 0 8px;"></p>
     <button class="btn-primary" id="crearTramiteBtn" style="width:100%;">Crear trámite</button>
   `;
   document.getElementById('backBtn').addEventListener('click', () => goBack('tramites'));
@@ -6056,7 +6094,7 @@ function generarCeldasCalendarioFeriados(mesISO, set){
     const marcado = set.has(iso);
     const bg = marcado ? 'var(--stamp)' : (esFinde ? 'var(--paper-2)' : 'var(--card)');
     const color = marcado ? '#fff' : 'var(--ink)';
-    celdas += `<button type="button" data-cal-dia="${iso}" style="aspect-ratio:1;border:1px solid var(--border);border-radius:8px;background:${bg};color:${color};font-size:12.5px;cursor:pointer;">${d}</button>`;
+    celdas += `<button type="button" data-cal-dia="${iso}" style="aspect-ratio:1;border:1px solid var(--border);border-radius:8px;background:${bg};color:${color};font-size:calc(12.5px * var(--fs, 1));cursor:pointer;">${d}</button>`;
   }
   return celdas;
 }
@@ -6101,7 +6139,7 @@ function renderConfigAvanzada(){
     <p class="section-label">Bimestres del ciclo lectivo</p>
     <div class="config-card">
       ${BIMESTRES.map(b => `
-        <p style="font-size:12.5px;font-weight:600;margin:${b.n>1?'14px':'0'} 0 6px;">${b.n}° bimestre</p>
+        <p style="font-size:calc(12.5px * var(--fs, 1));font-weight:600;margin:${b.n>1?'14px':'0'} 0 6px;">${b.n}° bimestre</p>
         <div class="field-row"><label>Desde</label><input id="bimFrom${b.n}" type="date" value="${b.from}"></div>
         <div class="field-row"><label>Hasta</label><input id="bimTo${b.n}" type="date" value="${b.to}"></div>
       `).join('')}
@@ -6111,15 +6149,15 @@ function renderConfigAvanzada(){
     <div class="config-card">
       <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:10px;">
         <button type="button" class="btn-chip" id="feriadosMesAnterior">${icon('back')}</button>
-        <p style="font-size:13px;font-weight:600;" id="feriadosCalMesLabel">${etiquetaMesFeriados(window.__feriadosCalMes)}</p>
+        <p style="font-size:calc(13px * var(--fs, 1));font-weight:600;" id="feriadosCalMesLabel">${etiquetaMesFeriados(window.__feriadosCalMes)}</p>
         <button type="button" class="btn-chip" id="feriadosMesSiguiente" style="transform:scaleX(-1);">${icon('back')}</button>
       </div>
       <div id="feriadosCalendario" style="display:grid;grid-template-columns:repeat(7,1fr);gap:4px;">
         ${generarCeldasCalendarioFeriados(window.__feriadosCalMes, new Set(FERIADOS_2026))}
       </div>
-      <p style="font-size:11.5px;color:var(--ink-soft);margin:10px 0 0;">Tocá un día para marcarlo/desmarcarlo como feriado o día sin clase. Se usan para no contar esos días como clase en el % de asistencia por materia.</p>
+      <p style="font-size:calc(11.5px * var(--fs, 1));color:var(--ink-soft);margin:10px 0 0;">Tocá un día para marcarlo/desmarcarlo como feriado o día sin clase. Se usan para no contar esos días como clase en el % de asistencia por materia.</p>
       <details style="margin-top:12px;">
-        <summary style="font-size:12px;color:var(--ink-soft);cursor:pointer;">Editar como lista de texto</summary>
+        <summary style="font-size:calc(12px * var(--fs, 1));color:var(--ink-soft);cursor:pointer;">Editar como lista de texto</summary>
         <textarea id="cfgFeriados" rows="6" placeholder="Una fecha por línea, formato AAAA-MM-DD" style="margin-top:8px;">${feriadosTexto}</textarea>
       </details>
     </div>
@@ -6128,7 +6166,7 @@ function renderConfigAvanzada(){
     <div class="config-card">
       <div class="field-row"><label>Faltas para "alerta"</label><input id="cfgUmbralAlerta" type="number" value="${UMBRAL_ALERTA}"></div>
       <div class="field-row"><label>% mínimo (SCP)</label><input id="cfgUmbralSCP" type="number" value="${Math.round(UMBRAL_SCP*100)}"></div>
-      <p style="font-size:11.5px;color:var(--ink-soft);margin:8px 0 0;">Por debajo de ese % anual en una materia, se marca como riesgo de SCP.</p>
+      <p style="font-size:calc(11.5px * var(--fs, 1));color:var(--ink-soft);margin:8px 0 0;">Por debajo de ese % anual en una materia, se marca como riesgo de SCP.</p>
     </div>
 
     <p class="section-label" style="margin-top:20px;">Horarios de las horas de clase</p>
@@ -6139,7 +6177,7 @@ function renderConfigAvanzada(){
           <input id="horaFin${h}" type="time" value="${HORA_TIEMPOS[h][1]}" style="flex:1;">
         </div>
       `).join('')}
-      <p style="font-size:12.5px;font-weight:600;margin:14px 0 6px;">Educación Física (martes y jueves)</p>
+      <p style="font-size:calc(12.5px * var(--fs, 1));font-weight:600;margin:14px 0 6px;">Educación Física (martes y jueves)</p>
       ${EF_HORARIO.map((b,i) => `
         <div class="field-row"><label>${b.cursos.map(c=>c+'°').join('/')}</label>
           <input id="efIni${i}" type="time" value="${b.inicio}" style="flex:1;">
@@ -6188,7 +6226,7 @@ function renderAlumnos(){
 
     ${!migrado ? `
     <div class="config-card" style="margin-bottom:18px;">
-      <p style="font-size:12.5px;color:var(--ink-soft);margin-bottom:10px;">Antes de poder agregar o dar de baja alumnos desde acá, hay que migrar la lista actual a la base de datos (se hace una sola vez y no cambia nada de lo que ya está cargado).</p>
+      <p style="font-size:calc(12.5px * var(--fs, 1));color:var(--ink-soft);margin-bottom:10px;">Antes de poder agregar o dar de baja alumnos desde acá, hay que migrar la lista actual a la base de datos (se hace una sola vez y no cambia nada de lo que ya está cargado).</p>
       <button class="btn-primary" id="migrarAlumnosBtn" style="width:100%;">Migrar alumnos</button>
     </div>
     ` : `
@@ -6197,7 +6235,7 @@ function renderAlumnos(){
     `}
 
     <p class="section-label">Alumnos activos (${activos.length})</p>
-    ${activos.length ? `<div class="sancion-list" style="margin-bottom:18px;">${activos.map(s=>filaAlumno(s,false)).join('')}</div>` : `<p style="font-size:13px;color:var(--ink-soft);margin-bottom:18px;">Nadie coincide con esa búsqueda.</p>`}
+    ${activos.length ? `<div class="sancion-list" style="margin-bottom:18px;">${activos.map(s=>filaAlumno(s,false)).join('')}</div>` : `<p style="font-size:calc(13px * var(--fs, 1));color:var(--ink-soft);margin-bottom:18px;">Nadie coincide con esa búsqueda.</p>`}
 
     ${bajas.length ? `
     <p class="section-label">Dados de baja (${bajas.length})</p>
@@ -6249,7 +6287,7 @@ function renderHorarioEditar(){
     </div>
     ${!migrado ? `
     <div class="config-card" style="margin-bottom:18px;">
-      <p style="font-size:12.5px;color:var(--ink-soft);margin-bottom:10px;">Antes de poder editar el horario desde acá, hay que migrarlo a la base de datos (se hace una sola vez y no cambia nada de lo que ya está cargado).</p>
+      <p style="font-size:calc(12.5px * var(--fs, 1));color:var(--ink-soft);margin-bottom:10px;">Antes de poder editar el horario desde acá, hay que migrarlo a la base de datos (se hace una sola vez y no cambia nada de lo que ya está cargado).</p>
       <button class="btn-primary" id="migrarHorarioBtn" style="width:100%;">Migrar horario</button>
     </div>
     ` : `
@@ -6258,7 +6296,7 @@ function renderHorarioEditar(){
       ${pillBtnRow('diaEdit', DIAS.map(d => ({value:d, label:DIA_LABEL[d].slice(0,3)})), selectedDia)}
     </div>
     <div class="config-card" style="margin-top:14px;">
-      <p style="font-size:11.5px;color:var(--ink-soft);margin-bottom:10px;">Dejá "Materia" vacía en las horas que ese día no tiene clase para este curso.</p>
+      <p style="font-size:calc(11.5px * var(--fs, 1));color:var(--ink-soft);margin-bottom:10px;">Dejá "Materia" vacía en las horas que ese día no tiene clase para este curso.</p>
       ${filas}
     </div>
     <button class="btn-primary" id="guardarHorarioBtn" style="width:100%;margin:16px 0 30px;">Guardar ${selectedCurso}° A — ${DIA_LABEL[selectedDia]}</button>
@@ -6310,7 +6348,7 @@ function renderSincronizacion(){
       <div class="sancion-item">
         <div style="display:flex;align-items:center;justify-content:space-between;gap:8px;">
           <p class="folio"><span class="status-dot ${ms?'on':'off'}"></span>${label}</p>
-          <p style="font-size:12.5px;color:${ms?'var(--ink-soft)':'var(--stamp)'};">${tiempoRelativo(ms)}</p>
+          <p style="font-size:calc(12.5px * var(--fs, 1));color:${ms?'var(--ink-soft)':'var(--stamp)'};">${tiempoRelativo(ms)}</p>
         </div>
       </div>`;
   }).join('');
@@ -6319,7 +6357,7 @@ function renderSincronizacion(){
       <button class="back-btn" id="backBtn">${icon('back')}</button>
       <h1>Última sincronización</h1>
     </div>
-    <p style="font-size:12.5px;color:var(--ink-soft);margin-bottom:14px;">Cuándo se actualizó por última vez cada parte de la app en este celular/compu (se refresca solo con cada cambio que llega). Si algo quedó en "nunca" o hace mucho rato con el celular conectado a internet, probablemente convenga cerrar y volver a abrir la app.</p>
+    <p style="font-size:calc(12.5px * var(--fs, 1));color:var(--ink-soft);margin-bottom:14px;">Cuándo se actualizó por última vez cada parte de la app en este celular/compu (se refresca solo con cada cambio que llega). Si algo quedó en "nunca" o hace mucho rato con el celular conectado a internet, probablemente convenga cerrar y volver a abrir la app.</p>
     <div class="sancion-list">${filas}</div>
     <button class="btn-secondary" id="refrescarSyncBtn" style="width:100%;margin-top:16px;">Actualizar esta pantalla</button>
   `;
@@ -6347,8 +6385,8 @@ function renderEntradasEspeciales(){
       <button class="back-btn" id="backBtn">${icon('back')}</button>
       <h1>Entradas especiales</h1>
     </div>
-    <p style="font-size:12.5px;color:var(--ink-soft);margin-bottom:14px;">Todas las entradas especiales cargadas (desde "Horarios y suplencias" o al marcar un profesor ausente la primera hora). Se pueden borrar si se cargaron por error.</p>
-    ${lista.length ? `<div class="sancion-list">${rows}</div>` : `<p style="font-size:13px;color:var(--ink-soft);">No hay ninguna cargada.</p>`}
+    <p style="font-size:calc(12.5px * var(--fs, 1));color:var(--ink-soft);margin-bottom:14px;">Todas las entradas especiales cargadas (desde "Horarios y suplencias" o al marcar un profesor ausente la primera hora). Se pueden borrar si se cargaron por error.</p>
+    ${lista.length ? `<div class="sancion-list">${rows}</div>` : `<p style="font-size:calc(13px * var(--fs, 1));color:var(--ink-soft);">No hay ninguna cargada.</p>`}
   `;
   document.getElementById('backBtn').addEventListener('click', () => goBack('config'));
   document.querySelectorAll('[data-borrar-ee]').forEach(b => {
@@ -6446,7 +6484,9 @@ function renderConfig(){
     <p class="section-label" style="margin-top:20px;">Apariencia</p>
     <div class="config-card">
       ${pillBtnRow('tema', [{value:'auto',label:'Automático'},{value:'claro',label:'Claro'},{value:'oscuro',label:'Oscuro'}], getTema())}
-      <p style="font-size:11.5px;color:var(--ink-soft);margin:8px 0 0;">"Automático" sigue lo que tenga configurado el celular. Se guarda en este dispositivo.</p>
+      <p style="font-size:calc(11.5px * var(--fs, 1));color:var(--ink-soft);margin:8px 0 0;">"Automático" sigue lo que tenga configurado el celular. Se guarda en este dispositivo.</p>
+      <p style="font-size:calc(12.5px * var(--fs, 1));color:var(--ink-soft);margin:14px 0 6px;">Tamaño de letra</p>
+      ${pillBtnRow('letra', [{value:'chica',label:'Chica'},{value:'normal',label:'Normal'},{value:'grande',label:'Grande'}], getLetra())}
     </div>
 
     ${esNapo ? `
@@ -6455,9 +6495,9 @@ function renderConfig(){
       <div class="field-row"><label>Entrada</label><input id="cfgEntrada" type="text" value="${cfg.entrada}" placeholder="07:45"></div>
       <div class="field-row"><label>Tolerancia (min)</label><input id="cfgTolerancia" type="number" value="${cfg.toleranciaMin}"></div>
       <div class="field-row"><label>Corte falta completa</label><input id="cfgCorte" type="text" value="${cfg.corteFaltaCompleta}" placeholder="09:00"></div>
-      <p style="font-size:11.5px;color:var(--ink-soft);margin:8px 0 12px;">Después de la hora de "corte", una llegada ya cuenta como falta completa en vez de tardanza.</p>
+      <p style="font-size:calc(11.5px * var(--fs, 1));color:var(--ink-soft);margin:8px 0 12px;">Después de la hora de "corte", una llegada ya cuenta como falta completa en vez de tardanza.</p>
       <div class="field-row"><label>Contraseña genérica alumnos</label><input id="cfgPasswordGenerica" type="text" value="${getPasswordGenerica()}" placeholder="mínimo 6 caracteres"></div>
-      <p style="font-size:11.5px;color:var(--ink-soft);margin:8px 0 12px;">Es la contraseña con la que se crean las cuentas de alumnos en la carga masiva (en "Cuentas de alumnos"). Cada alumno la puede cambiar después por su cuenta.</p>
+      <p style="font-size:calc(11.5px * var(--fs, 1));color:var(--ink-soft);margin:8px 0 12px;">Es la contraseña con la que se crean las cuentas de alumnos en la carga masiva (en "Cuentas de alumnos"). Cada alumno la puede cambiar después por su cuenta.</p>
       <button class="btn-primary" id="guardarConfigBtn" style="width:100%;">Guardar</button>
     </div>
 
@@ -6484,14 +6524,14 @@ function renderConfig(){
       ${moduleRow('clipboard','Registro de actividad','Quién cambió qué y cuándo', 'auditoria')}
     </div>
     <div class="config-card" style="margin-top:10px;">
-      <p style="font-size:12.5px;color:var(--ink-soft);margin-bottom:10px;">Importar notas desde un archivo (reemplaza TODAS las notas actuales).</p>
+      <p style="font-size:calc(12.5px * var(--fs, 1));color:var(--ink-soft);margin-bottom:10px;">Importar notas desde un archivo (reemplaza TODAS las notas actuales).</p>
       <input type="file" id="notasImportInput" accept="application/json" style="margin-bottom:10px;">
-      <p id="notasImportEstado" style="font-size:12px;color:var(--ink-soft);"></p>
+      <p id="notasImportEstado" style="font-size:calc(12px * var(--fs, 1));color:var(--ink-soft);"></p>
     </div>
     <div class="config-card" style="margin-top:10px;">
-      <p style="font-size:12.5px;color:var(--ink-soft);margin-bottom:10px;">Actualiza los registros viejos de asistencia para que tengan el dato del alumno guardado correctamente (necesario para el acceso de alumnos).</p>
+      <p style="font-size:calc(12.5px * var(--fs, 1));color:var(--ink-soft);margin-bottom:10px;">Actualiza los registros viejos de asistencia para que tengan el dato del alumno guardado correctamente (necesario para el acceso de alumnos).</p>
       <button class="btn-secondary" id="migrarBtn" style="width:100%;">Actualizar registros viejos</button>
-      <p id="migracionEstado" style="font-size:12px;color:var(--ink-soft);margin-top:8px;"></p>
+      <p id="migracionEstado" style="font-size:calc(12px * var(--fs, 1));color:var(--ink-soft);margin-top:8px;"></p>
     </div>
 
     <p class="section-label" style="margin-top:20px;">Modo de prueba</p>
@@ -6500,7 +6540,7 @@ function renderConfig(){
       ${moduleRow('users','Ver como alumno','Elegí un alumno y mirá la app como la ve', 'pruebaAlumno')}
       ${moduleRow('users','Ver como solo lectura','Directivos y otras cuentas de consulta', 'pruebaLectura')}
     </div>
-    <p style="font-size:11.5px;color:var(--ink-soft);margin:8px 2px 0;">Se ven los datos reales de esa persona, pero no se guarda nada de lo que toques.</p>
+    <p style="font-size:calc(11.5px * var(--fs, 1));color:var(--ink-soft);margin:8px 2px 0;">Se ven los datos reales de esa persona, pero no se guarda nada de lo que toques.</p>
 
     <p class="section-label" style="margin-top:20px;">Respaldos</p>
     <button class="btn-secondary" id="irRespaldoBtn" style="width:100%;">Respaldo completo (Excel)</button>
@@ -6514,7 +6554,7 @@ function renderConfig(){
     <p class="section-label" style="margin-top:20px;">Acerca de</p>
     <div class="config-card">
       <p class="v">Instituto Superior Porteño</p>
-      <p style="font-size:12px;color:var(--ink-soft);margin-top:4px;">App de preceptoría</p>
+      <p style="font-size:calc(12px * var(--fs, 1));color:var(--ink-soft);margin-top:4px;">App de preceptoría</p>
     </div>
   `;
   document.getElementById('cambiarUsuarioBtn').addEventListener('click', () => {
@@ -6524,6 +6564,7 @@ function renderConfig(){
   });
   document.getElementById('cerrarSesionBtn').addEventListener('click', cerrarSesionAdmin);
   attachPillBtns('tema', (v) => { setTema(v); render(); });
+  attachPillBtns('letra', (v) => { setLetra(v); render(); });
   attachModuleHandlers();
   if(document.getElementById('guardarConfigBtn')){
     document.getElementById('guardarConfigBtn').addEventListener('click', guardarConfigGeneral);
@@ -6598,14 +6639,14 @@ function renderProfesorLogin(){
   $app.innerHTML = `
     <div style="padding-top:44px;text-align:center;">
       <img src="icon-192.png" alt="ISP" style="width:60px;height:60px;object-fit:contain;margin:0 auto 14px;display:block;">
-      <h1 style="font-size:17px;margin:0 0 20px;">Instituto Superior Porteño</h1>
+      <h1 style="font-size:calc(17px * var(--fs, 1));margin:0 0 20px;">Instituto Superior Porteño</h1>
       <div style="max-width:280px;margin:0 auto;border:1px solid var(--border);border-radius:14px;padding:26px 22px;background:var(--card);box-shadow:0 1px 2px rgba(31,42,58,0.05), 0 8px 20px rgba(31,42,58,0.06);text-align:left;">
-        <p style="font-size:12.5px;color:var(--ink-soft);margin:0 0 16px;text-align:center;">Ingresá con tu mail y contraseña</p>
-        <label style="font-size:12.5px;color:var(--ink-soft);display:block;margin-bottom:4px;">Mail</label>
+        <p style="font-size:calc(12.5px * var(--fs, 1));color:var(--ink-soft);margin:0 0 16px;text-align:center;">Ingresá con tu mail y contraseña</p>
+        <label style="font-size:calc(12.5px * var(--fs, 1));color:var(--ink-soft);display:block;margin-bottom:4px;">Mail</label>
         <input id="profEmail" type="email" style="width:100%;margin-bottom:12px;" autocomplete="username">
-        <label style="font-size:12.5px;color:var(--ink-soft);display:block;margin-bottom:4px;">Contraseña</label>
+        <label style="font-size:calc(12.5px * var(--fs, 1));color:var(--ink-soft);display:block;margin-bottom:4px;">Contraseña</label>
         <input id="profPass" type="password" style="width:100%;margin-bottom:6px;" autocomplete="current-password">
-        <p id="profError" style="font-size:12px;color:var(--stamp);min-height:16px;margin:0 0 10px;"></p>
+        <p id="profError" style="font-size:calc(12px * var(--fs, 1));color:var(--stamp);min-height:16px;margin:0 0 10px;"></p>
         <button class="btn-primary" id="profLoginBtn" style="width:100%;">Ingresar</button>
       </div>
     </div>
@@ -6633,7 +6674,7 @@ function renderProfesorLogin(){
 function renderQuien(){
   $app.innerHTML = `
     <div style="padding-top:60px;text-align:center;">
-      <p style="font-size:13px;color:var(--ink-soft);margin:0 0 20px;">¿Quién sos?</p>
+      <p style="font-size:calc(13px * var(--fs, 1));color:var(--ink-soft);margin:0 0 20px;">¿Quién sos?</p>
       <div style="display:flex;flex-direction:column;gap:12px;max-width:220px;margin:0 auto;">
         <button class="btn-primary" data-user="Napo">Napo</button>
         <button class="btn-primary" data-user="Vicky" style="background:var(--stamp);">Vicky</button>
@@ -6708,7 +6749,7 @@ function renderAgendaNuevo(){
       <button class="back-btn" id="backBtn">${icon('back')}</button>
       <h1>Nuevo evento</h1>
     </div>
-    <p style="font-size:12.5px;color:var(--ink-soft);margin:0 0 6px;">Curso</p>
+    <p style="font-size:calc(12.5px * var(--fs, 1));color:var(--ink-soft);margin:0 0 6px;">Curso</p>
     <div class="course-picker" style="margin-bottom:14px;">${cursoBtns(cursos)}</div>
     <div class="field-row"><label>Tipo</label>
       <select id="eventoTipo">${Object.entries(EVENTO_TIPOS).map(([k,v])=>`<option value="${k}">${v}</option>`).join('')}</select>
@@ -6722,7 +6763,7 @@ function renderAgendaNuevo(){
     <div class="field-row" id="eventoTituloRow" style="display:none;"><label>Título</label><input id="eventoTitulo" type="text" placeholder="Ej: Excursión al museo"></div>
     <div class="field-row"><label>Fecha</label><input id="eventoFecha" type="date" value="${todayISO()}"></div>
     <div class="field-row"><label>Detalle (opcional)</label><textarea id="eventoDetalle" rows="3" placeholder="Info adicional para los alumnos"></textarea></div>
-    <p id="eventoError" style="font-size:12px;color:var(--stamp);min-height:16px;margin:0 0 8px;"></p>
+    <p id="eventoError" style="font-size:calc(12px * var(--fs, 1));color:var(--stamp);min-height:16px;margin:0 0 8px;"></p>
     <button class="btn-primary" id="crearEventoBtn" style="width:100%;">Crear evento</button>
   `;
   document.getElementById('backBtn').addEventListener('click', () => goBack('agenda'));
