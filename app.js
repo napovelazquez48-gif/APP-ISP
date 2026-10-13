@@ -752,7 +752,7 @@ function computeMateriaStats(studentId, bim){
     });
 
     // Educación Física: martes y jueves, fuera de la grilla horaria común a todos los cursos
-    if(diaKey === 'martes' || diaKey === 'jueves'){
+    if((diaKey === 'martes' || diaKey === 'jueves') && !getEFSuspendida(iso, curso)){
       if(!stats['ED FIS']) stats['ED FIS'] = { faltas:0, total:0 };
       stats['ED FIS'].total++;
       if(isFullAbsence || efPerdidaPorRetiro(rec, curso)){
@@ -765,7 +765,7 @@ function computeMateriaStats(studentId, bim){
   Object.entries(getEF()).forEach(([key, val]) => {
     const [fecha, sid] = key.split('|');
     if(sid !== studentId || fecha < bim.from || fecha > bim.to) return;
-    if(val.tipo === 'falta' && !efCountedDates.has(fecha) && stats['ED FIS']){
+    if(val.tipo === 'falta' && !efCountedDates.has(fecha) && stats['ED FIS'] && !getEFSuspendida(fecha, curso)){
       stats['ED FIS'].faltas++;
     }
   });
@@ -912,6 +912,61 @@ async function borrarEntradaEspecial(fecha, curso){
 
 function getDiaSinClase(fecha, curso){
   return cache.diasSinClase[docId(`${fecha}_${curso}`)] || null;
+}
+
+// ---------- Ed. Física suspendida (lluvia, etc.) ----------
+// Ese día la clase de Ed. Física no se dio: no cuenta como clase ni como falta en
+// Ed. Física para nadie de ese curso. El resto del día sigue igual (un ausente sigue
+// sumando su falta del día). Se guarda junto a los "días sin clase", con otra clave.
+function getEFSuspendida(fecha, curso){
+  return cache.diasSinClase[docId(`${fecha}_${curso}_ef`)] || null;
+}
+function elegirOpcion(msg, opciones){
+  return new Promise(resolve => {
+    const overlay = document.getElementById('modalOverlay');
+    document.getElementById('modalMsg').textContent = msg;
+    document.getElementById('modalExtra').innerHTML = '';
+    document.getElementById('modalBtns').innerHTML = opciones.map((o, i) =>
+      `<button class="${o.principal ? 'btn-primary' : 'btn-secondary'}" data-opc="${i}" style="width:100%;margin-top:6px;">${o.texto}</button>`).join('')
+      + `<button class="btn-secondary" data-opc="-1" style="width:100%;margin-top:6px;">Cancelar</button>`;
+    const btns = document.getElementById('modalBtns');
+    btns.style.flexDirection = 'column';
+    const onClick = (e) => {
+      const b = e.target.closest('[data-opc]'); if(!b) return;
+      btns.removeEventListener('click', onClick);
+      btns.style.flexDirection = '';
+      overlay.classList.remove('show');
+      const i = Number(b.dataset.opc);
+      resolve(i < 0 ? null : opciones[i].valor);
+    };
+    btns.addEventListener('click', onClick);
+    overlay.classList.add('show');
+  });
+}
+async function suspenderEF(fecha, curso){
+  if(modoPruebaBloquea()) return;
+  const dia = diaKeyFor(fecha);
+  const cursosConEF = (dia === 'martes' || dia === 'jueves') ? CURSOS.filter(c => !getDiaSinClase(fecha, c)) : [];
+  const motivo = await customPrompt('Ed. Física suspendida. Motivo:', 'Lluvia');
+  if(motivo === null || !motivo.trim()) return;
+  const alcance = cursosConEF.length > 1 ? await elegirOpcion(`¿Para qué cursos se suspende Ed. Física ${fecha === todayISO() ? 'hoy' : 'el ' + fmtDateShort(fecha)}?`, [
+    { texto: 'Todos los cursos', valor: 'todos', principal: true },
+    { texto: `Solo ${curso}° A`, valor: 'uno' },
+  ]) : 'uno';
+  if(!alcance) return;
+  const cursos = alcance === 'todos' ? cursosConEF : [curso];
+  // Si ya habían cargado faltas de Ed. Física de ese día, se borran (la clase no existió).
+  const ids = new Set(getStudents().filter(s => cursos.includes(s.curso)).map(s => s.id));
+  const efBorrar = Object.entries(getEF()).filter(([k, v]) => { const [f, sid] = k.split('|'); return f === fecha && ids.has(sid); });
+  if(efBorrar.length && !(await customConfirm(`Había ${efBorrar.length} ${efBorrar.length === 1 ? 'marca' : 'marcas'} de Ed. Física cargadas ese día. Se van a borrar, porque la clase no se dio. ¿Seguir?`))) return;
+  const batch = writeBatch(db);
+  cursos.forEach(c => batch.set(doc(db,'diasSinClase', docId(`${fecha}_${c}_ef`)), { fecha, curso: c, motivo: motivo.trim(), soloEF: true, autor: getUsuario() }));
+  efBorrar.forEach(([k]) => { const [f, sid] = k.split('|'); batch.delete(doc(db,'ef', docId(`${f}_${sid}`))); });
+  batch.commit().then(() => showToast(cursos.length > 1 ? 'Ed. Física suspendida en todos los cursos' : `Ed. Física suspendida en ${curso}° A`)).catch(err=>showSaveError(err));
+}
+async function quitarSuspensionEF(fecha, curso){
+  if(!(await customConfirm('¿Sacar la suspensión de Ed. Física de este curso para este día? Vuelve a contar como clase.'))) return;
+  deleteDoc(doc(db,'diasSinClase', docId(`${fecha}_${curso}_ef`))).catch(err=>showSaveError(err));
 }
 async function definirDiaSinClase(fecha, curso){
   const actual = getDiaSinClase(fecha, curso);
@@ -1982,6 +2037,7 @@ function renderAsistencia(){
   const esPasado = selectedFecha < today;
   const diaKey = diaKeyFor(selectedFecha);
   const esDiaEF = diaKey === 'martes' || diaKey === 'jueves';
+  const efSusp = esDiaEF ? getEFSuspendida(selectedFecha, selectedCurso) : null;
 
   const rows = students.map(s => {
     const key = `${selectedFecha}|${s.id}`;
@@ -2026,7 +2082,9 @@ function renderAsistencia(){
     if(esDiaEF){
       const efRec = getEF()[key];
       const ausenteCompleto = estado === 'A' && !rec.exencion && !rec.llegoTarde;
-      if(ausenteCompleto){
+      if(efSusp){
+        efHtml = `<button class="state-btn" style="width:auto;padding:0 8px;opacity:0.5;" disabled title="Ed. Física suspendida">EF susp.</button>`;
+      } else if(ausenteCompleto){
         efHtml = `<button class="state-btn" style="width:auto;padding:0 10px;opacity:0.5;" disabled>EF incl.</button>`;
       } else {
         const tipo = efRec ? efRec.tipo : null;
@@ -2136,13 +2194,27 @@ function renderAsistencia(){
           </div>`}
         </div>`;
       }
-      return soloLectura ? '' : `<p style="text-align:right;margin:-8px 0 14px;"><a href="#" id="sinClaseLink" style="font-size:calc(12px * var(--fs, 1));color:var(--ink-soft);text-decoration:underline;">+ Día sin clase para este curso (VCF, paro...)</a></p>`;
+      return soloLectura ? '' : `<p style="text-align:right;margin:-8px 0 ${esDiaEF && !efSusp ? '6px' : '14px'};"><a href="#" id="sinClaseLink" style="font-size:calc(12px * var(--fs, 1));color:var(--ink-soft);text-decoration:underline;">+ Día sin clase para este curso (VCF, paro...)</a></p>`;
+    })()}
+    ${(() => {
+      if(!esDiaEF || getDiaSinClase(selectedFecha, selectedCurso)) return '';
+      if(efSusp){
+        return `<div class="alert-banner" style="background:var(--gold-bg);margin-bottom:14px;border-left-color:var(--gold);">
+          <p class="alert-text" style="color:var(--gold);">Ed. Física suspendida ${selectedFecha === todayISO() ? 'hoy' : 'este día'} · ${escapeHtml(efSusp.motivo || '')} — no cuenta como clase ni como falta en Ed. Física.</p>
+          ${soloLectura ? '' : `<div style="display:flex;gap:8px;margin-top:8px;">
+            <button class="btn-secondary" id="quitarEFSuspBtn" style="flex:1;font-size:calc(12px * var(--fs, 1));padding:6px;color:var(--stamp);">Sacar</button>
+          </div>`}
+        </div>`;
+      }
+      return soloLectura ? '' : `<p style="text-align:right;margin:0 0 14px;"><a href="#" id="efSuspLink" style="font-size:calc(12px * var(--fs, 1));color:var(--ink-soft);text-decoration:underline;">+ Ed. Física suspendida ${selectedFecha === todayISO() ? 'hoy' : 'este día'} (lluvia...)</a></p>`;
     })()}
     ${students.length ? rows : `<div class="empty-state"><h2>Sin alumnos</h2><p>Este curso no tiene alumnos cargados.</p></div>`}
     <div style="height:16px"></div>
   `;
 
   document.getElementById('backBtn').addEventListener('click', () => goBack(soloLectura ? 'teacherHome' : 'home'));
+  if(document.getElementById('efSuspLink')) document.getElementById('efSuspLink').addEventListener('click', (e) => { e.preventDefault(); suspenderEF(selectedFecha, selectedCurso); });
+  if(document.getElementById('quitarEFSuspBtn')) document.getElementById('quitarEFSuspBtn').addEventListener('click', () => quitarSuspensionEF(selectedFecha, selectedCurso));
   attachCursoBtns((c) => { selectedCurso = c; render(); });
   document.getElementById('fechaSelect').addEventListener('change', (e) => { selectedFecha = e.target.value; render(); });
   if(!soloLectura){
@@ -3138,7 +3210,7 @@ function subjectsAfectadasEnDia(studentId, iso){
       });
     });
   }
-  if(diaKey==='martes' || diaKey==='jueves'){
+  if((diaKey==='martes' || diaKey==='jueves') && !getEFSuspendida(iso, curso)){
     if(isFullAbsence || efPerdidaPorRetiro(rec, curso)){
       affected.push('ED FIS');
     } else {
