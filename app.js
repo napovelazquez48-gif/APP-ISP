@@ -722,6 +722,7 @@ function computeMateriaStats(studentId, bim){
   const efCountedDates = new Set();
 
   dates.forEach(iso => {
+    if(!bimestreDe(iso)) return; // fuera de los bimestres (receso de invierno): no hubo clases
     if(getDiaSinClase(iso, curso)) return; // VCF, paro, etc.: no hubo clase, no cuenta ni suma
     const diaKey = diaKeyFor(iso);
     if(!diaKey) return;
@@ -730,7 +731,7 @@ function computeMateriaStats(studentId, bim){
     const isFullAbsence = rec && (rec.estado==='A' || rec.estado==='J') && !rec.exencion && !rec.llegoTarde;
     // Tarde justificada (TJ, alumno con autorización) no suma al total de faltas, pero
     // las materias que ya habían empezado cuando llegó sí cuentan como falta en esa materia.
-    const isParcial = rec && rec.hora && (rec.estado==='T' || rec.estado==='TJ' || (rec.estado==='A' && rec.llegoTarde && !rec.exencion));
+    const isParcial = rec && rec.hora && (rec.estado==='T' || rec.estado==='TJ' || ((rec.estado==='A' || rec.estado==='J') && rec.llegoTarde && !rec.exencion));
     const isRetiro = tieneRetiro(rec);
 
     subjects.forEach(subj => {
@@ -765,7 +766,7 @@ function computeMateriaStats(studentId, bim){
   Object.entries(getEF()).forEach(([key, val]) => {
     const [fecha, sid] = key.split('|');
     if(sid !== studentId || fecha < bim.from || fecha > bim.to) return;
-    if(val.tipo === 'falta' && !efCountedDates.has(fecha) && stats['ED FIS'] && !getEFSuspendida(fecha, curso)){
+    if(val.tipo === 'falta' && !efCountedDates.has(fecha) && stats['ED FIS'] && !getEFSuspendida(fecha, curso) && !getDiaSinClase(fecha, curso) && bimestreDe(fecha)){
       stats['ED FIS'].faltas++;
     }
   });
@@ -773,14 +774,31 @@ function computeMateriaStats(studentId, bim){
   return stats;
 }
 
+// Curso de cada alumno activo (los dados de baja no figuran: no suman ni alertan).
+function cursosActivos(){
+  const m = {};
+  getStudents().forEach(s => { m[s.id] = s.curso; });
+  return m;
+}
+// ¿Ese día no cuenta para ese alumno? (dado de baja, o día sin clase de su curso)
+function diaNoCuenta(fecha, sid, cursos){
+  const c = cursos[sid];
+  return !c || !!getDiaSinClase(fecha, c);
+}
+function efNoCuenta(fecha, sid, cursos){
+  return diaNoCuenta(fecha, sid, cursos) || !!getEFSuspendida(fecha, cursos[sid]);
+}
+
 function computeAbsenceWeights(range){
   const r = range || bimestreActual();
   const att = getAttendance();
   const weights = {};
+  const cursos = cursosActivos();
   Object.entries(att).forEach(([key, rec]) => {
     const [fecha, sid] = key.split('|');
     if(r && (fecha < r.from || fecha > r.to)) return;
     if(rec.exencion) return; // VDE u otra exención: no suma
+    if(diaNoCuenta(fecha, sid, cursos)) return;
     let w = 0;
     if(rec.estado === 'A' || rec.estado === 'J') w = 1; // justificada sigue sumando, el certificado queda como respaldo
     else if(rec.estado === 'T') w = 0.5;
@@ -790,6 +808,7 @@ function computeAbsenceWeights(range){
   Object.entries(getEF()).forEach(([key, val]) => {
     const [fecha, sid] = key.split('|');
     if(r && (fecha < r.from || fecha > r.to)) return;
+    if(efNoCuenta(fecha, sid, cursos)) return;
     if(val && val.tipo === 'falta') weights[sid] = (weights[sid]||0) + 0.5;
     // SAF: permiso autorizado, no suma
   });
@@ -800,11 +819,12 @@ function computeFechaAlerta(studentId, range){
   const r = range || bimestreActual();
   const att = getAttendance();
   const eventos = [];
+  const cursos = cursosActivos();
   Object.entries(att).forEach(([key, rec]) => {
     const [fecha, sid] = key.split('|');
     if(sid !== studentId) return;
     if(r && (fecha < r.from || fecha > r.to)) return;
-    if(rec.exencion) return;
+    if(rec.exencion || diaNoCuenta(fecha, sid, cursos)) return;
     let w = 0;
     if(rec.estado === 'A' || rec.estado === 'J') w = 1;
     else if(rec.estado === 'T') w = 0.5;
@@ -815,6 +835,7 @@ function computeFechaAlerta(studentId, range){
     const [fecha, sid] = key.split('|');
     if(sid !== studentId) return;
     if(r && (fecha < r.from || fecha > r.to)) return;
+    if(efNoCuenta(fecha, sid, cursos)) return;
     if(val && val.tipo === 'falta') eventos.push({ fecha, w: 0.5 });
   });
   eventos.sort((a,b)=> a.fecha.localeCompare(b.fecha));
@@ -1608,8 +1629,8 @@ function customPrompt(msg, valorInicial, inputType){
     // nativo: en iOS ese widget ignora el estilo del modal y se ve roto/gigante). Con
     // inputmode="numeric" sale el teclado de números, y el ":" se inserta solo.
     document.getElementById('modalExtra').innerHTML = esHora
-      ? `<input type="text" inputmode="numeric" maxlength="5" placeholder="07:45" id="modalInput" value="${valorInicial||''}" style="margin-bottom:14px;text-align:center;letter-spacing:1px;">`
-      : `<input type="text" id="modalInput" value="${valorInicial||''}" style="margin-bottom:14px;">`;
+      ? `<input type="text" inputmode="numeric" maxlength="5" placeholder="07:45" id="modalInput" value="${escapeHtml(valorInicial||'')}" style="margin-bottom:14px;text-align:center;letter-spacing:1px;">`
+      : `<input type="text" id="modalInput" value="${escapeHtml(valorInicial||'')}" style="margin-bottom:14px;">`;
     document.getElementById('modalBtns').innerHTML = `
       <button class="btn-secondary" id="modalCancelBtn">Cancelar</button>
       <button class="btn-primary" id="modalOkBtn">Aceptar</button>
@@ -1856,7 +1877,7 @@ function renderDetalleAsistenciaHoy(){
 
   const rows = ausentes.map(s => `
     <div class="sancion-item">
-      <p class="folio"><span class="curso-chip c${s.curso}">${s.curso}°</span> ${s.apellido}, ${s.nombre}</p>
+      <p class="folio"><span class="curso-chip c${s.curso}">${s.curso}°</span> ${escapeHtml(s.apellido)}, ${escapeHtml(s.nombre)}</p>
       ${(att[`${today}|${s.id}`].exencion) ? `<p class="motivo">Exenta (${att[`${today}|${s.id}`].exencion})</p>` : ''}
     </div>
   `).join('');
@@ -1882,7 +1903,7 @@ function renderDetalleAlertas(){
 
   const rows = alertados.map(s => `
       <div class="sancion-item">
-        <p class="folio"><span class="curso-chip c${s.curso}">${s.curso}°</span> ${s.apellido}, ${s.nombre}</p>
+        <p class="folio"><span class="curso-chip c${s.curso}">${s.curso}°</span> ${escapeHtml(s.apellido)}, ${escapeHtml(s.nombre)}</p>
         <p class="motivo">En alerta desde el ${s.fechaAlerta ? fmtDateShort(s.fechaAlerta) : '—'}</p>
         <p class="motivo">${weights[s.id]} faltas del bimestre</p>
       </div>
@@ -2102,7 +2123,7 @@ function renderAsistencia(){
         <div class="row">
           ${avatarAlumno(s)}
           <div style="flex:1">
-            <span class="name">${s.apellido}, ${s.nombre}</span>
+            <span class="name">${escapeHtml(s.apellido)}, ${escapeHtml(s.nombre)}</span>
             ${metaHtml}
           </div>
           ${efHtml}
@@ -2115,7 +2136,7 @@ function renderAsistencia(){
         <div class="row">
           ${avatarAlumno(s)}
           <div style="flex:1">
-            <span class="name">${s.apellido}, ${s.nombre}</span>
+            <span class="name">${escapeHtml(s.apellido)}, ${escapeHtml(s.nombre)}</span>
             ${metaHtml}
           </div>
           <div class="btn-group">
@@ -2174,7 +2195,7 @@ function renderAsistencia(){
       const especial = getEntradaEspecial(selectedFecha, selectedCurso);
       if(especial){
         return `<div class="alert-banner" style="background:var(--sage-bg);margin-bottom:14px;border-left-color:var(--sage);">
-          <p class="alert-text" style="color:var(--sage);">Entrada especial hoy: hasta las ${especial.horaTope}${especial.motivo?' · '+especial.motivo:''}</p>
+          <p class="alert-text" style="color:var(--sage);">Entrada especial hoy: hasta las ${especial.horaTope}${especial.motivo?' · '+escapeHtml(especial.motivo):''}</p>
           ${soloLectura ? '' : `<div style="display:flex;gap:8px;margin-top:8px;">
             <button class="btn-secondary" id="editarEspecialBtn" style="flex:1;font-size:calc(12px * var(--fs, 1));padding:6px;">Editar</button>
             <button class="btn-secondary" id="borrarEspecialBtn" style="flex:1;font-size:calc(12px * var(--fs, 1));padding:6px;color:var(--stamp);">Sacar</button>
@@ -2187,7 +2208,7 @@ function renderAsistencia(){
       const sinClase = getDiaSinClase(selectedFecha, selectedCurso);
       if(sinClase){
         return `<div class="alert-banner" style="background:var(--gold-bg);margin-bottom:14px;border-left-color:var(--gold);">
-          <p class="alert-text" style="color:var(--gold);">Sin clase hoy para este curso · ${sinClase.motivo} — no suma faltas ni afecta el % por materia.</p>
+          <p class="alert-text" style="color:var(--gold);">Sin clase hoy para este curso · ${escapeHtml(sinClase.motivo)} — no suma faltas ni afecta el % por materia.</p>
           ${soloLectura ? '' : `<div style="display:flex;gap:8px;margin-top:8px;">
             <button class="btn-secondary" id="editarSinClaseBtn" style="flex:1;font-size:calc(12px * var(--fs, 1));padding:6px;">Editar</button>
             <button class="btn-secondary" id="borrarSinClaseBtn" style="flex:1;font-size:calc(12px * var(--fs, 1));padding:6px;color:var(--stamp);">Sacar</button>
@@ -2319,7 +2340,7 @@ function renderSancionesLista(){
     return `<div class="module-row" data-student="${s.id}">
       ${avatarAlumno(s)}
       <div class="txt">
-        <p class="title">${s.apellido}, ${s.nombre}</p>
+        <p class="title">${escapeHtml(s.apellido)}, ${escapeHtml(s.nombre)}</p>
         ${count>0 ? `<p class="desc">${count} apercibimiento${count>1?'s':''}${count>=5?' · corresponde evaluar suspensión':''}</p>` : `<p class="desc">Sin registros</p>`}
       </div>
       ${count>=5 ? `<span class="badge-soon" style="background:var(--stamp-bg);color:var(--stamp);">${count}</span>` : (count>0 ? `<span class="badge-soon">${count}</span>` : '')}
@@ -2355,6 +2376,7 @@ async function agregarApercibimiento(){
   const fechaInput = document.getElementById('fechaApercibimiento');
   const motivo = textarea.value.trim();
   const fecha = fechaInput.value || todayISO();
+  if(motivo) textarea.value = '';
   if(!motivo){ await customAlert('Describí lo que pasó antes de guardar.'); return; }
   const student = getStudents().find(s => s.id === selectedStudentId);
   const payload = { studentId: selectedStudentId, fecha, motivo, createdAt: new Date(fecha+'T12:00:00').getTime(),
@@ -2386,7 +2408,7 @@ function renderSancionDetalle(){
   $app.innerHTML = `
     <div class="appbar" style="padding:0 0 10px;">
       <button class="back-btn" id="backBtn">${icon('back')}</button>
-      <h1>${student.apellido}, ${student.nombre}</h1>
+      <h1>${escapeHtml(student.apellido)}, ${escapeHtml(student.nombre)}</h1>
     </div>
 
     ${count>=5 ? `
@@ -2419,6 +2441,8 @@ function renderSancionDetalle(){
 // ---------- Justificativos médicos ----------
 function getCertificados(){ return cache.certificados; }
 let pendingFileDataUrl = null;
+let pendingFileName = '';
+let justFechas = null; // { sid, desde, hasta } elegidas en la pantalla de certificado
 
 function dateRange(fromISO, toISO){
   const out = [];
@@ -2449,7 +2473,7 @@ function renderJustificativosLista(){
   const rows = students.map(s => `<div class="module-row" data-student="${s.id}">
       ${avatarAlumno(s)}
       <div class="txt">
-        <p class="title">${s.apellido}, ${s.nombre}</p>
+        <p class="title">${escapeHtml(s.apellido)}, ${escapeHtml(s.nombre)}</p>
         <p class="desc">Cargar certificado</p>
       </div>
       <span class="chevron">${icon('chevron')}</span>
@@ -2468,7 +2492,7 @@ function renderJustificativosLista(){
   document.getElementById('backBtn').addEventListener('click', () => goBack('home'));
   attachCursoBtns((c) => { selectedCurso = c; render(); });
   document.querySelectorAll('[data-student]').forEach(el => {
-    el.addEventListener('click', () => { selectedStudentId = el.dataset.student; pendingFileDataUrl = null; navigate('justificativoAlumno'); });
+    el.addEventListener('click', () => { selectedStudentId = el.dataset.student; pendingFileDataUrl = null; pendingFileName = ''; justFechas = null; navigate('justificativoAlumno'); });
   });
 }
 
@@ -2551,6 +2575,7 @@ async function guardarJustificativo(){
     })
     .catch(err=>showSaveError(err));
 
+  justFechas = null; pendingFileName = '';
   showToast(count>0 ? `Justificativo guardado — ${count} día${count>1?'s':''} justificado${count>1?'s':''}` : 'Justificativo guardado');
   navigate('justificativos');
 }
@@ -2562,7 +2587,7 @@ function renderJustificativoAlumno(){
   $app.innerHTML = `
     <div class="appbar" style="padding:0 0 10px;">
       <button class="back-btn" id="backBtn">${icon('back')}</button>
-      <h1>${student.apellido}, ${student.nombre}</h1>
+      <h1>${escapeHtml(student.apellido)}, ${escapeHtml(student.nombre)}</h1>
     </div>
 
     <p class="section-label">Certificado</p>
@@ -2576,13 +2601,13 @@ function renderJustificativoAlumno(){
         Adjuntar archivo
       </label>
     </div>
-    <p id="fileStatus" style="font-size:calc(12px * var(--fs, 1));color:var(--ink-soft);margin:-10px 0 16px;">Sin adjunto todavía</p>
+    <p id="fileStatus" style="font-size:calc(12px * var(--fs, 1));color:var(--ink-soft);margin:-10px 0 16px;">${pendingFileDataUrl ? 'Adjuntado: ' + escapeHtml(pendingFileName || 'archivo') : 'Sin adjunto todavía'}</p>
 
     <p class="section-label">Rango que cubre</p>
     <div style="display:flex;align-items:center;gap:8px;margin-bottom:16px;">
-      <input type="date" id="fechaDesde" value="${today}">
+      <input type="date" id="fechaDesde" value="${(justFechas && justFechas.sid === selectedStudentId) ? justFechas.desde : today}">
       <span style="font-size:calc(12px * var(--fs, 1));color:var(--ink-soft);">al</span>
-      <input type="date" id="fechaHasta" value="${today}">
+      <input type="date" id="fechaHasta" value="${(justFechas && justFechas.sid === selectedStudentId) ? justFechas.hasta : today}">
     </div>
 
     <div id="previewBox" class="preview-box"></div>
@@ -2591,8 +2616,9 @@ function renderJustificativoAlumno(){
   `;
 
   document.getElementById('backBtn').addEventListener('click', () => goBack('justificativos'));
-  document.getElementById('fechaDesde').addEventListener('change', updatePreview);
-  document.getElementById('fechaHasta').addEventListener('change', updatePreview);
+  const recordarFechas = () => { justFechas = { sid: selectedStudentId, desde: document.getElementById('fechaDesde').value, hasta: document.getElementById('fechaHasta').value }; };
+  document.getElementById('fechaDesde').addEventListener('change', () => { recordarFechas(); updatePreview(); });
+  document.getElementById('fechaHasta').addEventListener('change', () => { recordarFechas(); updatePreview(); });
   document.getElementById('guardarJustBtn').addEventListener('click', guardarJustificativo);
 
   function handleFile(e){
@@ -2601,6 +2627,7 @@ function renderJustificativoAlumno(){
     const reader = new FileReader();
     reader.onload = () => {
       pendingFileDataUrl = reader.result;
+      pendingFileName = file.name;
       document.getElementById('fileStatus').textContent = `Adjuntado: ${file.name}`;
     };
     reader.readAsDataURL(file);
@@ -2626,11 +2653,64 @@ let skipFadeNext = false;
 // hiciera imposible escribir. En captura, este listener corre primero (antes de que
 // el input de cada pantalla dispare el render), y guarda la posición correcta.
 document.addEventListener('input', (e) => {
-  if(e.target && e.target.id && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA')){
+  if(e.target && e.target.id && (e.target.tagName === 'INPUT' || e.target.tagName === 'TEXTAREA') && !e.target.closest('#modalOverlay')){
     lastFocusedInput = { id: e.target.id, start: e.target.selectionStart, end: e.target.selectionEnd };
     skipFadeNext = true;
   }
 }, true);
+
+// También se recuerda el campo al tocarlo (aunque todavía no se haya escrito nada),
+// para que si llega un dato nuevo y se redibuja la pantalla, el teclado siga ahí
+// (por ejemplo en Notas, al pasar de un alumno al siguiente).
+function campoRecordable(t){
+  return t && t.id && (t.tagName === 'INPUT' || t.tagName === 'TEXTAREA') && t.type !== 'file' && t.type !== 'date'
+    && !t.closest('#modalOverlay') && $app && $app.contains(t);
+}
+document.addEventListener('focusin', (e) => {
+  const t = e.target;
+  if(!campoRecordable(t)) return;
+  let start = null, end = null;
+  try{ start = t.selectionStart; end = t.selectionEnd; }catch(err){}
+  lastFocusedInput = { id: t.id, start, end };
+}, true);
+// Si el usuario sale del campo (cierra el teclado, toca otra cosa), se olvida: así un
+// redibujado posterior no vuelve a abrir el teclado ni hace saltar la pantalla hacia arriba.
+// Si el campo desapareció porque se redibujó la pantalla, se mantiene.
+document.addEventListener('focusout', (e) => {
+  const t = e.target;
+  if(!lastFocusedInput || !t || t.id !== lastFocusedInput.id) return;
+  setTimeout(() => {
+    if(!t.isConnected) return; // lo reemplazó un redibujado
+    const a = document.activeElement;
+    if(lastFocusedInput && (!a || a.id !== lastFocusedInput.id)) lastFocusedInput = null;
+  }, 0);
+}, true);
+
+// ---------- Borradores: lo escrito sobrevive a un redibujado ----------
+// Cada dato nuevo que llega (otra persona marca asistencia, etc.) redibuja la pantalla.
+// Antes, eso borraba lo que estabas escribiendo y devolvía las fechas a hoy. Ahora se
+// copian los valores de los campos antes de redibujar y se vuelven a poner después,
+// siempre que sigas en la misma pantalla.
+function capturarBorrador(){
+  if(!$app) return null;
+  const campos = {};
+  $app.querySelectorAll('input[id], textarea[id], select[id]').forEach(el => {
+    if(el.type === 'file') return;
+    campos[el.id] = (el.type === 'checkbox' || el.type === 'radio') ? { c: el.checked } : { v: el.value };
+  });
+  return { route: currentRoute, campos };
+}
+function restaurarBorrador(b){
+  if(!b || b.route !== currentRoute || !$app) return;
+  Object.entries(b.campos).forEach(([id, x]) => {
+    const el = document.getElementById(id);
+    if(!el || !$app.contains(el)) return;
+    if('c' in x){ el.checked = x.c; return; }
+    if(el.value === x.v) return;
+    if(el.tagName === 'SELECT' && ![...el.options].some(o => o.value === x.v)) return;
+    el.value = x.v;
+  });
+}
 
 // ---------- Menú rápido en asistencia (mantener apretado un alumno) ----------
 function abrirMenuAlumno(studentId){
@@ -2683,7 +2763,7 @@ function abrirMenuAlumno(studentId){
     cerrarMenuAlumno();
     if(a === 'retiro') editarRetiro(studentId, fecha);
     else if(a === 'apercibimiento'){ selectedStudentId = studentId; navigate('sancionDetalle'); }
-    else if(a === 'justificativo'){ selectedStudentId = studentId; pendingFileDataUrl = null; navigate('justificativoAlumno'); }
+    else if(a === 'justificativo'){ selectedStudentId = studentId; pendingFileDataUrl = null; pendingFileName = ''; justFechas = null; navigate('justificativoAlumno'); }
     else if(a === 'autorizacion'){ authActiva ? editarAutorizacion(studentId) : agregarAutorizacion(studentId); }
     else if(a === 'resumen'){ selectedStudentId = studentId; selectedBimestreN = null; navigate('resumenAlumno'); }
   });
@@ -2816,6 +2896,13 @@ function crearPantallaSaliente(transicion){
   }, { passive: true });
   document.addEventListener('touchmove', (e) => {
     if(!activo) return;
+    if(document.getElementById('menuRapido')){
+      // Se abrió el menú rápido (mantener apretado): el gesto de volver queda cancelado.
+      activo = false;
+      if($app){ $app.style.transform = ''; $app.classList.remove('arrastrando'); }
+      document.querySelectorAll('.pantalla-fondo').forEach(el => el.remove());
+      return;
+    }
     const dx = e.touches[0].clientX - x0, dy = e.touches[0].clientY - y0;
     if(!decidido){
       if(Math.abs(dx) < 10 && Math.abs(dy) < 10) return;
@@ -2868,10 +2955,12 @@ function render(){
   if(!authResolved) return;
   const hb = document.getElementById('histBanner');
   if(hb) hb.classList.toggle('show', !histAsistenciaListo);
+  const borrador = (!pendingTransicion && primerRenderHecho) ? capturarBorrador() : null;
   if((pendingTransicion === 'adelante' || pendingTransicion === 'atras') && primerRenderHecho) crearPantallaSaliente(pendingTransicion);
   if($app){ $app.style.transform = ''; $app.classList.remove('arrastrando', 'volviendo-lugar'); }
   if(currentRoute !== 'asistencia') cerrarMenuAlumno(true);
   renderInner();
+  restaurarBorrador(borrador);
   franjaPrueba();
   const transicion = pendingTransicion;
   pendingTransicion = null;
@@ -2900,7 +2989,7 @@ function render(){
   if(lastFocusedInput){
     const el = document.getElementById(lastFocusedInput.id);
     if(el && (el.tagName === 'INPUT' || el.tagName === 'TEXTAREA')){
-      el.focus();
+      try{ el.focus({ preventScroll: true }); }catch(err){ el.focus(); }
       if(typeof lastFocusedInput.start === 'number'){
         try{ el.setSelectionRange(lastFocusedInput.start, lastFocusedInput.end); }catch(err){}
       }
@@ -3034,7 +3123,7 @@ function renderFamiliasLista(){
   const rows = students.map(s => `<div class="module-row" data-student="${s.id}">
       ${avatarAlumno(s)}
       <div class="txt">
-        <p class="title">${s.apellido}, ${s.nombre}</p>
+        <p class="title">${escapeHtml(s.apellido)}, ${escapeHtml(s.nombre)}</p>
         <p class="desc">${s.familyEmails.length} contacto${s.familyEmails.length!==1?'s':''} de familia</p>
       </div>
       <span class="chevron">${icon('chevron')}</span>
@@ -3080,7 +3169,7 @@ function renderFamiliaAlumno(){
   $app.innerHTML = `
     <div class="appbar" style="padding:0 0 10px;">
       <button class="back-btn" id="backBtn">${icon('back')}</button>
-      <h1>${student.apellido}, ${student.nombre}</h1>
+      <h1>${escapeHtml(student.apellido)}, ${escapeHtml(student.nombre)}</h1>
     </div>
 
     <div class="config-card">
@@ -3145,7 +3234,7 @@ function renderResumenLista(){
     return `<div class="module-row" data-student="${s.id}">
       ${avatarAlumno(s)}
       <div class="txt">
-        <p class="title">${s.apellido}, ${s.nombre}${buscandoGlobal ? ` <span style="font-weight:400;color:var(--ink-soft);">· ${s.curso}° A</span>` : ''}</p>
+        <p class="title">${escapeHtml(s.apellido)}, ${escapeHtml(s.nombre)}${buscandoGlobal ? ` <span style="font-weight:400;color:var(--ink-soft);">· ${s.curso}° A</span>` : ''}</p>
         <p class="desc">${w} falta${w!==1?'s':''} en el bimestre</p>
       </div>
       ${w>=UMBRAL_ALERTA ? `<span class="badge-soon" style="background:var(--stamp-bg);color:var(--stamp);">${w}</span>` : ''}
@@ -3194,7 +3283,7 @@ function subjectsAfectadasEnDia(studentId, iso){
   if(!rec || rec.exencion) return [];
   const subjects = subjectsForDay(curso, diaKey);
   const isFullAbsence = (rec.estado==='A'||rec.estado==='J') && !rec.llegoTarde;
-  const isParcial = rec.hora && (rec.estado==='T' || rec.estado==='TJ' || (rec.estado==='A' && rec.llegoTarde));
+  const isParcial = rec.hora && (rec.estado==='T' || rec.estado==='TJ' || ((rec.estado==='A' || rec.estado==='J') && rec.llegoTarde));
   const isRetiro = tieneRetiro(rec);
   let affected = [];
   const dictadas = (subj) => (getSchedule()[curso][diaKey]||[]).filter(e => e.subject===subj && !horaSinDocente(iso, curso, diaKey, e.hour));
@@ -3263,7 +3352,7 @@ function renderCompararBimestres(){
   $app.innerHTML = `
     <div class="appbar" style="padding:0 0 10px;">
       <button class="back-btn" id="backBtn">${icon('back')}</button>
-      <h1>${student.apellido}, ${student.nombre}</h1>
+      <h1>${escapeHtml(student.apellido)}, ${escapeHtml(student.nombre)}</h1>
     </div>
     <p class="section-label">Bimestre A</p>
     <div class="course-picker">${pillBtnRow('compA', BIMESTRES.map(b => ({value:b.n, label:b.n+'° bim.'})), window.__compA, bimColorClass)}</div>
@@ -3290,9 +3379,11 @@ function renderDetalleFaltasAlumno(){
   const efMap = getEF();
 
   const dias = [];
+  const cursosDet = cursosActivos();
   Object.entries(att).forEach(([key, rec]) => {
     const [fecha, sid] = key.split('|');
     if(sid !== selectedStudentId || fecha < bim.from || fecha > bim.to || rec.exencion) return;
+    if(diaNoCuenta(fecha, sid, cursosDet)) return;
     let w = 0;
     if(rec.estado==='A' || rec.estado==='J') w = 1;
     else if(rec.estado==='T') w = 0.5;
@@ -3304,9 +3395,11 @@ function renderDetalleFaltasAlumno(){
   Object.entries(efMap).forEach(([key,val]) => {
     const [fecha, sid] = key.split('|');
     if(sid !== selectedStudentId || fecha < bim.from || fecha > bim.to) return;
-    if(val.tipo === 'falta' && !dias.find(d=>d.fecha===fecha)){
-      dias.push({ fecha, w:0.5, tipo:'EF' });
-    }
+    if(val.tipo !== 'falta' || efNoCuenta(fecha, sid, cursosDet)) return;
+    const mismoDia = dias.find(d=>d.fecha===fecha);
+    if(!mismoDia) dias.push({ fecha, w:0.5, tipo:'EF' });
+    else if(mismoDia.tipo !== 'A' && mismoDia.tipo !== 'J'){ mismoDia.w += 0.5; mismoDia.ef = true; }
+    // Con ausente o justificada ese día, Ed. Física ya está incluida en la falta del día.
   });
   dias.sort((a,b)=> a.fecha.localeCompare(b.fecha));
 
@@ -3325,7 +3418,7 @@ function renderDetalleFaltasAlumno(){
   $app.innerHTML = `
     <div class="appbar" style="padding:0 0 10px;">
       <button class="back-btn" id="backBtn">${icon('back')}</button>
-      <h1>${student.apellido}, ${student.nombre}</h1>
+      <h1>${escapeHtml(student.apellido)}, ${escapeHtml(student.nombre)}</h1>
     </div>
     <p class="date-label">${bim.n===0 ? 'Total del año' : bim.n+'° bimestre'} · ${dias.reduce((a,d)=>a+d.w,0)} faltas</p>
     ${rows ? `<div class="sancion-list">${rows}</div>` : `<p class="empty-inline">Sin faltas en este período.</p>`}
@@ -3381,7 +3474,7 @@ function renderResumenAlumno(){
   $app.innerHTML = `
     <div class="appbar" style="padding:0 0 10px;">
       <button class="back-btn" id="backBtn">${icon('back')}</button>
-      <h1>${student.apellido}, ${student.nombre}</h1>
+      <h1>${escapeHtml(student.apellido)}, ${escapeHtml(student.nombre)}</h1>
     </div>
 
     <div class="course-picker">
@@ -3418,7 +3511,7 @@ function renderResumenAlumno(){
 
     <p class="section-label" style="margin-top:16px;">Apercibimientos</p>
     ${sanciones.length ? `<div class="sancion-list">${sanciones.map(h => `
-      <div class="sancion-item"><p class="folio">${ordinal(h.folio)} · ${h.fecha}</p><p class="motivo">${h.motivo}</p></div>
+      <div class="sancion-item"><p class="folio">${ordinal(h.folio)} · ${h.fecha}</p><p class="motivo">${escapeHtml(h.motivo)}</p></div>
     `).join('')}</div>` : `<p class="empty-inline">Sin registros.</p>`}
 
     <p class="section-label" style="margin-top:16px;">Certificados entregados</p>
@@ -3505,15 +3598,15 @@ function renderResumenValoraciones(){
     <div class="sancion-item">
       <p class="folio">${v.materia}</p>
       <p class="motivo">Participa: ${v.participa||'—'} · Tareas: ${v.cumpleTareas||'—'} · Calidad: ${v.calidad||'—'} · Comportamiento: ${v.comportamiento||'—'} · Objetivos: ${v.objetivos||'—'}</p>
-      ${v.proyeccion ? `<p class="motivo" style="margin-top:4px;font-style:italic;">"${v.proyeccion}"</p>` : ''}
-      ${v.observaciones ? `<p class="motivo" style="margin-top:4px;">${v.observaciones}</p>` : ''}
+      ${v.proyeccion ? `<p class="motivo" style="margin-top:4px;font-style:italic;">"${escapeHtml(v.proyeccion)}"</p>` : ''}
+      ${v.observaciones ? `<p class="motivo" style="margin-top:4px;">${escapeHtml(v.observaciones)}</p>` : ''}
     </div>
   `).join('');
 
   $app.innerHTML = `
     <div class="appbar" style="padding:0 0 10px;">
       <button class="back-btn" id="backBtn">${icon('back')}</button>
-      <h1>${student.apellido}, ${student.nombre}</h1>
+      <h1>${escapeHtml(student.apellido)}, ${escapeHtml(student.nombre)}</h1>
     </div>
     <div class="course-picker">
       ${pillBtnRow('bimResVal', [{value:1,label:'1° bimestre'},{value:3,label:'3° bimestre'}], bim, bimColorClass)}
@@ -3549,7 +3642,7 @@ function renderResumenNotas(){
   $app.innerHTML = `
     <div class="appbar" style="padding:0 0 10px;">
       <button class="back-btn" id="backBtn">${icon('back')}</button>
-      <h1>${student.apellido}, ${student.nombre}</h1>
+      <h1>${escapeHtml(student.apellido)}, ${escapeHtml(student.nombre)}</h1>
     </div>
     <div class="stat-grid" style="grid-template-columns:1fr 1fr 1fr;">
       <div class="stat-card"><p class="label">1° cuatri.</p><p class="value">${prom1 ?? '—'}</p></div>
@@ -3819,10 +3912,13 @@ function filasPlanilla(rec){
 function registrosPendientesDeSync(){
   const asistencia = [];
   let filas = 0;
+  const cursos = cursosActivos();
   Object.entries(cache.attendance).forEach(([id, rec]) => {
     if(rec.driveSynced) return;
     const studentId = rec.studentId || id.split('|')[1];
     if(!cache.driveMapping[studentId]) return;
+    // Día sin clase de su curso (VCF, paro): no va a la planilla.
+    if(diaNoCuenta(rec.fecha || id.split('|')[0], studentId, cursos)) return;
     const n = filasPlanilla(rec);
     if(!n) return;
     asistencia.push(id);
@@ -3834,6 +3930,7 @@ function registrosPendientesDeSync(){
     const [fecha, studentId] = key.split('|');
     if(!cache.driveMapping[studentId]) return;
     if(rec.tipo !== 'falta' && rec.tipo !== 'saf') return;
+    if(efNoCuenta(fecha, studentId, cursos)) return;
     ef.push(docId(`${fecha}_${studentId}`));
     filas++;
   });
@@ -4021,7 +4118,7 @@ function renderConexionDrive(){
     <div class="config-card">
       <p style="font-size:calc(12.5px * var(--fs, 1));color:var(--ink-soft);margin:0 0 8px;">Escribe una fila marcada como PRUEBA en la planilla de un solo alumno, para que confirmes que queda en el lugar correcto.</p>
       <select id="alumnoPruebaSelect" style="margin-bottom:10px;">
-        ${getStudents().filter(s => cache.driveMapping[s.id]).sort((a,b)=>a.apellido.localeCompare(b.apellido)).map(s => `<option value="${s.id}">${s.curso}° · ${s.apellido}, ${s.nombre}</option>`).join('')}
+        ${getStudents().filter(s => cache.driveMapping[s.id]).sort((a,b)=>a.apellido.localeCompare(b.apellido)).map(s => `<option value="${s.id}">${s.curso}° · ${escapeHtml(s.apellido)}, ${escapeHtml(s.nombre)}</option>`).join('')}
       </select>
       <button class="btn-secondary" id="probarEscrituraBtn" style="width:100%;">Escribir fila de prueba</button>
       <p id="pruebaEstado" style="font-size:calc(12.5px * var(--fs, 1));color:var(--ink-soft);margin-top:8px;"></p>
@@ -4392,7 +4489,7 @@ function renderAlumnosCuentas(){
       <label>Alumno/a</label>
       <select id="nuevoAlumnoSelect">
         <option value="">-- Elegir --</option>
-        ${disponibles.map(s => `<option value="${s.id}">${s.curso}° A · ${s.apellido}, ${s.nombre}</option>`).join('')}
+        ${disponibles.map(s => `<option value="${s.id}">${s.curso}° A · ${escapeHtml(s.apellido)}, ${escapeHtml(s.nombre)}</option>`).join('')}
       </select>
     </div>
     <div class="field-row"><label>Mail</label><input id="nuevoAlumnoEmail" type="email"></div>
@@ -4555,7 +4652,7 @@ function renderValoracionesLista(){
     return `<div class="module-row" data-student="${s.id}">
       ${avatarAlumno(s)}
       <div class="txt">
-        <p class="title">${s.apellido}, ${s.nombre}</p>
+        <p class="title">${escapeHtml(s.apellido)}, ${escapeHtml(s.nombre)}</p>
         <p class="desc">${existe ? 'Cargada' : 'Sin cargar'}</p>
       </div>
       <span class="chevron">${icon('chevron')}</span>
@@ -4623,7 +4720,7 @@ function renderValoracionAlumno(){
   $app.innerHTML = `
     <div class="appbar" style="padding:0 0 10px;">
       <button class="back-btn" id="backBtn">${icon('back')}</button>
-      <h1>${student.apellido}, ${student.nombre}</h1>
+      <h1>${escapeHtml(student.apellido)}, ${escapeHtml(student.nombre)}</h1>
     </div>
     <p class="date-label">${materia} · ${bim}° bimestre</p>
 
@@ -4646,7 +4743,7 @@ function renderValoracionAlumno(){
     ${selectHtml('valProyeccion', OPCIONES_VALORACION.proyeccion, existente.proyeccion)}
 
     <label style="font-size:calc(12.5px * var(--fs, 1));color:var(--ink-soft);">Observaciones generales (opcional)</label>
-    <textarea id="valObservaciones" rows="3" style="margin-bottom:12px;">${existente.observaciones||''}</textarea>
+    <textarea id="valObservaciones" rows="3" style="margin-bottom:12px;">${escapeHtml(existente.observaciones||'')}</textarea>
 
     <button class="btn-primary" id="guardarValBtn">Guardar valoración</button>
   `;
@@ -4828,8 +4925,8 @@ function renderNotasLista(){
     const nota = cache.notas[key] ? cache.notas[key].nota : '';
     return `<div class="student-card">
       <div class="row" style="align-items:center;">
-        <span class="name" style="flex:1;">${s.apellido}, ${s.nombre}</span>
-        <input type="number" min="1" max="10" step="0.5" style="width:64px;text-align:center;" data-nota="${s.id}" value="${nota}">
+        <span class="name" style="flex:1;">${escapeHtml(s.apellido)}, ${escapeHtml(s.nombre)}</span>
+        <input type="number" min="1" max="10" step="0.5" style="width:64px;text-align:center;" id="nota_${s.id}" data-nota="${s.id}" value="${nota}">
       </div>
     </div>`;
   }).join('');
@@ -4958,20 +5055,20 @@ function computeVistaCurso(curso){
 
   students.forEach(s => {
     const w = weights[s.id] || 0;
-    if(w >= UMBRAL_ALERTA) alertaList.push({ id: s.id, nombre: `${s.apellido}, ${s.nombre}`, valor: w, fechaAlerta: computeFechaAlerta(s.id, bimestreActual()) });
+    if(w >= UMBRAL_ALERTA) alertaList.push({ id: s.id, nombre: `${escapeHtml(s.apellido)}, ${escapeHtml(s.nombre)}`, valor: w, fechaAlerta: computeFechaAlerta(s.id, bimestreActual()) });
     const stats = computeMateriaStats(s.id, anioCompleto);
     Object.entries(stats).forEach(([materia, st]) => {
       const pct = st.total>0 ? (1 - st.faltas/st.total) : 1;
       if(pct < UMBRAL_SCP){
         const pctR = Math.round(pct*1000)/10;
         if(!porMateria[materia]) porMateria[materia] = [];
-        porMateria[materia].push({ id: s.id, nombre: `${s.apellido}, ${s.nombre}`, pct: pctR });
-        if(!scpMap[s.id]) scpMap[s.id] = { id: s.id, nombre: `${s.apellido}, ${s.nombre}`, materias: [] };
+        porMateria[materia].push({ id: s.id, nombre: `${escapeHtml(s.apellido)}, ${escapeHtml(s.nombre)}`, pct: pctR });
+        if(!scpMap[s.id]) scpMap[s.id] = { id: s.id, nombre: `${escapeHtml(s.apellido)}, ${escapeHtml(s.nombre)}`, materias: [] };
         scpMap[s.id].materias.push({ materia, pct: pctR });
       } else {
         const resta = faltasRestantes(st);
         if(resta !== null && resta <= CERCA_SCP){
-          if(!cercaMap[s.id]) cercaMap[s.id] = { id: s.id, nombre: `${s.apellido}, ${s.nombre}`, materias: [] };
+          if(!cercaMap[s.id]) cercaMap[s.id] = { id: s.id, nombre: `${escapeHtml(s.apellido)}, ${escapeHtml(s.nombre)}`, materias: [] };
           cercaMap[s.id].materias.push({ materia, resta });
         }
       }
@@ -5146,6 +5243,7 @@ function diasHabilesDelMes(curso, mesISO){
 function codigoOficialDelDia(fecha, studentId){
   const rec = cache.attendance[`${fecha}|${studentId}`];
   if(!rec) return 'P';
+  if(rec.exencion) return rec.exencion; // VDE u otra exención: no es inasistencia
   if(rec.estado === 'TJ') return 'T';
   if(rec.estado === 'J') return 'A';
   return rec.estado || 'P';
@@ -5242,7 +5340,9 @@ function exportarResumenMensualCurso(curso, mesISO){
       else if(rec.estado==='J') justificadas++;
       else if(rec.estado==='T') tardes++;
     });
-    const pct = dias.length ? 100 - ((ausencias + tardes*0.5)/dias.length*100) : 100;
+    // Justificada sigue contando como falta (igual que en el resto de la app); la exención no.
+    const justificadasQueCuentan = dias.filter(f => { const rec = cache.attendance[`${f}|${s.id}`]; return rec && rec.estado === 'J' && !rec.exencion; }).length;
+    const pct = dias.length ? 100 - ((ausencias + justificadasQueCuentan + tardes*0.5)/dias.length*100) : 100;
     return {
       'Apellido': s.apellido, 'Nombre': s.nombre, 'Curso': `${curso}° A`,
       'Ausencias': ausencias, 'Tardes': tardes, 'Justificadas': justificadas,
@@ -5272,7 +5372,7 @@ function computeTendenciaDiaSemana(curso){
   const idsCurso = new Set(students.map(s=>s.id));
   Object.entries(att).forEach(([key, rec]) => {
     const [fecha, sid] = key.split('|');
-    if(!idsCurso.has(sid)) return;
+    if(!idsCurso.has(sid) || getDiaSinClase(fecha, curso)) return;
     const dia = diaKeyFor(fecha);
     if(!dia || !(dia in porDia)) return;
     porDia[dia] += pesoAsistencia(rec);
@@ -5280,7 +5380,7 @@ function computeTendenciaDiaSemana(curso){
   Object.entries(getEF()).forEach(([key, val]) => {
     const [fecha, sid] = key.split('|');
     const dia = diaKeyFor(fecha);
-    if(idsCurso.has(sid) && dia && val && val.tipo === 'falta') porDia[dia] += 0.5;
+    if(idsCurso.has(sid) && dia && val && val.tipo === 'falta' && !getDiaSinClase(fecha, curso) && !getEFSuspendida(fecha, curso)) porDia[dia] += 0.5;
   });
   const labels = { lunes:'Lun', martes:'Mar', miercoles:'Mié', jueves:'Jue', viernes:'Vie' };
   return Object.entries(porDia).map(([dia, total]) => ({
@@ -5317,11 +5417,11 @@ function computeTendenciaSemanal(curso){
   };
   Object.entries(getAttendance()).forEach(([key, rec]) => {
     const [fecha, sid] = key.split('|');
-    if(ids.has(sid)) sumar(fecha, pesoAsistencia(rec));
+    if(ids.has(sid) && !getDiaSinClase(fecha, curso)) sumar(fecha, pesoAsistencia(rec));
   });
   Object.entries(getEF()).forEach(([key, val]) => {
     const [fecha, sid] = key.split('|');
-    if(ids.has(sid) && val && val.tipo === 'falta') sumar(fecha, 0.5);
+    if(ids.has(sid) && val && val.tipo === 'falta' && !getDiaSinClase(fecha, curso) && !getEFSuspendida(fecha, curso)) sumar(fecha, 0.5);
   });
   return semanas.map(x => {
     const [, m, d] = x.lunes.split('-');
@@ -5991,7 +6091,7 @@ function renderTramiteImprimir(){
       const txt = e && e.entregado ? '✓' : (e && e.exento ? 'Exento' : '—');
       return `<td style="text-align:center;">${txt}</td>`;
     }).join('');
-    return `<tr><td>${s.curso}°A</td><td>${s.apellido}, ${s.nombre}</td>${celdas}</tr>`;
+    return `<tr><td>${s.curso}°A</td><td>${escapeHtml(s.apellido)}, ${escapeHtml(s.nombre)}</td>${celdas}</tr>`;
   }).join('');
 
   $app.innerHTML = `
@@ -6036,7 +6136,7 @@ function renderTramiteDetalle(){
     return `
       <div class="student-card">
         <div class="row">
-          <span class="name" style="flex:1;">${s.apellido}, ${s.nombre}</span>
+          <span class="name" style="flex:1;">${escapeHtml(s.apellido)}, ${escapeHtml(s.nombre)}</span>
         </div>
         <div class="btn-group" style="width:100%;margin-top:6px;">${itemBtns}</div>
       </div>`;
@@ -6278,7 +6378,7 @@ function renderAlumnos(){
     <div class="sancion-item">
       <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;">
         <div>
-          <p class="folio"><span class="curso-chip c${s.curso}">${s.curso}°</span> ${s.apellido}, ${s.nombre}</p>
+          <p class="folio"><span class="curso-chip c${s.curso}">${s.curso}°</span> ${escapeHtml(s.apellido)}, ${escapeHtml(s.nombre)}</p>
           ${s.familyEmails && s.familyEmails.length ? `<p class="motivo">${s.familyEmails.join(', ')}</p>` : ''}
         </div>
         <div style="display:flex;flex-direction:column;gap:6px;flex-shrink:0;">
@@ -6490,9 +6590,9 @@ async function agregarPendiente(){
   const texto = (input && input.value || '').trim();
   if(!texto){ if(input) input.focus(); return; }
   const fecha = proximoDiaDeClase(todayISO());
+  if(input) input.value = '';
   try{
     await addDoc(collection(db,'pendientes'), { texto, fecha, notificado: false, creadoEn: Date.now(), usuario: getUsuario() });
-    if(input) input.value = '';
     showToast(`Te llega el ${fmtDateShort(fecha)} a las 8:00`);
   }catch(err){ showSaveError(err); }
 }

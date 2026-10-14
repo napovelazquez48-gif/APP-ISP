@@ -800,3 +800,6 @@ input, textarea, select, [contenteditable="true"]{-webkit-user-select:text;user-
 }
 :root[data-tema="oscuro"] .status-spacer{background:#0E1218;}
 :root[data-tema="oscuro"] .status-spacer span{color:var(--ink);}
+
+/* Áreas de toque más grandes para los enlaces chicos de las tarjetas */
+.student-card .retiro-link, .student-card .meta-tap{display:inline-block;padding:7px 10px 7px 0;margin:-7px 0;}
