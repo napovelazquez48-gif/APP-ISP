@@ -1,6 +1,6 @@
 // ===== Preceptoría ISP — lógica de la app (Etapa 1) =====
 
-const SEED_STUDENTS = [{"id":"a001","apellido":"Leonhardt","nombre":"Luisana","curso":"1","division":"A","familyEmails":["monicafiguero200@gmail.com"]},{"id":"a002","apellido":"Romero Raggini","nombre":"Milena","curso":"1","division":"A","familyEmails":["franci.romero2170@gmail.com","raquelraggini743@gmail.com"]},{"id":"a003","apellido":"Xu","nombre":"Kevin","curso":"1","division":"A","familyEmails":["ax8964@gmail.com","cursotardenuevosol@gmail.com"]},{"id":"a004","apellido":"Tadeo Balladares","nombre":"Aaron Fabricio","curso":"1","division":"A","familyEmails":["mirellaballadares82@gmail.com","tuliotadeo7@gmail.com"]},{"id":"a005","apellido":"Chilabert Denis","nombre":"Kiara","curso":"2","division":"A","familyEmails":["sandradenis@hotmail.com","victorchilabert@gmail.com"]},{"id":"a006","apellido":"Goumas Menendez","nombre":"Helena","curso":"2","division":"A","familyEmails":["anamenendez999@gmail.com"]},{"id":"a007","apellido":"Leng","nombre":"Yihao","curso":"2","division":"A","familyEmails":["ax8964@gmail.com","cursotardenuevosol@gmail.com"]},{"id":"a008","apellido":"Nastar Ferrugia","nombre":"Ivy","curso":"2","division":"A","familyEmails":["alemferruggia@gmail.com","jonatanstr@gmail.com"]},{"id":"a009","apellido":"Salom","nombre":"Ulises","curso":"2","division":"A","familyEmails":["natacha_levin@yahoo.com","natianaropa@gmail.com","salom.matias@gmail.com"]},{"id":"a010","apellido":"Casanova","nombre":"Camila","curso":"3","division":"A","familyEmails":["federico.gustavo.casanova@gmail.com"]},{"id":"a011","apellido":"Choquehuanca","nombre":"Luciana","curso":"3","division":"A","familyEmails":["ro.cardenas1422@gmail.com"]},{"id":"a012","apellido":"Defranco","nombre":"Enzo","curso":"3","division":"A","familyEmails":["adri.altafini@gmail.com"]},{"id":"a013","apellido":"Gutierrez","nombre":"Morena","curso":"3","division":"A","familyEmails":["guillermina.wilson79@gmail.com","hernandgutierrez@yahoo.com.ar"]},{"id":"a014","apellido":"Huang","nombre":"Sofía","curso":"3","division":"A","familyEmails":["funeduchfuneduch@gmail.com"]},{"id":"a015","apellido":"Lin","nombre":"Daiana","curso":"3","division":"A","familyEmails":["funeduchfuneduch@gmail.com"]},{"id":"a016","apellido":"Lin","nombre":"Sofía","curso":"3","division":"A","familyEmails":["funeduchfuneduch@gmail.com"]},{"id":"a017","apellido":"Molinari Vilar","nombre":"Emma","curso":"3","division":"A","familyEmails":["mariasolvilar@gmail.com "]},{"id":"a018","apellido":"Pan","nombre":"Amy","curso":"3","division":"A","familyEmails":["ax8964@gmail.com","cursotardenuevosol@gmail.com"]},{"id":"a019","apellido":"Suarez","nombre":"Tomas","curso":"3","division":"A","familyEmails":["csuarez@visuar.com.ar","valeriakung@gmail.com"]},{"id":"a020","apellido":"Trigoso Flores","nombre":"Soran Yuriana","curso":"3","division":"A","familyEmails":["carolina.isabel.flores2007@gmail.com","cfloresremax@gmail.com","paolotkd@hotmail.com"]},{"id":"a021","apellido":"Villagra Marino","nombre":"Uma","curso":"3","division":"A","familyEmails":["gaby_marinofuhr@hotmail.com"]},{"id":"a022","apellido":"Yan","nombre":"Tomás","curso":"3","division":"A","familyEmails":["ax8964@gmail.com","cursotardenuevosol@gmail.com"]},{"id":"a023","apellido":"Yu","nombre":"Tony","curso":"3","division":"A","familyEmails":["ax8964@gmail.com","cursotardenuevosol@gmail.com"]},{"id":"a024","apellido":"Calviello","nombre":"Tomás","curso":"4","division":"A","familyEmails":["alecalvielo@gmail.com","fnceramica@hotmail.com"]},{"id":"a025","apellido":"Cella","nombre":"Agustín","curso":"4","division":"A","familyEmails":[" pablo.cella@telfu.com","carofm79@gmail.com"]},{"id":"a026","apellido":"Chen","nombre":"Camila","curso":"4","division":"A","familyEmails":["cursotardenuevosol@gmail.com"]},{"id":"a027","apellido":"Chen","nombre":"Daniel","curso":"4","division":"A","familyEmails":["cursotardenuevosol@gmail.com"]},{"id":"a028","apellido":"Cohen","nombre":"Juana","curso":"4","division":"A","familyEmails":["alancohen10@hotmail.com","pauladelas@hotmail.com"]},{"id":"a029","apellido":"Ferreira Maciel","nombre":"Lucas","curso":"4","division":"A","familyEmails":["alexisferreira@hotmail.com","senspeluqueria@gmail.com"]},{"id":"a030","apellido":"Flores Vargas","nombre":"M. Gabriela","curso":"4","division":"A","familyEmails":["alfredofloresgutierrez@hotmail.com","zcvf1988@gmail.com"]},{"id":"a031","apellido":"Fucile Tommei","nombre":"Franco","curso":"4","division":"A","familyEmails":["julianfucile@hotmail.com"]},{"id":"a032","apellido":"Fuertes","nombre":"Tobias","curso":"4","division":"A","familyEmails":["facundofuertes@gmail.com","vickabueno@hotmail.com"]},{"id":"a033","apellido":"He","nombre":"William","curso":"4","division":"A","familyEmails":["cursotardenuevosol@gmail.com","hechenwu1984@gmail.com"]},{"id":"a034","apellido":"Jian","nombre":"Elías Valentín","curso":"4","division":"A","familyEmails":["ax8964@gmail.com","cursotardenuevosol@gmail.com"]},{"id":"a035","apellido":"Ledesma","nombre":"Federica","curso":"4","division":"A","familyEmails":["eduledesma@gmail.com","monicajusid@gmail.com"]},{"id":"a036","apellido":"Li","nombre":"Benjamín Tomás","curso":"4","division":"A","familyEmails":["cursotardenuevosol@gmail.com"]},{"id":"a037","apellido":"Lin","nombre":"Gabino","curso":"4","division":"A","familyEmails":["funeduchfuneduch@gmail.com"]},{"id":"a038","apellido":"Lin","nombre":"Lucas","curso":"4","division":"A","familyEmails":["funeduchfuneduch@gmail.com"]},{"id":"a039","apellido":"Lu","nombre":"Joana Luciana","curso":"4","division":"A","familyEmails":["lsj15959061355@gmail.com"]},{"id":"a040","apellido":"Piccirillo","nombre":"Julieta","curso":"4","division":"A","familyEmails":["dra.florenciadse@gmail.com"]},{"id":"a041","apellido":"Romero Zamborlin","nombre":"Paz Maria","curso":"4","division":"A","familyEmails":["carozambor@gmail.com"]},{"id":"a042","apellido":"Sanchez Basauri","nombre":"Leyla","curso":"4","division":"A","familyEmails":["sofiabasauri@gmail.com"]},{"id":"a043","apellido":"Santillan","nombre":"Briana","curso":"4","division":"A","familyEmails":["ezequielsantillan57@gmail.com","rosariososa1983@gmail.com"]},{"id":"a044","apellido":"Tamburrino","nombre":"Gael","curso":"4","division":"A","familyEmails":["cristian.tamburrino@bbva.com","jisilvey12@gmail.com"]},{"id":"a045","apellido":"Wu","nombre":"Ailin","curso":"4","division":"A","familyEmails":["ax8964@gmail.com","cursotardenuevosol@gmail.com"]},{"id":"a046","apellido":"Yan","nombre":"Lance","curso":"4","division":"A","familyEmails":["ax8964@gmail.com","cursotardenuevosol@gmail.com"]},{"id":"a047","apellido":"Yan","nombre":"Sofía","curso":"4","division":"A","familyEmails":["ax8964@gmail.com","cursotardenuevosol@gmail.com"]},{"id":"a048","apellido":"Yang","nombre":"Sofia","curso":"4","division":"A","familyEmails":["ax8964@gmail.com","cursotardenuevosol@gmail.com"]},{"id":"a049","apellido":"Yedid","nombre":"Lucas","curso":"4","division":"A","familyEmails":["lookus.ar@gmail.com","lornaszpigiel@gmail.com"]},{"id":"a050","apellido":"Zeng","nombre":"Luciana","curso":"4","division":"A","familyEmails":["ax8964@gmail.com","cursotardenuevosol@gmail.com"]},{"id":"a051","apellido":"Zheng","nombre":"Ruoxi (Agosto)","curso":"4","division":"A","familyEmails":["ax8964@gmail.com","cursotardenuevosol@gmail.com"]},{"id":"a052","apellido":"Zhou","nombre":"kevin","curso":"4","division":"A","familyEmails":["ax8964@gmail.com","cursotardenuevosol@gmail.com"]},{"id":"a053","apellido":"Alvarez","nombre":"Renata","curso":"5","division":"A","familyEmails":["valeriaalonso.71@gmail.com"]},{"id":"a054","apellido":"Blanco","nombre":"Delfina","curso":"5","division":"A","familyEmails":["blancojuane@gmail.com","flor.veron311@gmail.com"]},{"id":"a055","apellido":"Blei","nombre":"Sarah","curso":"5","division":"A","familyEmails":["hadaike@gmail.com","matiasblei@gmail.com"]},{"id":"a056","apellido":"Buono","nombre":"Lucas","curso":"5","division":"A","familyEmails":["genoud28@gmail.com","marcelobuono@hotmail.com"]},{"id":"a057","apellido":"Chen","nombre":"Alex","curso":"5","division":"A","familyEmails":["cursotardenuevosol@gmail.com"]},{"id":"a058","apellido":"Chen","nombre":"Ariel","curso":"5","division":"A","familyEmails":["cursotardenuevosol@gmail.com"]},{"id":"a059","apellido":"Chen","nombre":"Leandro","curso":"5","division":"A","familyEmails":["cursotardenuevosol@gmail.com"]},{"id":"a060","apellido":"Chen","nombre":"Luis Ignacio","curso":"5","division":"A","familyEmails":["chengxinxiang@gmail.com"]},{"id":"a061","apellido":"Chen","nombre":"Senjun","curso":"5","division":"A","familyEmails":["chengxinxiang@gmail.com","cursotardenuevosol@gmail.com"]},{"id":"a062","apellido":"Coria","nombre":"Catalina","curso":"5","division":"A","familyEmails":["coria.jm@gmail.com","victoria.lopezseco@gmail.com"]},{"id":"a063","apellido":"García Olivera","nombre":"Zoe","curso":"5","division":"A","familyEmails":["ariel.bellesi@gmail.com","oliverajandrea@gmail.com"]},{"id":"a064","apellido":"Goumas Menendez","nombre":"Maximo","curso":"5","division":"A","familyEmails":["anamenendez999@gmail.com"]},{"id":"a065","apellido":"Grabow","nombre":"Tiago","curso":"5","division":"A","familyEmails":["alofinoventas@gmail.com","verogrob@gmail.com"]},{"id":"a066","apellido":"He Fuyin","nombre":"Berta","curso":"5","division":"A","familyEmails":["cursotardenuevosol@gmail.com"]},{"id":"a067","apellido":"Huang","nombre":"Dafne","curso":"5","division":"A","familyEmails":["funeduchfuneduch@gmail.com"]},{"id":"a068","apellido":"Huang","nombre":"Facundo","curso":"5","division":"A","familyEmails":["funeduchfuneduch@gmail.com"]},{"id":"a069","apellido":"Huang","nombre":"Leandro","curso":"5","division":"A","familyEmails":["funeduchfuneduch@gmail.com"]},{"id":"a070","apellido":"Li","nombre":"Enzo Mariano","curso":"5","division":"A","familyEmails":["cursotardenuevosol@gmail.com"]},{"id":"a071","apellido":"Li","nombre":"Tomy","curso":"5","division":"A","familyEmails":["cursotardenuevosol@gmail.com"]},{"id":"a072","apellido":"Lin","nombre":"Mónica","curso":"5","division":"A","familyEmails":["funeduchfuneduch@gmail.com"]},{"id":"a073","apellido":"Lisogorsky","nombre":"Alan","curso":"5","division":"A","familyEmails":["eal3@hotmail.com","pupestambulsky@gmail.com"]},{"id":"a074","apellido":"Prigione","nombre":"Franco","curso":"5","division":"A","familyEmails":["alejandroprigione@yahoo.com.ar","arcosdelacosta@gmail.com"]},{"id":"a075","apellido":"Riquelme","nombre":"Milagros","curso":"5","division":"A","familyEmails":["mariadelcgimenez@hotmail.com"]},{"id":"a076","apellido":"Rodrigues","nombre":"Arthur","curso":"5","division":"A","familyEmails":["reginaldo.rodrigues@pirelli.com","rodriguesandrea464@gmail.com "]},{"id":"a077","apellido":"Samper","nombre":"Bruno","curso":"5","division":"A","familyEmails":["gustavosamper@gmail.com","mariacarrano2323@gmail.com"]},{"id":"a078","apellido":"Segovia Castro","nombre":"Catalina E.","curso":"5","division":"A","familyEmails":["flor_esp@hotmail.com"]},{"id":"a079","apellido":"Sevilla","nombre":"Tomás","curso":"5","division":"A","familyEmails":["gasevilla10@gmail.com","romiaraceli@gmail.com"]},{"id":"a080","apellido":"Tacconi Rubio","nombre":"Fermin","curso":"5","division":"A","familyEmails":["clamrubio@gmail.com","nicotacconi@hotmail.com"]},{"id":"a081","apellido":"Valdez Iglesias","nombre":"Mariana","curso":"5","division":"A","familyEmails":["carinaiiglesias@gmail.com","nelsonovaldez@gmail.com"]},{"id":"a082","apellido":"Wang","nombre":"Alejo","curso":"5","division":"A","familyEmails":["funeduchfuneduch@gmail.com"]},{"id":"a083","apellido":"Yacón","nombre":"Camila","curso":"5","division":"A","familyEmails":["emilio.yacon@gmail.com","gabycarbone@gmail.com"]}];
+const SEED_STUDENTS = []; // la lista de alumnos vive en Firestore (colección students), no en el código
 
 const CURSOS = ['1','2','3','4','5'];
 
@@ -499,6 +499,8 @@ function aplicarConfigDinamica(cfg){
   if(cfg.feriados) FERIADOS_2026 = new Set(cfg.feriados);
   if(typeof cfg.umbralAlerta === 'number') UMBRAL_ALERTA = cfg.umbralAlerta;
   if(typeof cfg.umbralSCP === 'number') UMBRAL_SCP = cfg.umbralSCP;
+  if(typeof cfg.umbralAnual === 'number') UMBRAL_ANUAL = cfg.umbralAnual;
+  if(typeof cfg.notasHasta === 'string') NOTAS_HASTA = cfg.notasHasta;
   if(cfg.horaTiempos) HORA_TIEMPOS = cfg.horaTiempos;
   if(cfg.efHorario) EF_HORARIO = cfg.efHorario;
 }
@@ -1844,7 +1846,7 @@ function renderHome(){
       ${moduleTile('chart','Vista por curso','vistaCurso')}
       ${moduleTile('chart','Vista general','vistaGeneral')}
       ${moduleTile('file','Valoraciones','valoraciones')}
-      ${moduleTile('check','Notas','notas')}
+      ${moduleTile('check','Notas','notasMenu')}
       ${getUsuario()==='Napo' ? moduleTile('bell','Pendientes','pendientes', Object.values(cache.pendientes).filter(p=>!p.notificado).length) : ''}
     </div>
   `;
@@ -2640,6 +2642,8 @@ function renderJustificativoAlumno(){
 
 let UMBRAL_ALERTA = 5;
 let UMBRAL_SCP = 0.85;
+let UMBRAL_ANUAL = 20;   // tope anual de faltas (Régimen Académico Secundaria Aprende)
+let NOTAS_HASTA = '';    // fecha límite (AAAA-MM-DD) para modificar notas del 2° cuatrimestre; vacío = fin del 4° bimestre
 const APP_START_TIME = Date.now();
 
 let lastFocusedInput = null;
@@ -2696,7 +2700,18 @@ function capturarBorrador(){
   const campos = {};
   $app.querySelectorAll('input[id], textarea[id], select[id]').forEach(el => {
     if(el.type === 'file') return;
-    campos[el.id] = (el.type === 'checkbox' || el.type === 'radio') ? { c: el.checked } : { v: el.value };
+    // Solo se guarda lo que la persona modificó: un campo que sigue igual a como se dibujó
+    // (por ejemplo una nota ya guardada) no se restaura, así no pisa los valores de otra
+    // materia, cuatrimestre o curso cuando se cambia la selección.
+    if(el.type === 'checkbox' || el.type === 'radio'){
+      if(el.checked !== el.defaultChecked) campos[el.id] = { c: el.checked };
+      return;
+    }
+    if(el.tagName === 'SELECT'){
+      if([...el.options].some(o => o.selected !== o.defaultSelected)) campos[el.id] = { v: el.value };
+      return;
+    }
+    if(el.value !== el.defaultValue) campos[el.id] = { v: el.value };
   });
   return { route: currentRoute, campos };
 }
@@ -2720,12 +2735,14 @@ function abrirMenuAlumno(studentId){
   const fecha = selectedFecha;
   const rec = getAttendance()[`${fecha}|${studentId}`];
   const faltas = (computeAbsenceWeights(bimestreActual())[studentId] || 0);
+  const faltasAnio = (computeAbsenceWeights({ from: BIMESTRES[0].from, to: BIMESTRES[BIMESTRES.length-1].to })[studentId] || 0);
   const auth = getAutorizaciones()[studentId];
   const authActiva = auth && auth.activa;
   const aperc = (getSanciones()[studentId] || []).length;
   const puedeRetiro = !rec || rec.estado === 'P' || rec.estado === 'T' || rec.estado === 'TJ';
   const chips = [
     `<span class="mr-chip ${faltas >= UMBRAL_ALERTA ? 'alerta' : ''}">${String(faltas).replace('.', ',')} ${faltas === 1 ? 'falta' : 'faltas'} en el bimestre</span>`,
+    `<span class="mr-chip ${faltasAnio >= UMBRAL_ANUAL ? 'alerta' : ''}">${String(faltasAnio).replace('.', ',')} en el año (tope ${UMBRAL_ANUAL})</span>`,
     aperc ? `<span class="mr-chip">${aperc} ${aperc === 1 ? 'apercibimiento' : 'apercibimientos'}</span>` : '',
     authActiva ? `<span class="mr-chip auth">Autorizado hasta ${escapeHtml(auth.horaTope)}</span>` : '',
   ].join('');
@@ -3043,6 +3060,7 @@ function renderInner(){
   else if(currentRoute === 'vistaCurso') renderVistaCurso();
   else if(currentRoute === 'vistaCursoMateria') renderVistaCursoMateria();
   else if(currentRoute === 'vistaCursoAlerta') renderVistaCursoAlerta();
+  else if(currentRoute === 'vistaCursoAnual') renderVistaCursoAnual();
   else if(currentRoute === 'vistaCursoSCP') renderVistaCursoSCP();
   else if(currentRoute === 'vistaCursoCerca') renderVistaCursoCerca();
   else if(currentRoute === 'pruebaDocente' || currentRoute === 'pruebaAlumno' || currentRoute === 'pruebaLectura') renderPruebaElegir();
@@ -3050,6 +3068,8 @@ function renderInner(){
   else if(currentRoute === 'valoraciones') renderValoracionesLista();
   else if(currentRoute === 'valoracionAlumno') renderValoracionAlumno();
   else if(currentRoute === 'notas') renderNotasLista();
+  else if(currentRoute === 'notasMenu') renderNotasMenu();
+  else if(currentRoute === 'verNotas') renderVerNotas();
   else if(currentRoute === 'config') renderConfig();
   else if(currentRoute === 'alumnos') renderAlumnos();
   else if(currentRoute === 'horarioEditar') renderHorarioEditar();
@@ -3157,6 +3177,13 @@ function abrirMail(templateKey){
   window.location.href = `mailto:${to}?subject=${subject}&body=${body}`;
 }
 
+// Mail directo al alumno/a: usa el mail con el que ingresa a la app (cuenta de alumno).
+function abrirMailAlumno(){
+  const cuenta = Object.values(cache.students_auth || {}).find(a => a.studentId === selectedStudentId && a.email);
+  if(!cuenta){ showToast('Este alumno/a todavía no tiene mail cargado en su cuenta'); return; }
+  window.location.href = `mailto:${encodeURIComponent(cuenta.email)}`;
+}
+
 function abrirMailLibre(){
   const student = getStudents().find(s => s.id === selectedStudentId);
   const to = student.familyEmails.join(',');
@@ -3199,6 +3226,11 @@ function renderFamiliaAlumno(){
         <div class="txt"><p class="title">Seguimiento por inasistencias</p></div>
         <span class="chevron">${icon('chevron')}</span>
       </div>
+      <div class="module-row" id="mailAlumnoBtn">
+        <span class="icon-chip">${icon('users')}</span>
+        <div class="txt"><p class="title">Escribir al alumno/a</p></div>
+        <span class="chevron">${icon('chevron')}</span>
+      </div>
       <div class="module-row" id="mailLibreBtn">
         <span class="icon-chip">${icon('users')}</span>
         <div class="txt"><p class="title">Mensaje libre</p></div>
@@ -3214,6 +3246,7 @@ function renderFamiliaAlumno(){
     el.addEventListener('click', () => abrirMail(el.dataset.tpl));
   });
   document.getElementById('mailLibreBtn').addEventListener('click', abrirMailLibre);
+  document.getElementById('mailAlumnoBtn').addEventListener('click', abrirMailAlumno);
 }
 
 // ---------- Resumen del alumno ----------
@@ -3454,6 +3487,7 @@ function renderResumenAlumno(){
   const weight = weights[selectedStudentId] || 0;
 
   const anioCompleto = { from: BIMESTRES[0].from, to: BIMESTRES[BIMESTRES.length-1].to };
+  const faltasAnio = computeAbsenceWeights(anioCompleto)[selectedStudentId] || 0;
   const materias = computeMateriaStats(selectedStudentId, anioCompleto);
   const materiaRows = Object.entries(materias).sort((a,b)=>a[0].localeCompare(b[0])).map(([subj, s]) => {
     const pct = s.total>0 ? (1 - s.faltas/s.total) : 1;
@@ -3482,7 +3516,7 @@ function renderResumenAlumno(){
     </div>
 
     <div class="stat-grid">
-      <div class="stat-card ${weight>=UMBRAL_ALERTA?'alert':''}" id="cardFaltasBim" style="cursor:pointer;">
+      <div class="stat-card ${weight >= (bim.n===0 ? UMBRAL_ANUAL : UMBRAL_ALERTA) ? 'alert' : ''}" id="cardFaltasBim" style="cursor:pointer;">
         <p class="label">${bim.n===0 ? 'Faltas del año' : 'Faltas del bimestre'}</p>
         <p class="value">${weight}</p>
       </div>
@@ -3490,7 +3524,25 @@ function renderResumenAlumno(){
         <p class="label">Apercibimientos (total)</p>
         <p class="value">${sanciones.length}</p>
       </div>
+      ${bim.n!==0 ? `<div class="stat-card ${faltasAnio>=UMBRAL_ANUAL?'alert':''}" style="grid-column:1 / -1;">
+        <p class="label">Faltas del año (tope ${UMBRAL_ANUAL})</p>
+        <p class="value">${faltasAnio}<span class="sub"> / ${UMBRAL_ANUAL}</span></p>
+      </div>` : ''}
     </div>
+
+    ${userRole!=='student' ? `
+    <p class="section-label" style="margin-top:4px;">Docencia</p>
+    <div class="module-list">
+      ${userRole!=='viewer' ? `<div class="module-row" id="verValoracionesBtn">
+        <div class="txt"><p class="title">Valoraciones pedagógicas</p><p class="desc">1er y 3er bimestre, por materia</p></div>
+        <span class="chevron">${icon('chevron')}</span>
+      </div>` : ''}
+      <div class="module-row" id="verNotasBtn">
+        <div class="txt"><p class="title">Notas</p><p class="desc">1er y 2do cuatrimestre</p></div>
+        <span class="chevron">${icon('chevron')}</span>
+      </div>
+    </div>
+    ` : ''}
 
     <button class="btn-secondary" id="compararBimBtn" style="width:100%;margin-bottom:6px;"><span class="btn-icon-fix">${icon('chart')}</span> Comparar bimestres</button>
 
@@ -3545,19 +3597,6 @@ function renderResumenAlumno(){
         ${puede ? `<button class="btn-secondary" id="authAgregarBtn" style="width:100%;margin-top:8px;">Agregar autorización</button>` : ''}`;
     })()}
 
-    ${userRole!=='student' ? `
-    <p class="section-label" style="margin-top:16px;">Docencia</p>
-    <div class="module-list">
-      ${userRole!=='viewer' ? `<div class="module-row" id="verValoracionesBtn">
-        <div class="txt"><p class="title">Valoraciones pedagógicas</p><p class="desc">1er y 3er bimestre, por materia</p></div>
-        <span class="chevron">${icon('chevron')}</span>
-      </div>` : ''}
-      <div class="module-row" id="verNotasBtn">
-        <div class="txt"><p class="title">Notas</p><p class="desc">1er y 2do cuatrimestre</p></div>
-        <span class="chevron">${icon('chevron')}</span>
-      </div>
-    </div>
-    ` : ''}
   `;
   document.getElementById('backBtn').addEventListener('click', () => {
     selectedBimestreN = null;
@@ -4913,7 +4952,8 @@ function exportarNotasCurso(curso){
 
 function renderNotasLista(){
   const { materia, cursosOpciones: cursos } = resolverMateriaYCursos();
-  window.__notaCuatri = window.__notaCuatri || 1;
+  window.__notaCuatri = window.__notaCuatri || 2;
+  const bloqueo = bloqueoNotas(window.__notaCuatri);
   const students = getStudents().filter(s => s.curso === selectedCurso).sort((a,b)=> a.apellido.localeCompare(b.apellido));
   const opcionesMateria = materiasParaSeleccion(selectedCurso);
   const materiaPicker = opcionesMateria.length > 1
@@ -4926,7 +4966,7 @@ function renderNotasLista(){
     return `<div class="student-card">
       <div class="row" style="align-items:center;">
         <span class="name" style="flex:1;">${escapeHtml(s.apellido)}, ${escapeHtml(s.nombre)}</span>
-        <input type="number" min="1" max="10" step="0.5" style="width:64px;text-align:center;" id="nota_${s.id}" data-nota="${s.id}" value="${nota}">
+        <input type="number" min="1" max="10" step="0.5" style="width:64px;text-align:center;" id="nota_${s.id}_${window.__notaCuatri}_${slugify(materia)}" data-nota="${s.id}" value="${nota}" ${bloqueo ? 'disabled' : ''}>
       </div>
     </div>`;
   }).join('');
@@ -4942,10 +4982,10 @@ function renderNotasLista(){
       ${pillBtnRow('cuatri', [{value:1,label:'1° cuatri.'},{value:2,label:'2° cuatri.'}], window.__notaCuatri)}
     </div>
     ${rows}
-    <p class="info-note">${icon('info')}Se guarda solo al salir del campo (tocá afuera después de escribir la nota).</p>
+    <p class="info-note">${icon('info')}${bloqueo ? bloqueo : `Se guarda solo al salir del campo (tocá afuera después de escribir la nota). Se pueden modificar hasta el ${fmtDateShort(notasLimite())}.`}</p>
     ${userRole==='admin' ? `<button class="btn-secondary" id="exportarNotasBtn" style="width:100%;margin-top:14px;">${icon('file')} Exportar notas de ${selectedCurso}° A a Excel</button>` : ''}
   `;
-  document.getElementById('backBtn').addEventListener('click', () => goBack(homeRoute()));
+  document.getElementById('backBtn').addEventListener('click', () => goBack(userRole==='admin' ? 'notasMenu' : homeRoute()));
   attachCursoBtns((c) => { selectedCurso = c; render(); });
   attachPillBtns('cuatri', (v) => { window.__notaCuatri = Number(v); render(); });
   if(document.getElementById('exportarNotasBtn')){
@@ -4957,6 +4997,8 @@ function renderNotasLista(){
   document.querySelectorAll('[data-nota]').forEach(inp => {
     inp.addEventListener('change', async (e) => {
       const sid = e.target.dataset.nota;
+      const bloq = bloqueoNotas(window.__notaCuatri);
+      if(bloq){ await customAlert(bloq); render(); return; }
       const val = parseFloat(e.target.value);
       if(isNaN(val) || val < 1 || val > 10){ await customAlert('La nota debe estar entre 1 y 10.'); return; }
       const student = getStudents().find(s => s.id === sid);
@@ -4966,6 +5008,85 @@ function renderNotasLista(){
         .catch(err=>showSaveError(err));
     });
   });
+}
+
+// ---------- Reglas de edición de notas ----------
+// 1° cuatrimestre: cerrado. 2° cuatrimestre: se puede modificar hasta una fecha que se
+// configura en Configuración (por defecto, el fin del 4° bimestre).
+function notasLimite(){
+  return NOTAS_HASTA || BIMESTRES[BIMESTRES.length-1].to;
+}
+function bloqueoNotas(cuatri){
+  if(Number(cuatri) === 1) return 'El 1° cuatrimestre está cerrado: sus notas ya no se pueden modificar.';
+  const lim = notasLimite();
+  if(todayISO() > lim) return `Las notas del 2° cuatrimestre se podían modificar hasta el ${fmtDateShort(lim)}. Ya no se pueden cambiar.`;
+  return '';
+}
+
+// Admin: el botón Notas abre este menú con dos opciones.
+function renderNotasMenu(){
+  $app.innerHTML = `
+    <div class="appbar" style="padding:0 0 10px;">
+      <button class="back-btn" id="backBtn">${icon('back')}</button>
+      <h1>Notas</h1>
+    </div>
+    <div class="module-list">
+      <div class="module-row" id="verNotasMenuBtn">
+        <span class="icon-chip">${icon('chart')}</span>
+        <div class="txt"><p class="title">Ver notas</p><p class="desc">1° y 2° cuatrimestre, por materia y curso</p></div>
+        <span class="chevron">${icon('chevron')}</span>
+      </div>
+      <div class="module-row" id="modNotasMenuBtn">
+        <span class="icon-chip">${icon('check')}</span>
+        <div class="txt"><p class="title">Modificar notas</p><p class="desc">2° cuatrimestre, hasta el ${fmtDateShort(notasLimite())}</p></div>
+        <span class="chevron">${icon('chevron')}</span>
+      </div>
+    </div>
+  `;
+  document.getElementById('backBtn').addEventListener('click', () => goBack('home'));
+  document.getElementById('verNotasMenuBtn').addEventListener('click', () => navigate('verNotas'));
+  document.getElementById('modNotasMenuBtn').addEventListener('click', () => navigate('notas'));
+}
+
+// Solo lectura: las notas de una materia de un curso, 1° y 2° cuatrimestre lado a lado.
+function renderVerNotas(){
+  const { materia, cursosOpciones: cursos } = resolverMateriaYCursos();
+  const students = getStudents().filter(s => s.curso === selectedCurso).sort((a,b)=> a.apellido.localeCompare(b.apellido));
+  const opcionesMateria = materiasParaSeleccion(selectedCurso);
+  const materiaPicker = opcionesMateria.length > 1
+    ? `<select id="materiaSelect">${opcionesMateria.map(m => `<option value="${m}" ${m===materia?'selected':''}>${m}</option>`).join('')}</select>`
+    : '';
+  const valor = (sid, cuatri) => {
+    const n = cache.notas[docId(`${sid}_${cuatri}_${slugify(materia)}`)];
+    return n ? n.nota : null;
+  };
+  const rows = students.map(s => {
+    const n1 = valor(s.id, 1), n2 = valor(s.id, 2);
+    return `<div class="nota-row">
+      <span class="nota-materia">${escapeHtml(s.apellido)}, ${escapeHtml(s.nombre)}</span>
+      <span class="nota-valor ${n1 !== null && n1 < 6 ? 'baja' : ''}">${n1 !== null ? n1 : '—'}</span>
+      <span class="nota-valor ${n2 !== null && n2 < 6 ? 'baja' : ''}">${n2 !== null ? n2 : '—'}</span>
+    </div>`;
+  }).join('');
+  $app.innerHTML = `
+    <div class="appbar" style="padding:0 0 10px;">
+      <button class="back-btn" id="backBtn">${icon('back')}</button>
+      <h1>Ver notas${materia ? ' — '+materia : ''}</h1>
+    </div>
+    ${materiaPicker ? `<div class="course-picker">${materiaPicker}</div>` : ''}
+    <div class="course-picker">${cursoBtns(cursos)}</div>
+    <div class="nota-row nota-head">
+      <span class="nota-materia">Alumno/a</span>
+      <span class="nota-valor">1° cuatri.</span>
+      <span class="nota-valor">2° cuatri.</span>
+    </div>
+    ${rows ? `<div class="sancion-list">${rows}</div>` : `<p class="empty-inline">Sin alumnos en este curso.</p>`}
+  `;
+  document.getElementById('backBtn').addEventListener('click', () => goBack('notasMenu'));
+  attachCursoBtns((c) => { selectedCurso = c; render(); });
+  if(document.getElementById('materiaSelect')){
+    document.getElementById('materiaSelect').addEventListener('change', (e) => { window.__materiaSel = e.target.value; render(); });
+  }
 }
 
 // ---------- Vista rápida por curso ----------
@@ -5047,8 +5168,10 @@ function computeVistaCurso(curso){
   const students = getStudents().filter(s => s.curso === curso);
   const weights = computeAbsenceWeights();
   const anioCompleto = { from: BIMESTRES[0].from, to: BIMESTRES[BIMESTRES.length-1].to };
+  const pesosAnio = computeAbsenceWeights(anioCompleto);
 
   const alertaList = [];
+  const anualList = []; // alumnos que llegaron al tope anual de faltas
   const porMateria = {}; // materia -> [ {id,nombre,pct} ]
   const scpMap = {}; // studentId -> [ {materia,pct} ]
   const cercaMap = {}; // studentId -> [ {materia,resta} ] (todavía no SCP, pero le quedan pocas)
@@ -5056,6 +5179,8 @@ function computeVistaCurso(curso){
   students.forEach(s => {
     const w = weights[s.id] || 0;
     if(w >= UMBRAL_ALERTA) alertaList.push({ id: s.id, nombre: `${escapeHtml(s.apellido)}, ${escapeHtml(s.nombre)}`, valor: w, fechaAlerta: computeFechaAlerta(s.id, bimestreActual()) });
+    const wAnio = pesosAnio[s.id] || 0;
+    if(wAnio >= UMBRAL_ANUAL) anualList.push({ id: s.id, nombre: `${escapeHtml(s.apellido)}, ${escapeHtml(s.nombre)}`, valor: wAnio });
     const stats = computeMateriaStats(s.id, anioCompleto);
     Object.entries(stats).forEach(([materia, st]) => {
       const pct = st.total>0 ? (1 - st.faltas/st.total) : 1;
@@ -5083,7 +5208,8 @@ function computeVistaCurso(curso){
     return c;
   }).sort((a,b)=> a.minimo - b.minimo || a.nombre.localeCompare(b.nombre));
 
-  return { total: students.length, enAlerta: alertaList.length, conSCP: scpList.length, alertaList, scpList, cercaList, porMateria };
+  anualList.sort((a,b)=> b.valor - a.valor);
+  return { total: students.length, enAlerta: alertaList.length, conSCP: scpList.length, alertaList, scpList, cercaList, anualList, porMateria };
 }
 
 function descargarRespaldoCompleto(){
@@ -5492,6 +5618,14 @@ function renderVistaCurso(){
         <span class="badge-soon" style="${v.cercaList.length ? 'background:var(--gold-bg);color:var(--gold);' : ''}">${v.cercaList.length}</span>
         <span class="chevron">${icon('chevron')}</span>
       </div>
+      <div class="module-row" id="cardAnualCurso">
+        <div class="txt">
+          <p class="title">Tope anual de faltas</p>
+          <p class="desc">${UMBRAL_ANUAL} o más faltas en el año</p>
+        </div>
+        <span class="badge-soon" style="${v.anualList.length ? 'background:var(--stamp-bg);color:var(--stamp);' : ''}">${v.anualList.length}</span>
+        <span class="chevron">${icon('chevron')}</span>
+      </div>
     </div>
 
     ${userRole!=='student' ? `
@@ -5521,6 +5655,7 @@ function renderVistaCurso(){
   document.getElementById('cardAlertaCurso').addEventListener('click', () => navigate('vistaCursoAlerta'));
   document.getElementById('cardSCPCurso').addEventListener('click', () => navigate('vistaCursoSCP'));
   document.getElementById('cardCercaCurso').addEventListener('click', () => navigate('vistaCursoCerca'));
+  document.getElementById('cardAnualCurso').addEventListener('click', () => navigate('vistaCursoAnual'));
   if(document.getElementById('exportarPIABtn')) document.getElementById('exportarPIABtn').addEventListener('click', exportarPlanillaPIA);
   if(document.getElementById('exportarBtn')){
     document.getElementById('exportarBtn').addEventListener('click', () => exportarAsistenciaCurso(selectedCurso));
@@ -5582,6 +5717,29 @@ function renderVistaCursoAlerta(){
     </div>
     <p class="date-label">${selectedCurso}° A · 5 o más faltas</p>
     ${rows ? `<div class="module-list">${rows}</div>` : `<p class="empty-inline">Nadie en alerta en este curso.</p>`}
+  `;
+  document.getElementById('backBtn').addEventListener('click', () => goBack('vistaCurso'));
+  document.querySelectorAll('[data-student]').forEach(el => {
+    el.addEventListener('click', () => { selectedStudentId = el.dataset.student; navigate('resumenAlumno'); });
+  });
+}
+
+function renderVistaCursoAnual(){
+  const v = computeVistaCurso(selectedCurso);
+  const rows = v.anualList.map(a => `
+    <div class="module-row" data-student="${a.id}">
+      <div class="txt"><p class="title">${a.nombre}</p></div>
+      <span class="badge-soon" style="background:var(--stamp-bg);color:var(--stamp);">${a.valor}</span>
+      <span class="chevron">${icon('chevron')}</span>
+    </div>
+  `).join('');
+  $app.innerHTML = `
+    <div class="appbar" style="padding:0 0 10px;">
+      <button class="back-btn" id="backBtn">${icon('back')}</button>
+      <h1>Tope anual de faltas</h1>
+    </div>
+    <p class="date-label">${selectedCurso}° A · ${UMBRAL_ANUAL} o más faltas en el año</p>
+    ${rows ? `<div class="module-list">${rows}</div>` : `<p class="empty-inline">Nadie llegó al tope anual en este curso.</p>`}
   `;
   document.getElementById('backBtn').addEventListener('click', () => goBack('vistaCurso'));
   document.querySelectorAll('[data-student]').forEach(el => {
@@ -6222,7 +6380,10 @@ async function guardarConfigAvanzada(){
 
   const umbralAlerta = Number(document.getElementById('cfgUmbralAlerta').value);
   const umbralSCPpct = Number(document.getElementById('cfgUmbralSCP').value);
-  if(isNaN(umbralAlerta) || isNaN(umbralSCPpct)){ await customAlert('Revisá los umbrales, tienen que ser números.'); return; }
+  const umbralAnual = Number(document.getElementById('cfgUmbralAnual').value);
+  const notasHasta = document.getElementById('cfgNotasHasta').value;
+  if(isNaN(umbralAlerta) || isNaN(umbralSCPpct) || isNaN(umbralAnual) || umbralAnual < 1){ await customAlert('Revisá los umbrales, tienen que ser números.'); return; }
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(notasHasta)){ await customAlert('Completá la fecha límite para modificar las notas.'); return; }
 
   const horaTiempos = {};
   for(let h=1; h<=8; h++){
@@ -6233,7 +6394,7 @@ async function guardarConfigAvanzada(){
   }));
 
   await setDoc(doc(db,'config','general'), {
-    feriados, bimestres, umbralAlerta, umbralSCP: umbralSCPpct/100, horaTiempos, efHorario
+    feriados, bimestres, umbralAlerta, umbralSCP: umbralSCPpct/100, umbralAnual, notasHasta, horaTiempos, efHorario
   }, { merge: true });
   showToast('Configuración guardada');
   navigate('config');
@@ -6339,6 +6500,10 @@ function renderConfigAvanzada(){
       <div class="field-row"><label>Faltas para "alerta"</label><input id="cfgUmbralAlerta" type="number" value="${UMBRAL_ALERTA}"></div>
       <div class="field-row"><label>% mínimo (SCP)</label><input id="cfgUmbralSCP" type="number" value="${Math.round(UMBRAL_SCP*100)}"></div>
       <p style="font-size:calc(11.5px * var(--fs, 1));color:var(--ink-soft);margin:8px 0 0;">Por debajo de ese % anual en una materia, se marca como riesgo de SCP.</p>
+      <div class="field-row" style="margin-top:12px;"><label>Tope anual de faltas</label><input id="cfgUmbralAnual" type="number" value="${UMBRAL_ANUAL}"></div>
+      <p style="font-size:calc(11.5px * var(--fs, 1));color:var(--ink-soft);margin:8px 0 0;">Faltas del año (mismo criterio de conteo que el bimestre) a partir de las cuales se marca el tope anual.</p>
+      <div class="field-row" style="margin-top:12px;"><label>Notas del 2° cuatri. editables hasta</label><input id="cfgNotasHasta" type="date" value="${notasLimite()}"></div>
+      <p style="font-size:calc(11.5px * var(--fs, 1));color:var(--ink-soft);margin:8px 0 0;">Después de esa fecha las notas del 2° cuatrimestre ya no se pueden modificar. Las del 1° cuatrimestre están siempre cerradas.</p>
     </div>
 
     <p class="section-label" style="margin-top:20px;">Horarios de las horas de clase</p>
