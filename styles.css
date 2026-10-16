@@ -803,3 +803,57 @@ input, textarea, select, [contenteditable="true"]{-webkit-user-select:text;user-
 
 /* Áreas de toque más grandes para los enlaces chicos de las tarjetas */
 .student-card .retiro-link, .student-card .meta-tap{display:inline-block;padding:7px 10px 7px 0;margin:-7px 0;}
+
+/* ===== v125: pulido visual ===== */
+:root{ --ok:var(--sage); --cerca:var(--gold); --riesgo:var(--stamp); }
+
+/* Bordes, flechas y sombras que acompañan el modo oscuro */
+.module-row .chevron{ color:var(--ink-soft); opacity:.6; }
+@media (prefers-color-scheme: dark){
+  :root:not([data-tema="claro"]) .stat-card,
+  :root:not([data-tema="claro"]) .module-list{ box-shadow:0 1px 2px rgba(0,0,0,.35), 0 4px 12px rgba(0,0,0,.25); }
+  :root:not([data-tema="claro"]) .tabbar{ box-shadow:0 -2px 12px rgba(0,0,0,.4); }
+  :root:not([data-tema="claro"]) input:focus, :root:not([data-tema="claro"]) select:focus, :root:not([data-tema="claro"]) textarea:focus{ box-shadow:0 0 0 3px rgba(237,233,221,.18); }
+}
+:root[data-tema="oscuro"] .stat-card, :root[data-tema="oscuro"] .module-list{ box-shadow:0 1px 2px rgba(0,0,0,.35), 0 4px 12px rgba(0,0,0,.25); }
+:root[data-tema="oscuro"] .tabbar{ box-shadow:0 -2px 12px rgba(0,0,0,.4); }
+:root[data-tema="oscuro"] input:focus, :root[data-tema="oscuro"] select:focus, :root[data-tema="oscuro"] textarea:focus{ box-shadow:0 0 0 3px rgba(237,233,221,.18); }
+
+/* Botones más grandes para usar con una sola mano (mínimo 44 px de alto) */
+.btn-primary{ min-height:48px; padding:14px; border-radius:12px; }
+.btn-secondary{ min-height:44px; padding:11px 12px; font-size:calc(13px * var(--fs, 1)); border-radius:12px; }
+.btn-chip{ min-height:34px; padding:8px 12px; }
+.tab{ min-height:48px; justify-content:center; }
+.back-btn{ min-width:44px; min-height:44px; }
+.module-row{ min-height:52px; }
+
+/* Respuesta al tocar y foco visible (teclado / accesibilidad) */
+.module-row, .btn-primary, .btn-secondary, .btn-chip, .tab, .stat-card[id]{ transition:background-color .12s, transform .08s, opacity .12s; }
+.module-row:active{ background:rgba(var(--ruled-rgb),0.06); }
+.btn-secondary:active, .btn-chip:active, .stat-card[id]:active{ transform:scale(.985); }
+:is(button, a, .module-row, .tab, .stat-card[id]):focus-visible{ outline:2px solid var(--ink); outline-offset:2px; }
+
+/* Estados con el mismo lenguaje de color en toda la app: verde = bien, dorado = cerca, rojo = riesgo */
+.materia-row{ position:relative; padding-bottom:13px; }
+.materia-row::after{
+  content:''; position:absolute; left:14px; right:14px; bottom:5px; height:3px; border-radius:2px;
+  background:linear-gradient(to right, var(--ok) var(--pct, 100%), rgba(var(--ruled-rgb),.08) var(--pct, 100%));
+}
+.materia-row.cerca::after{ background:linear-gradient(to right, var(--cerca) var(--pct, 100%), rgba(var(--ruled-rgb),.08) var(--pct, 100%)); }
+.materia-row.scp::after{ background:linear-gradient(to right, var(--riesgo) var(--pct, 100%), rgba(var(--ruled-rgb),.12) var(--pct, 100%)); }
+
+/* Pantallas vacías: un mensaje amable en una caja, en vez de una línea suelta */
+.empty-inline{
+  flex-direction:column; justify-content:center; text-align:center; gap:8px;
+  padding:22px 16px; margin:6px 0 10px;
+  border:1px dashed var(--border); border-radius:12px; background:rgba(var(--ruled-rgb),0.025);
+  line-height:1.4;
+}
+.empty-inline::before{ display:none; }
+
+/* Títulos de sección y tarjetas un poco más prolijos */
+.section-label{ letter-spacing:.06em; }
+.config-card{ border-radius:12px; }
+.module-list, .stat-card{ border-radius:12px; }
+.toast{ box-shadow:0 6px 20px rgba(0,0,0,.22); }
+.info-note{ line-height:1.45; }

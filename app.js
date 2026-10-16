@@ -1,5 +1,6 @@
 // ===== Preceptoría ISP — lógica de la app (Etapa 1) =====
 
+const APP_VERSION = 126;
 const SEED_STUDENTS = []; // la lista de alumnos vive en Firestore (colección students), no en el código
 
 const CURSOS = ['1','2','3','4','5'];
@@ -270,6 +271,48 @@ async function traerHistoricoAsistencia(rev){
   render();
 }
 
+// Notas: preceptoría, docentes y cuentas de lectura bajan la colección completa. Un alumno/a
+// baja solo las suyas: las del 1° cuatrimestre siempre, y las del 2° recién cuando pasó la
+// fecha límite de carga (las reglas de Firestore también lo exigen, no solo la pantalla).
+let notasIniciadas = false, notasC2Iniciadas = false;
+let notasAlumnoC1 = {}, notasAlumnoC2 = {};
+function publicarNotasAlumno(){
+  cache.notas = Object.assign({}, notasAlumnoC1, notasAlumnoC2);
+  cache._lastSync.notas = Date.now();
+  render();
+}
+function iniciarNotasAlumnoC2(){
+  if(userRole !== 'student' || !currentStudentAuth || notasC2Iniciadas || todayISO() <= notasLimite()) return;
+  notasC2Iniciadas = true;
+  onSnapshot(query(collection(db,'notas'), where('studentId','==', currentStudentAuth.studentId), where('cuatrimestre','==', 2)), snap => {
+    const next = {};
+    snap.forEach(d => { next[d.id] = d.data(); });
+    notasAlumnoC2 = next;
+    publicarNotasAlumno();
+  }, err => { console.warn('Notas del 2° cuatrimestre todavía no disponibles', err && err.code); });
+}
+function iniciarNotasSegunRol(){
+  if(notasIniciadas || !userRole) return;
+  notasIniciadas = true;
+  if(userRole === 'student' && currentStudentAuth){
+    onSnapshot(query(collection(db,'notas'), where('studentId','==', currentStudentAuth.studentId), where('cuatrimestre','==', 1)), snap => {
+      const next = {};
+      snap.forEach(d => { next[d.id] = d.data(); });
+      notasAlumnoC1 = next;
+      publicarNotasAlumno();
+    }, err => { console.warn('No se pudieron bajar las notas', err && err.code); });
+    iniciarNotasAlumnoC2();
+    return;
+  }
+  onSnapshot(collection(db,'notas'), snap => {
+    const next = {};
+    snap.forEach(d => { next[d.id] = d.data(); });
+    cache.notas = next;
+    cache._lastSync.notas = Date.now();
+    render();
+  });
+}
+
 let listenersIniciados = false;
 function startListeners(){
   // Se llama desde las dos ramas de onAuthStateChanged; si se enganchara dos veces
@@ -369,13 +412,7 @@ function startListeners(){
     render();
   });
 
-  onSnapshot(collection(db,'notas'), snap => {
-    const next = {};
-    snap.forEach(d => { next[d.id] = d.data(); });
-    cache.notas = next;
-    cache._lastSync.notas = Date.now();
-    render();
-  });
+  // Las notas se suscriben después de saber qué rol tiene la cuenta (iniciarNotasSegunRol).
 
   onSnapshot(collection(db,'entradasEspeciales'), snap => {
     const next = {};
@@ -475,6 +512,7 @@ function startListeners(){
       cache._lastSync.config = Date.now();
       aplicarConfigDinamica(cache.config);
     }
+    iniciarNotasAlumnoC2();
     render();
     // Primera carga del histórico, y recarga solo si la versión que llega es MÁS
     // NUEVA que la cargada (así el eco de nuestra propia escritura, o un snapshot
@@ -3495,7 +3533,7 @@ function renderResumenAlumno(){
     const scp = pct < UMBRAL_SCP;
     const resta = faltasRestantes(s);
     const cerca = !scp && resta !== null && resta <= CERCA_SCP;
-    return `<div class="materia-row ${scp?'scp':''} ${cerca?'cerca':''}">
+    return `<div class="materia-row ${scp?'scp':''} ${cerca?'cerca':''}" style="--pct:${Math.max(0,Math.min(100,pctDisplay))}%">
       <span class="materia-name">${subj}${resta !== null ? `<span class="materia-resta">${textoRestantes(resta)}</span>` : ''}</span>
       <span class="materia-detail">${s.faltas}/${s.total}</span>
       <span class="materia-pct">${pctDisplay}%${scp?' · SCP':''}</span>
@@ -3544,9 +3582,7 @@ function renderResumenAlumno(){
     </div>
     ` : ''}
 
-    <button class="btn-secondary" id="compararBimBtn" style="width:100%;margin-bottom:6px;"><span class="btn-icon-fix">${icon('chart')}</span> Comparar bimestres</button>
-
-    <p class="section-label">Detalle de asistencia (${bim.n===0?'año completo':'este bimestre'})</p>
+    <p class="section-label" style="margin-top:18px;">Detalle de asistencia (${bim.n===0?'año completo':'este bimestre'})</p>
     <div class="config-card" style="display:flex;flex-wrap:wrap;gap:14px;">
       <div><p class="k">Presentes</p><p class="v">${presentes}</p></div>
       <div><p class="k">Tardes</p><p class="v">${tardes}</p></div>
@@ -3556,6 +3592,7 @@ function renderResumenAlumno(){
       <div><p class="k">Ed. Física (falta)</p><p class="v">${efFaltas}</p></div>
       <div><p class="k">SAF usados</p><p class="v">${efSaf}</p></div>
     </div>
+    <button class="btn-secondary" id="compararBimBtn" style="width:100%;margin-top:10px;"><span class="btn-icon-fix">${icon('chart')}</span> Comparar bimestres</button>
 
     <p class="section-label" style="margin-top:16px;">Faltas por materia (ciclo lectivo completo)</p>
     <div class="sancion-list">${materiaRows || '<p style="font-size:calc(13px * var(--fs, 1));color:var(--ink-soft);padding:12px;">Sin datos para este período.</p>'}</div>
@@ -3656,13 +3693,20 @@ function renderResumenValoraciones(){
   attachPillBtns('bimResVal', (v) => { window.__resumenValBim = Number(v); render(); });
 }
 
+// El alumno/a ve las notas del 2° cuatrimestre recién cuando pasa la fecha límite de carga
+// (Configuración). Docentes, preceptoría y cuentas de lectura las ven siempre.
+function notas2VisiblesParaMi(){
+  return userRole !== 'student' || todayISO() > notasLimite();
+}
+
 function renderResumenNotas(){
+  const visible2 = notas2VisiblesParaMi();
   const student = getStudents().find(s => s.id === selectedStudentId);
   const propias = Object.values(cache.notas).filter(n => n.studentId === selectedStudentId);
-  const materias = [...new Set(propias.map(n => n.materia))].sort();
+  const materias = [...new Set(propias.filter(n => visible2 || n.cuatrimestre===1).map(n => n.materia))].sort();
 
   const n1s = propias.filter(n => n.cuatrimestre===1).map(n=>n.nota);
-  const n2s = propias.filter(n => n.cuatrimestre===2).map(n=>n.nota);
+  const n2s = visible2 ? propias.filter(n => n.cuatrimestre===2).map(n=>n.nota) : [];
   const promedio = (arr) => arr.length ? Math.round((arr.reduce((a,b)=>a+b,0)/arr.length)*100)/100 : null;
   const prom1 = promedio(n1s);
   const prom2 = promedio(n2s);
@@ -3670,7 +3714,7 @@ function renderResumenNotas(){
 
   const rows = materias.map(m => {
     const n1 = propias.find(n => n.materia===m && n.cuatrimestre===1);
-    const n2 = propias.find(n => n.materia===m && n.cuatrimestre===2);
+    const n2 = visible2 ? propias.find(n => n.materia===m && n.cuatrimestre===2) : null;
     return `<div class="nota-row">
       <span class="nota-materia">${m}</span>
       <span class="nota-valor ${n1 && n1.nota<6?'baja':''}">${n1 ? n1.nota : '—'}</span>
@@ -3693,7 +3737,8 @@ function renderResumenNotas(){
       <span class="nota-valor">1° cuatri.</span>
       <span class="nota-valor">2° cuatri.</span>
     </div>
-    ${materias.length ? `<div class="sancion-list">${rows}</div>` : `<p class="empty-inline">Sin notas cargadas todavía.</p>`}
+    ${materias.length ? `<div class="sancion-list">${rows}</div>` : `<p class="empty-inline">Todavía no hay notas para mostrar.</p>`}
+    ${!visible2 ? `<p class="info-note">${icon('info')}Las notas del 2° cuatrimestre se van a ver después del ${fmtDateShort(notasLimite())}, cuando termine el período de carga.</p>` : ''}
     ${userRole==='admin' ? `<button class="btn-secondary" id="descargarBoletinBtn" style="width:100%;margin-top:14px;"><span class="btn-icon-fix">${icon('file')}</span> Descargar boletín oficial (PDF)</button>` : ''}
   `;
   document.getElementById('backBtn').addEventListener('click', () => goBack(userRole==='student' ? 'studentHome' : 'resumenAlumno'));
@@ -6891,7 +6936,8 @@ function renderConfig(){
     <p class="section-label" style="margin-top:20px;">Acerca de</p>
     <div class="config-card">
       <p class="v">Instituto Superior Porteño</p>
-      <p style="font-size:calc(12px * var(--fs, 1));color:var(--ink-soft);margin-top:4px;">App de preceptoría</p>
+      <p style="font-size:calc(12px * var(--fs, 1));color:var(--ink-soft);margin-top:4px;">Preceptoría Digital · A-80 · Montañeses 1936, CABA</p>
+      <p style="font-size:calc(11.5px * var(--fs, 1));color:var(--ink-soft);margin-top:2px;">Versión ${APP_VERSION}</p>
     </div>
   `;
   document.getElementById('cambiarUsuarioBtn').addEventListener('click', () => {
@@ -7234,6 +7280,7 @@ onAuthStateChanged(auth, async (user) => {
     authResolved = true;
     initMessagingForegroundHandler();
     if('Notification' in window && Notification.permission === 'granted') activarNotificaciones(false);
+    iniciarNotasSegunRol();
     render();
   } else if(user && !user.isAnonymous){
     startListeners();
@@ -7272,10 +7319,12 @@ onAuthStateChanged(auth, async (user) => {
       currentRoute = 'profesorSinAcceso';
     }
     authResolved = true;
+    iniciarNotasSegunRol();
     render();
   } else {
     userRole = null;
     currentTeacher = null;
+    notasIniciadas = false; notasC2Iniciadas = false; notasAlumnoC1 = {}; notasAlumnoC2 = {};
     authResolved = true;
     currentRoute = 'profesorLogin';
     render();
