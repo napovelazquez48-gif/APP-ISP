@@ -881,3 +881,14 @@ input, textarea, select, [contenteditable="true"]{-webkit-user-select:text;user-
 .acciones-notas button{flex:1;min-height:46px;}
 .acciones-notas .medio-on{background:var(--ink);color:var(--paper);}
 .hoja-notas-abierta .tabbar{display:none;}
+
+/* v129: apercibimiento con suspensión + registro PDF */
+.check-susp{display:flex;align-items:flex-start;gap:10px;margin:12px 0 2px;font-size:calc(14px * var(--fs, 1));color:var(--ink);cursor:pointer;min-height:44px;}
+.check-susp input{width:22px;height:22px;margin-top:1px;flex:none;accent-color:var(--stamp, #b3261e);}
+.check-susp small{display:block;color:var(--ink-soft);font-size:calc(12px * var(--fs, 1));margin-top:2px;}
+
+/* v129: valoraciones con botones */
+.chips-val{display:flex;flex-wrap:wrap;gap:8px;margin:6px 0 16px;}
+.chip-val{flex:1 1 auto;min-height:46px;padding:10px 14px;border:1.5px solid var(--line, #cfc8bb);border-radius:12px;background:var(--card, #fff);color:var(--ink);font:inherit;font-size:calc(14.5px * var(--fs, 1));cursor:pointer;-webkit-tap-highlight-color:transparent;}
+.chip-val.larga{flex:1 1 100%;text-align:left;line-height:1.35;font-size:calc(13.5px * var(--fs, 1));}
+.chip-val.on{background:var(--ink);border-color:var(--ink);color:#fff;font-weight:600;}

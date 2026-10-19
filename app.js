@@ -1,6 +1,6 @@
 // ===== Preceptoría ISP — lógica de la app (Etapa 1) =====
 
-const APP_VERSION = 128;
+const APP_VERSION = 129;
 const SEED_STUDENTS = []; // la lista de alumnos vive en Firestore (colección students), no en el código
 
 const CURSOS = ['1','2','3','4','5'];
@@ -274,6 +274,22 @@ async function traerHistoricoAsistencia(rev){
 // Notas: preceptoría, docentes y cuentas de lectura bajan la colección completa. Un alumno/a
 // baja solo las suyas: las del 1° cuatrimestre siempre, y las del 2° recién cuando pasó la
 // fecha límite de carga (las reglas de Firestore también lo exigen, no solo la pantalla).
+// Un docente solo puede leer lo de sus cursos (las reglas de Firestore se lo exigen), así que
+// en vez de bajar la colección completa se suscribe a una consulta por cada curso suyo y
+// junta los resultados. Para el resto de las cuentas es la colección entera, como siempre.
+function escucharColeccion(nombre, alCambiar){
+  if(userRole !== 'teacher'){ onSnapshot(collection(db, nombre), alCambiar); return; }
+  const cursos = (currentTeacher && currentTeacher.cursos) || [];
+  const partes = {};
+  const juntar = () => ({ forEach: (fn) => Object.values(partes).forEach(p => p.forEach(fn)) });
+  if(!cursos.length){ alCambiar(juntar()); return; }
+  cursos.forEach(c => {
+    onSnapshot(query(collection(db, nombre), where('curso', '==', String(c))), snap => {
+      const docs = []; snap.forEach(d => docs.push(d)); partes[c] = docs;
+      alCambiar(juntar());
+    }, err => { console.warn('No se pudo leer', nombre, c, err && err.code); });
+  });
+}
 let notasIniciadas = false, notasC2Iniciadas = false;
 let notasAlumnoC1 = {}, notasAlumnoC2 = {};
 function publicarNotasAlumno(){
@@ -304,7 +320,7 @@ function iniciarNotasSegunRol(){
     iniciarNotasAlumnoC2();
     return;
   }
-  onSnapshot(collection(db,'notas'), snap => {
+  escucharColeccion('notas', snap => {
     const next = {};
     snap.forEach(d => { next[d.id] = d.data(); });
     cache.notas = next;
@@ -418,7 +434,7 @@ function startListeners(){
     render();
   });
 
-  if(!esAlumno) onSnapshot(collection(db,'valoraciones'), snap => {
+  if(!esAlumno) escucharColeccion('valoraciones', snap => {
     const next = {};
     snap.forEach(d => { next[d.id] = d.data(); });
     cache.valoraciones = next;
@@ -436,7 +452,7 @@ function startListeners(){
     render();
   });
 
-  if(!esAlumno) onSnapshot(collection(db,'viewers'), snap => {
+  if(!esAlumno && userRole !== 'teacher') onSnapshot(collection(db,'viewers'), snap => {
     const next = {};
     snap.forEach(d => { next[d.id] = Object.assign({ uid: d.id }, d.data()); });
     cache.viewers = next;
@@ -444,7 +460,7 @@ function startListeners(){
     render();
   });
 
-  if(!esAlumno) onSnapshot(collection(db,'driveMapping'), snap => {
+  if(!esAlumno && userRole !== 'teacher') onSnapshot(collection(db,'driveMapping'), snap => {
     const next = {};
     snap.forEach(d => { next[d.id] = d.data(); });
     cache.driveMapping = next;
@@ -452,7 +468,7 @@ function startListeners(){
     render();
   });
 
-  if(!esAlumno) onSnapshot(collection(db,'tramites'), snap => {
+  if(!esAlumno && userRole !== 'teacher') onSnapshot(collection(db,'tramites'), snap => {
     const next = {};
     snap.forEach(d => { next[d.id] = Object.assign({ id: d.id }, d.data()); });
     cache.tramites = next;
@@ -460,7 +476,7 @@ function startListeners(){
     render();
   });
 
-  if(!esAlumno) onSnapshot(collection(db,'entregas'), snap => {
+  if(!esAlumno && userRole !== 'teacher') onSnapshot(collection(db,'entregas'), snap => {
     const next = {};
     snap.forEach(d => { next[d.id] = d.data(); });
     cache.entregas = next;
@@ -488,7 +504,8 @@ function startListeners(){
       render();
     }, sinPermiso('students'));
   } else {
-    onSnapshot(collection(db,'students_auth'), snap => {
+    // Las cuentas de los alumnos (correos, usuarios) no son para los docentes.
+    if(userRole !== 'teacher') onSnapshot(collection(db,'students_auth'), snap => {
       const next = {};
       snap.forEach(d => { next[d.id] = Object.assign({ uid: d.id }, d.data()); });
       cache.students_auth = next;
@@ -496,7 +513,7 @@ function startListeners(){
       render();
     });
 
-    onSnapshot(collection(db,'students'), snap => {
+    escucharColeccion('students', snap => {
       const next = {};
       snap.forEach(d => { next[d.id] = Object.assign({ id: d.id }, d.data()); });
       cache.students = next;
@@ -1269,30 +1286,31 @@ async function marcarTodosPresentes(){
 // falta, igual que una común) pero marcada como "suspensión": en la planilla de Drive sale
 // "Suspensión" en lugar de "Clase", y en la app se ve como suspensión.
 async function suspenderAlumno(studentId, fechaBase){
-  if(modoPruebaBloquea()) return;
+  if(modoPruebaBloquea()) return null;
   const al = getStudents().find(x => x.id === studentId);
-  if(!al) return;
+  if(!al) return null;
   const base = fechaBase || selectedFecha || todayISO();
   const desde = await customPrompt(`Suspensión de ${al.apellido}, ${al.nombre}.\n\nPrimer día de suspensión:`, base, 'date');
-  if(!desde) return;
+  if(!desde) return null;
   const hasta = await customPrompt('Último día de suspensión (si es un solo día, dejá la misma fecha):', desde, 'date');
-  if(!hasta) return;
+  if(!hasta) return null;
   if(!/^\d{4}-\d{2}-\d{2}$/.test(desde) || !/^\d{4}-\d{2}-\d{2}$/.test(hasta) || hasta < desde){
     await customAlert('Las fechas no son válidas: el último día no puede ser anterior al primero.');
-    return;
+    return null;
   }
   // Solo los días en que hay clase para ese curso (sin fines de semana, feriados ni días sin clase).
   const dias = eachDateInRange(desde, hasta).filter(iso => diaKeyFor(iso) && !getDiaSinClase(iso, al.curso));
-  if(!dias.length){ await customAlert('En ese período no hay días de clase para marcar.'); return; }
-  if(dias.length > 30){ await customAlert('El período es muy largo (más de 30 días de clase). Cargalo en tramos más cortos.'); return; }
+  if(!dias.length){ await customAlert('En ese período no hay días de clase para marcar.'); return null; }
+  if(dias.length > 30){ await customAlert('El período es muy largo (más de 30 días de clase). Cargalo en tramos más cortos.'); return null; }
   const yaSync = dias.filter(iso => { const r = cache.attendance[`${iso}|${studentId}`]; return r && r.driveSynced; });
   const conOtraMarca = dias.filter(iso => { const r = cache.attendance[`${iso}|${studentId}`]; return r && !r.suspension; });
   let aviso = `Se van a marcar ${dias.length} ${dias.length === 1 ? 'día' : 'días'} de suspensión (${dias.length === 1 ? fmtDateShort(dias[0]) : fmtDateShort(dias[0]) + ' al ' + fmtDateShort(dias[dias.length-1])}). Cuentan como falta, igual que una inasistencia común.`;
   if(conOtraMarca.length) aviso += `\n\n${conOtraMarca.length} ${conOtraMarca.length === 1 ? 'día ya tenía' : 'días ya tenían'} otra marca de asistencia: se reemplaza${conOtraMarca.length === 1 ? '' : 'n'}.`;
   if(yaSync.length) aviso += `\n\nOjo: ${yaSync.length} ${yaSync.length === 1 ? 'día ya se pasó' : 'días ya se pasaron'} a la planilla de Drive como "Clase". Se va a agregar la fila "Suspensión"; borrá a mano la fila vieja de la planilla para que no quede repetido.`;
-  if(!(await customConfirm(aviso, { textoSi: 'Marcar suspensión' }))) return;
+  if(!(await customConfirm(aviso, { textoSi: 'Marcar suspensión' }))) return null;
   dias.forEach(iso => writeAttendance(`${iso}|${studentId}`, { estado: 'A', hora: null, suspension: true }));
   showToast(`Suspensión marcada (${dias.length} ${dias.length === 1 ? 'día' : 'días'})`);
+  return { desde: dias[0], hasta: dias[dias.length - 1], dias: dias.length };
 }
 
 async function marcarExencion(studentId, fecha){
@@ -2604,6 +2622,17 @@ async function agregarApercibimiento(){
   const payload = { studentId: selectedStudentId, fecha, motivo, createdAt: new Date(fecha+'T12:00:00').getTime(),
     autor: userRole==='teacher' ? currentTeacher.nombre : getUsuario(), curso: student.curso };
   if(userRole==='teacher') payload.materia = (currentTeacher.materias||[])[0] || '';
+  // "Con suspensión": además del apercibimiento, marca esos días como falta en la asistencia
+  // (igual que "Marcar suspensión" en la lista) y deja el período anotado en el historial.
+  const chk = document.getElementById('conSuspension');
+  if(chk && chk.checked){
+    const susp = await suspenderAlumno(selectedStudentId, fecha);
+    if(susp) payload.suspension = susp;
+    else if(!(await customConfirm('No se marcó ninguna suspensión. ¿Guardar el apercibimiento igual, sin suspensión?', { textoSi: 'Guardar sin suspensión' }))){
+      textarea.value = motivo; // que no se pierda lo escrito
+      return;
+    }
+  }
   addDoc(collection(db,'sanciones'), payload).catch(err=>showSaveError(err));
   showToast('Apercibimiento guardado');
 }
@@ -2620,6 +2649,7 @@ function renderSancionDetalle(){
           <p class="folio">${ordinal(h.folio)} · ${h.fecha ? fmtDateShort(h.fecha) : '—'}</p>
           <p class="motivo">${escapeHtml(h.motivo)}</p>
           ${(h.materia || h.profesor || h.notificado) ? `<p class="sancion-meta">${[h.materia, h.profesor, h.notificado ? 'Notificado: ' + h.notificado : ''].filter(Boolean).map(escapeHtml).join(' · ')}</p>` : ''}
+          ${h.suspension ? `<p class="sancion-meta"><strong>Con suspensión:</strong> ${h.suspension.dias === 1 ? fmtDateShort(h.suspension.desde) : fmtDateShort(h.suspension.desde) + ' al ' + fmtDateShort(h.suspension.hasta)} (${h.suspension.dias} ${h.suspension.dias === 1 ? 'día' : 'días'})</p>` : ''}
           ${h.observacion ? `<p class="sancion-obs">${escapeHtml(h.observacion)}</p>` : ''}
         </div>
         <button class="borrar-btn" data-borrar="${h.id}">${icon('trash')}</button>
@@ -2652,6 +2682,7 @@ function renderSancionDetalle(){
       <input type="date" id="fechaApercibimiento" value="${todayISO()}" max="${todayISO()}">
     </div>
     <textarea id="motivoInput" rows="3" placeholder="Describí lo que pasó..."></textarea>
+    ${userRole === 'admin' ? `<label class="check-susp"><input type="checkbox" id="conSuspension"> <span>Con suspensión <small>(te pregunta los días y los marca como falta en asistencia)</small></span></label>` : ''}
     <button class="btn-primary" style="margin-top:10px;" id="guardarBtn">Guardar apercibimiento</button>
   `;
 
@@ -5033,7 +5064,7 @@ function renderValoracionesLista(){
   });
 }
 
-function guardarValoracion(){
+function guardarValoracion(pasarAlSiguiente){
   const materia = materiaActual(selectedCurso);
   const bim = window.__valBim;
   const student = getStudents().find(s => s.id === selectedStudentId);
@@ -5050,7 +5081,14 @@ function guardarValoracion(){
   };
   const key = docId(`${selectedStudentId}_${bim}_${slugify(materia)}`);
   setDoc(doc(db,'valoraciones',key), data).catch(err=>showSaveError(err));
+  window.__valBorr = null;
   showToast('Valoración guardada');
+  if(pasarAlSiguiente){
+    const lista = getStudents().filter(s => s.curso === selectedCurso).sort((x, y) => x.apellido.localeCompare(y.apellido));
+    const i = lista.findIndex(s => s.id === selectedStudentId);
+    if(i >= 0 && i < lista.length - 1){ selectedStudentId = lista[i + 1].id; window.scrollTo(0, 0); render(); return; }
+    showToast('Era el último alumno del curso');
+  }
   navigate('valoraciones');
 }
 
@@ -5061,11 +5099,16 @@ function renderValoracionAlumno(){
   const key = docId(`${selectedStudentId}_${bim}_${slugify(materia)}`);
   const existente = cache.valoraciones[key] || {};
 
+  // Botones para tocar en vez de listas desplegables: una sola pulsación por respuesta.
+  // El valor queda en un campo oculto con el mismo id que usaba el desplegable.
+  // Si la pantalla se redibuja a mitad de carga (llegó un cambio de la base), no se pierde lo elegido.
+  const borr = (window.__valBorr && window.__valBorr.key === key) ? window.__valBorr.vals : {};
   function selectHtml(id, opciones, valorActual){
-    return `<select id="${id}" style="margin-bottom:12px;">
-      <option value="">Elegir...</option>
-      ${opciones.map(o => `<option value="${o}" ${o===valorActual?'selected':''}>${o}</option>`).join('')}
-    </select>`;
+    if(Object.prototype.hasOwnProperty.call(borr, id)) valorActual = borr[id];
+    return `<input type="hidden" id="${id}" value="${escapeHtml(valorActual || '')}">
+    <div class="chips-val" data-for="${id}">
+      ${opciones.map(o => `<button type="button" class="chip-val${o.length > 30 ? ' larga' : ''}${o === valorActual ? ' on' : ''}" data-v="${escapeHtml(o)}">${escapeHtml(o)}</button>`).join('')}
+    </div>`;
   }
 
   $app.innerHTML = `
@@ -5097,9 +5140,23 @@ function renderValoracionAlumno(){
     <textarea id="valObservaciones" rows="3" style="margin-bottom:12px;">${escapeHtml(existente.observaciones||'')}</textarea>
 
     <button class="btn-primary" id="guardarValBtn">Guardar valoración</button>
+    <button class="btn-secondary" id="guardarValSigBtn" style="width:100%;margin-top:8px;">Guardar y pasar al siguiente alumno</button>
   `;
   document.getElementById('backBtn').addEventListener('click', () => goBack('valoraciones'));
-  document.getElementById('guardarValBtn').addEventListener('click', guardarValoracion);
+  document.getElementById('guardarValBtn').addEventListener('click', () => guardarValoracion(false));
+  document.getElementById('guardarValSigBtn').addEventListener('click', () => guardarValoracion(true));
+  document.querySelectorAll('.chips-val').forEach(grupo => {
+    grupo.addEventListener('click', (e) => {
+      const b = e.target.closest('.chip-val');
+      if(!b) return;
+      const campo = document.getElementById(grupo.dataset.for);
+      const ya = b.classList.contains('on');
+      grupo.querySelectorAll('.chip-val').forEach(x => x.classList.remove('on'));
+      if(ya){ campo.value = ''; } else { b.classList.add('on'); campo.value = b.dataset.v; }
+      if(!window.__valBorr || window.__valBorr.key !== key) window.__valBorr = { key, vals: {} };
+      window.__valBorr.vals[grupo.dataset.for] = campo.value;
+    });
+  });
 }
 
 // ---------- Notas cuatrimestrales ----------
@@ -5842,6 +5899,245 @@ function exportarResumenMensualCurso(curso, mesISO){
   XLSX.writeFile(wb, `Resumen_${curso}A_${nombreMes}_${anio}.xlsx`);
 }
 
+// ---------- Registro de inasistencias en PDF (mismo formato que la planilla de papel/Excel) ----------
+// Una hoja A4 apaisada por curso y por mes: una fila por alumno, una columna por día
+// hábil (los feriados y días sin clase quedan como columna gris con el nombre en vertical,
+// como en la planilla en papel), y a la derecha Aus / Justif / Total Gral (acumulado del
+// año). Abajo: faltas totales del mes, referencias y lugar para firma de Rector, Sello y
+// Secretario. Sin desplegables ni nada propio de Excel: es una hoja pensada para imprimir.
+const FERIADOS_NOMBRE = {
+  '2026-03-23':'DÍA NO LABORABLE', '2026-03-24':'DÍA NAC. DE LA MEMORIA', '2026-04-02':'MALVINAS',
+  '2026-04-03':'VIERNES SANTO', '2026-05-01':'DÍA DEL TRABAJADOR', '2026-05-25':'REVOLUCIÓN DE MAYO',
+  '2026-06-15':'PASO A LA INM. DE GÜEMES', '2026-07-09':'DÍA DE LA INDEPENDENCIA', '2026-07-10':'DÍA NO LABORABLE',
+  '2026-08-17':'PASO A LA INM. DE SAN MARTÍN', '2026-09-11':'DÍA DEL MAESTRO', '2026-09-21':'DÍA DEL ESTUDIANTE',
+  '2026-10-12':'RESPETO A LA DIVERSIDAD CULTURAL', '2026-11-23':'SOBERANÍA NACIONAL'
+};
+const CURSO_ORDINAL = ['PRIMER','SEGUNDO','TERCER','CUARTO','QUINTO','SEXTO'];
+
+// Qué se ve en la celda de un alumno en un día y cuánto suma. Criterio de la planilla del
+// colegio: Aus = A (1), T (0,5), retiro anticipado (0,5), faltó a Ed. Física (0,5);
+// Justif = AJ (1), TJ (0,5). La suspensión suma como ausente.
+function celdaRegistro(fecha, sid, cursos){
+  const key = `${fecha}|${sid}`;
+  const rec = cache.attendance[key];
+  const ef = getEF()[key];
+  if(rec && rec.exencion) return { code: String(rec.exencion), aus: 0, just: 0 };
+  const efFalta = !!(ef && ef.tipo === 'falta' && !efNoCuenta(fecha, sid, cursos));
+  const est = rec ? rec.estado : 'P';
+  if(est === 'A') return { code: rec.suspension ? 'SUSP' : 'A', aus: 1, just: 0 };
+  if(est === 'J') return { code: 'AJ', aus: 0, just: 1 };
+  let aus = 0, just = 0, code = 'P';
+  if(est === 'T'){ aus += 0.5; code = 'T'; }
+  else if(est === 'TJ'){ just += 0.5; code = 'TJ'; }
+  if(tieneRetiro(rec)){ aus += 0.5; code = code === 'P' ? 'RA' : code + '/RA'; }
+  if(efFalta){ aus += 0.5; code += '/EF'; }
+  return { code, aus, just };
+}
+
+function totalesRegistroMes(curso, mesISO, sid, cursos){
+  let aus = 0, just = 0;
+  diasHabilesDelMes(curso, mesISO).forEach(f => {
+    const c = celdaRegistro(f, sid, cursos);
+    aus += c.aus; just += c.just;
+  });
+  return { aus, just };
+}
+
+function dibujarRegistroMes(doc, curso, mesISO, students){
+  const W = 297, H = 210, M = 10;
+  const [anio, mesN] = mesISO.split('-').map(Number);
+  const hoy = todayISO();
+  const cursos = cursosActivos();
+  const num = (x) => String(x).replace('.', ',');
+
+  // Todos los días lunes a viernes del mes (los que no son de clase salen como columna gris).
+  const cols = [];
+  { const ult = new Date(anio, mesN, 0).getDate();
+    for(let d = 1; d <= ult; d++){
+      const dt = new Date(anio, mesN - 1, d);
+      const dow = dt.getDay();
+      if(dow === 0 || dow === 6) continue;
+      const iso = localISODate(dt);
+      let tipo = 'clase', motivo = '';
+      if(FERIADOS_2026.has(iso)){ tipo = 'sin'; motivo = FERIADOS_NOMBRE[iso] || 'FERIADO'; }
+      else if(!bimestreDe(iso)){ tipo = 'sin'; motivo = 'SIN CLASES'; }
+      else { const sc = getDiaSinClase(iso, curso); if(sc){ tipo = 'sin'; motivo = String(sc.motivo || 'SIN CLASES').toUpperCase(); } }
+      cols.push({ iso, dia: d, letra: 'DLMXJVS'[dow], tipo, motivo, futuro: iso > hoy });
+    }
+  }
+  const diasClase = cols.filter(c => c.tipo === 'clase' && !c.futuro).length;
+
+  // Acumulado del año (marzo hasta este mes) para "Total Gral".
+  const filas = students.map(s => {
+    const codigos = cols.map(c => (c.tipo === 'clase' && !c.futuro) ? celdaRegistro(c.iso, s.id, cursos) : null);
+    let aus = 0, just = 0;
+    codigos.forEach(c => { if(c){ aus += c.aus; just += c.just; } });
+    let previo = 0;
+    for(let m = 3; m < mesN; m++){
+      const t = totalesRegistroMes(curso, `${anio}-${String(m).padStart(2, '0')}`, s.id, cursos);
+      previo += t.aus + t.just;
+    }
+    return { nombre: `${s.apellido}, ${s.nombre}`, codigos, aus, just, general: previo + aus + just };
+  });
+  const totAus = filas.reduce((a, f) => a + f.aus, 0);
+  const totJus = filas.reduce((a, f) => a + f.just, 0);
+  const totGen = filas.reduce((a, f) => a + f.general, 0);
+  const posibles = filas.length * diasClase;
+  const pct = posibles ? ((posibles - (totAus + totJus)) / posibles * 100) : 100;
+
+  // Medidas
+  const xN = M, wN = 7, xNom = xN + wN, wNom = 52;
+  const wRes = 12;
+  const xDias = xNom + wNom;
+  const wDia = Math.min(9, (W - M - xDias - wRes * 3) / cols.length);
+  const xAus = xDias + wDia * cols.length;
+  const yTop = 29, hHead = 9;
+  const pieH = 34; // referencias + firmas
+  const dispo = H - M - pieH - (yTop + hHead);
+  const filasMax = Math.floor(dispo / 3.5) - 1; // -1 por la fila de totales (no bajar de 3,5 mm por fila)
+  const porHoja = Math.max(1, filasMax);
+  const hojas = Math.max(1, Math.ceil(filas.length / porHoja));
+  const rowH = Math.min(6, dispo / (Math.min(filas.length, porHoja) + 1));
+
+  for(let h = 0; h < hojas; h++){
+    if(h > 0) doc.addPage('a4', 'landscape');
+    const lote = filas.slice(h * porHoja, (h + 1) * porHoja);
+    const ultima = h === hojas - 1;
+    const bodyTop = yTop + hHead;
+    const nFilas = lote.length + (ultima ? 1 : 0);
+    const bodyH = nFilas * rowH;
+
+    // Encabezado
+    doc.setTextColor(90); doc.setFont('helvetica', 'normal'); doc.setFontSize(8);
+    doc.text('Instituto Superior Porteño · A-80 · Montañeses 1936', M, 11);
+    doc.text(`Emitido el ${fmtDateShort(hoy)}`, W - M, 11, { align: 'right' });
+    doc.setTextColor(0); doc.setFont('helvetica', 'bold'); doc.setFontSize(15);
+    doc.text(`${CURSO_ORDINAL[Number(curso) - 1] || curso + '°'} AÑO ${anio}`, M, 19);
+    doc.setFontSize(11);
+    doc.text(MESES_NOMBRE[mesN - 1].toUpperCase() + (hojas > 1 ? `  (hoja ${h + 1} de ${hojas})` : ''), M, 25);
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(9);
+    doc.text(`Porcentaje de asistencia mensual: ${pct.toFixed(2).replace('.', ',')}%`, W - M, 25, { align: 'right' });
+
+    // Cabecera de la tabla
+    doc.setDrawColor(120); doc.setLineWidth(0.15);
+    doc.setFillColor(225, 225, 225);
+    doc.rect(xN, yTop, xAus + wRes * 3 - xN, hHead, 'FD');
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(7); doc.setTextColor(0);
+    doc.text('Nº', xN + wN / 2, yTop + 5.6, { align: 'center' });
+    doc.text('Apellidos y Nombres', xNom + 2, yTop + 5.6);
+    cols.forEach((c, j) => {
+      const cx = xDias + j * wDia + wDia / 2;
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(5.5);
+      doc.text(({ L: 'Lun', M: 'Mar', X: 'Mié', J: 'Jue', V: 'Vie' })[c.letra], cx, yTop + 3.2, { align: 'center' });
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(7.5);
+      doc.text(String(c.dia), cx, yTop + 7.3, { align: 'center' });
+    });
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(6);
+    ['Aus', 'Justif', 'Total Gral'].forEach((t, k) => doc.text(t, xAus + wRes * k + wRes / 2, yTop + 5.6, { align: 'center' }));
+
+    // Cuerpo: filas
+    lote.forEach((f, i) => {
+      const y = bodyTop + i * rowH;
+      const nro = h * porHoja + i + 1;
+      doc.setFont('helvetica', 'normal'); doc.setTextColor(0);
+      doc.setFontSize(6.5);
+      doc.text(String(nro), xN + wN / 2, y + rowH / 2 + 1, { align: 'center' });
+      let fs = 7.5; doc.setFontSize(fs);
+      while(doc.getTextWidth(f.nombre) > wNom - 3 && fs > 5){ fs -= 0.5; doc.setFontSize(fs); }
+      doc.text(f.nombre, xNom + 2, y + rowH / 2 + fs * 0.17 + 0.3);
+      f.codigos.forEach((c, j) => {
+        if(!c) return;
+        const x = xDias + j * wDia;
+        const falta = c.code === 'A' || c.code === 'SUSP';
+        if(falta){ doc.setFillColor(250, 205, 205); doc.rect(x, y, wDia, rowH, 'F'); }
+        else if(c.aus + c.just > 0){ doc.setFillColor(255, 240, 190); doc.rect(x, y, wDia, rowH, 'F'); }
+        const fsC = c.code.length <= 2 ? 7 : (c.code.length <= 4 ? 5.6 : 4.6);
+        doc.setFontSize(fsC);
+        doc.setFont('helvetica', falta ? 'bold' : 'normal');
+        doc.setTextColor(c.code === 'P' ? 110 : 0);
+        doc.text(c.code, x + wDia / 2, y + rowH / 2 + fsC * 0.17 + 0.3, { align: 'center' });
+      });
+      doc.setTextColor(0); doc.setFont('helvetica', 'normal'); doc.setFontSize(7.5);
+      doc.text(num(f.aus), xAus + wRes / 2, y + rowH / 2 + 1.3, { align: 'center' });
+      doc.text(num(f.just), xAus + wRes * 1.5, y + rowH / 2 + 1.3, { align: 'center' });
+      // Total Gral: amarillo de 5 a 14,5, rojo desde 15 (igual que en la planilla de Excel)
+      const gx = xAus + wRes * 2;
+      if(f.general >= 15){ doc.setFillColor(245, 170, 170); doc.rect(gx, y, wRes, rowH, 'F'); doc.setFont('helvetica', 'bold'); }
+      else if(f.general >= 5){ doc.setFillColor(255, 235, 150); doc.rect(gx, y, wRes, rowH, 'F'); }
+      doc.text(num(f.general), gx + wRes / 2, y + rowH / 2 + 1.3, { align: 'center' });
+    });
+
+    // Fila de totales
+    if(ultima){
+      const y = bodyTop + lote.length * rowH;
+      doc.setFillColor(235, 235, 235);
+      doc.rect(xN, y, xAus + wRes * 3 - xN, rowH, 'F');
+      doc.setFont('helvetica', 'bold'); doc.setFontSize(7); doc.setTextColor(0);
+      doc.text('Faltas Totales Mensuales', xNom + 2, y + rowH / 2 + 1.2);
+      [totAus, totJus, totGen].forEach((v, k) => doc.text(num(v), xAus + wRes * k + wRes / 2, y + rowH / 2 + 1.2, { align: 'center' }));
+    }
+
+    // Grilla
+    doc.setDrawColor(150); doc.setLineWidth(0.1);
+    for(let i = 0; i <= nFilas; i++) doc.line(xN, bodyTop + i * rowH, xAus + wRes * 3, bodyTop + i * rowH);
+    [xN, xNom, xDias, ...cols.map((_, j) => xDias + (j + 1) * wDia), xAus + wRes, xAus + wRes * 2, xAus + wRes * 3]
+      .forEach(x => doc.line(x, yTop, x, bodyTop + bodyH));
+    doc.setDrawColor(60); doc.setLineWidth(0.3);
+    doc.rect(xN, yTop, xAus + wRes * 3 - xN, hHead + bodyH);
+    doc.line(xAus, yTop, xAus, bodyTop + bodyH);
+
+    // Columnas sin clase: gris con el motivo en vertical
+    cols.forEach((c, j) => {
+      if(c.tipo !== 'sin') return;
+      const x = xDias + j * wDia;
+      const hh = lote.length * rowH;
+      doc.setFillColor(205, 205, 205);
+      doc.rect(x, bodyTop, wDia, hh, 'F');
+      doc.setDrawColor(150); doc.setLineWidth(0.1);
+      doc.line(x, bodyTop, x, bodyTop + hh); doc.line(x + wDia, bodyTop, x + wDia, bodyTop + hh);
+      let fs = 7; doc.setFont('helvetica', 'bold'); doc.setFontSize(fs);
+      while(doc.getTextWidth(c.motivo) > hh - 4 && fs > 4){ fs -= 0.5; doc.setFontSize(fs); }
+      doc.setTextColor(40);
+      doc.text(c.motivo, x + wDia / 2 + fs * 0.17, bodyTop + hh / 2 + doc.getTextWidth(c.motivo) / 2, { angle: 90 });
+    });
+    doc.setTextColor(0);
+
+    // Pie: referencias y firmas (solo en la última hoja)
+    if(ultima){
+      const yRef = bodyTop + bodyH + 4;
+      doc.setFont('helvetica', 'normal'); doc.setFontSize(6.5); doc.setTextColor(60);
+      const ref = 'Referencias: P presente · A ausente · AJ ausente justificada · T tarde · TJ tarde justificada · RA retiro anticipado · /EF faltó a Ed. Física · SUSP suspensión · otras siglas: exención (no suma). ' +
+        'Aus = faltas del mes · Justif = faltas justificadas del mes · Total Gral = acumulado del año (marzo hasta este mes). ' +
+        'Total Gral: amarillo de 5 a 14,5 faltas; rojo desde 15. Columnas grises: feriados y días sin clase.';
+      doc.text(doc.splitTextToSize(ref, W - 2 * M), M, yRef);
+      const yFirma = H - M - 8;
+      doc.setTextColor(0); doc.setDrawColor(0); doc.setLineWidth(0.2); doc.setFontSize(8);
+      [['Secretario', 20], ['Rector', 105], ['Sello', 190]].forEach(([t, x]) => {
+        doc.line(x, yFirma, x + 62, yFirma);
+        doc.text(t, x + 31, yFirma + 4, { align: 'center' });
+      });
+    }
+  }
+}
+
+function alumnosOrdenadosDeCurso(curso){
+  return getStudents().filter(s => s.curso === curso).sort((a, b) => a.apellido.localeCompare(b.apellido) || a.nombre.localeCompare(b.nombre));
+}
+
+// mesISO = un mes, o null para todo el año (de marzo hasta el mes en curso, una hoja por mes).
+function exportarRegistroPDF(curso, mesISO){
+  const alumnos = alumnosOrdenadosDeCurso(curso);
+  if(!alumnos.length){ customAlert('Este curso no tiene alumnos cargados.'); return; }
+  const meses = mesISO ? [mesISO] : mesesConDatos().map(m => m.value);
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ unit: 'mm', format: 'a4', orientation: 'landscape' });
+  meses.forEach((m, i) => {
+    if(i > 0) doc.addPage('a4', 'landscape');
+    dibujarRegistroMes(doc, curso, m, alumnos);
+  });
+  doc.save(mesISO ? `Registro_${curso}A_${mesISO}.pdf` : `Registro_${curso}A_${todayISO().slice(0, 4)}_completo.pdf`);
+}
+
 function computeTendenciaCurso(curso){
   const students = getStudents().filter(s => s.curso === curso);
   return BIMESTRES.map(bim => {
@@ -5993,7 +6289,9 @@ function renderVistaCurso(){
     <div class="field-row" style="margin-bottom:10px;">
       <select id="mesOficialSelect">${mesesConDatos().map((m,i,arr)=>`<option value="${m.value}" ${i===arr.length-1?'selected':''}>${m.label}</option>`).join('')}</select>
     </div>
-    <button class="btn-secondary" id="exportarOficialBtn" style="width:100%;margin-bottom:10px;"><span class="btn-icon-fix">${icon('file')}</span> Exportar planilla oficial del mes (día por día)</button>
+    <button class="btn-secondary" id="exportarOficialBtn" style="width:100%;margin-bottom:10px;"><span class="btn-icon-fix">${icon('file')}</span> Planilla del mes en Excel (día por día)</button>
+    <button class="btn-secondary" id="registroPdfBtn" style="width:100%;margin-bottom:10px;"><span class="btn-icon-fix">${icon('file')}</span> Registro de inasistencias en PDF (para imprimir)</button>
+    <button class="btn-secondary" id="registroPdfAnioBtn" style="width:100%;margin-bottom:10px;"><span class="btn-icon-fix">${icon('file')}</span> Registro del año completo en PDF</button>
     <button class="btn-secondary" id="exportarResumenMesBtn" style="width:100%;margin-bottom:10px;"><span class="btn-icon-fix">${icon('file')}</span> Exportar resumen del mes</button>
     <button class="btn-secondary" id="exportarBtn" style="width:100%;margin-bottom:10px;"><span class="btn-icon-fix">${icon('file')}</span> Exportar asistencia a Excel (bimestre)</button>
     ${userRole==='admin' ? `<button class="btn-secondary" id="exportarPIABtn" style="width:100%;margin-bottom:16px;"><span class="btn-icon-fix">${icon('file')}</span> Planilla del PIA (todos los cursos)</button>` : '<div style="height:6px;"></div>'}` : ''}
@@ -6023,6 +6321,10 @@ function renderVistaCurso(){
   }
   if(document.getElementById('exportarOficialBtn')){
     document.getElementById('exportarOficialBtn').addEventListener('click', () => exportarPlanillaOficialCurso(selectedCurso, document.getElementById('mesOficialSelect').value));
+  }
+  if(document.getElementById('registroPdfBtn')){
+    document.getElementById('registroPdfBtn').addEventListener('click', () => exportarRegistroPDF(selectedCurso, document.getElementById('mesOficialSelect').value));
+    document.getElementById('registroPdfAnioBtn').addEventListener('click', () => exportarRegistroPDF(selectedCurso, null));
   }
   if(document.getElementById('exportarResumenMesBtn')){
     document.getElementById('exportarResumenMesBtn').addEventListener('click', () => exportarResumenMensualCurso(selectedCurso, document.getElementById('mesOficialSelect').value));
