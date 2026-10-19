@@ -1,6 +1,6 @@
 // ===== Preceptoría ISP — lógica de la app (Etapa 1) =====
 
-const APP_VERSION = 126;
+const APP_VERSION = 127;
 const SEED_STUDENTS = []; // la lista de alumnos vive en Firestore (colección students), no en el código
 
 const CURSOS = ['1','2','3','4','5'];
@@ -321,7 +321,15 @@ function startListeners(){
   listenersIniciados = true;
   INICIO_VIVO = bimestreActual().from;
 
-  onSnapshot(query(collection(db,'attendance'), where('fecha','>=', INICIO_VIVO)), snap => {
+  // Un alumno/a solo baja lo suyo (las reglas de Firestore también se lo exigen). El resto de
+  // las cuentas siguen bajando las colecciones completas, como siempre.
+  const esAlumno = userRole === 'student' && !!currentStudentAuth;
+  const miId = esAlumno ? currentStudentAuth.studentId : null;
+  const lista = (nombre) => esAlumno ? query(collection(db, nombre), where('studentId', '==', miId)) : collection(db, nombre);
+  const sinPermiso = (nombre) => (e) => console.warn('No se pudo leer', nombre, e && e.code);
+  if(esAlumno) histAsistenciaListo = true; // su asistencia completa viene en este mismo listener
+
+  onSnapshot(esAlumno ? query(collection(db,'attendance'), where('studentId','==', miId)) : query(collection(db,'attendance'), where('fecha','>=', INICIO_VIVO)), snap => {
     const next = {};
     snap.forEach(d => { next[d.id] = d.data(); });
     cache.attendanceLive = next;
@@ -333,7 +341,7 @@ function startListeners(){
   // El histórico no se dispara acá: se carga desde el listener de config/general, que
   // es el que trae la versión (histRev) con la que hay que compararlo.
 
-  onSnapshot(collection(db,'sanciones'), snap => {
+  onSnapshot(lista('sanciones'), snap => {
     const byStudent = {};
     snap.forEach(d => {
       const data = d.data();
@@ -362,7 +370,7 @@ function startListeners(){
     render();
   });
 
-  onSnapshot(collection(db,'ef'), snap => {
+  onSnapshot(lista('ef'), snap => {
     const next = {};
     snap.forEach(d => {
       const data = d.data();
@@ -376,7 +384,7 @@ function startListeners(){
     render();
   });
 
-  onSnapshot(collection(db,'certificados'), snap => {
+  onSnapshot(lista('certificados'), snap => {
     const next = [];
     snap.forEach(d => {
       const data = d.data();
@@ -388,7 +396,13 @@ function startListeners(){
     render();
   });
 
-  onSnapshot(collection(db,'autorizaciones'), snap => {
+  if(esAlumno){
+    onSnapshot(doc(db,'autorizaciones', miId), d => {
+      cache.autorizaciones = d.exists() ? { [miId]: d.data() } : {};
+      cache._lastSync.autorizaciones = Date.now();
+      render();
+    }, sinPermiso('autorizaciones'));
+  } else onSnapshot(collection(db,'autorizaciones'), snap => {
     const next = {};
     snap.forEach(d => { next[d.id] = d.data(); });
     cache.autorizaciones = next;
@@ -404,7 +418,7 @@ function startListeners(){
     render();
   });
 
-  onSnapshot(collection(db,'valoraciones'), snap => {
+  if(!esAlumno) onSnapshot(collection(db,'valoraciones'), snap => {
     const next = {};
     snap.forEach(d => { next[d.id] = d.data(); });
     cache.valoraciones = next;
@@ -414,7 +428,7 @@ function startListeners(){
 
   // Las notas se suscriben después de saber qué rol tiene la cuenta (iniciarNotasSegunRol).
 
-  onSnapshot(collection(db,'entradasEspeciales'), snap => {
+  if(!esAlumno) onSnapshot(collection(db,'entradasEspeciales'), snap => {
     const next = {};
     snap.forEach(d => { next[d.id] = d.data(); });
     cache.entradasEspeciales = next;
@@ -422,7 +436,7 @@ function startListeners(){
     render();
   });
 
-  onSnapshot(collection(db,'viewers'), snap => {
+  if(!esAlumno) onSnapshot(collection(db,'viewers'), snap => {
     const next = {};
     snap.forEach(d => { next[d.id] = Object.assign({ uid: d.id }, d.data()); });
     cache.viewers = next;
@@ -430,7 +444,7 @@ function startListeners(){
     render();
   });
 
-  onSnapshot(collection(db,'driveMapping'), snap => {
+  if(!esAlumno) onSnapshot(collection(db,'driveMapping'), snap => {
     const next = {};
     snap.forEach(d => { next[d.id] = d.data(); });
     cache.driveMapping = next;
@@ -438,7 +452,7 @@ function startListeners(){
     render();
   });
 
-  onSnapshot(collection(db,'tramites'), snap => {
+  if(!esAlumno) onSnapshot(collection(db,'tramites'), snap => {
     const next = {};
     snap.forEach(d => { next[d.id] = Object.assign({ id: d.id }, d.data()); });
     cache.tramites = next;
@@ -446,7 +460,7 @@ function startListeners(){
     render();
   });
 
-  onSnapshot(collection(db,'entregas'), snap => {
+  if(!esAlumno) onSnapshot(collection(db,'entregas'), snap => {
     const next = {};
     snap.forEach(d => { next[d.id] = d.data(); });
     cache.entregas = next;
@@ -462,21 +476,34 @@ function startListeners(){
     render();
   });
 
-  onSnapshot(collection(db,'students_auth'), snap => {
-    const next = {};
-    snap.forEach(d => { next[d.id] = Object.assign({ uid: d.id }, d.data()); });
-    cache.students_auth = next;
-    cache._lastSync.students_auth = Date.now();
-    render();
-  });
+  if(esAlumno){
+    // Su propia cuenta y su propia ficha, nada más.
+    onSnapshot(doc(db,'students_auth', currentStudentAuth.uid), d => {
+      cache.students_auth = d.exists() ? { [d.id]: Object.assign({ uid: d.id }, d.data()) } : {};
+      render();
+    }, sinPermiso('students_auth'));
+    onSnapshot(doc(db,'students', miId), d => {
+      cache.students = d.exists() ? { [d.id]: Object.assign({ id: d.id }, d.data()) } : {};
+      cache._lastSync.students = Date.now();
+      render();
+    }, sinPermiso('students'));
+  } else {
+    onSnapshot(collection(db,'students_auth'), snap => {
+      const next = {};
+      snap.forEach(d => { next[d.id] = Object.assign({ uid: d.id }, d.data()); });
+      cache.students_auth = next;
+      cache._lastSync.students_auth = Date.now();
+      render();
+    });
 
-  onSnapshot(collection(db,'students'), snap => {
-    const next = {};
-    snap.forEach(d => { next[d.id] = Object.assign({ id: d.id }, d.data()); });
-    cache.students = next;
-    cache._lastSync.students = Date.now();
-    render();
-  });
+    onSnapshot(collection(db,'students'), snap => {
+      const next = {};
+      snap.forEach(d => { next[d.id] = Object.assign({ id: d.id }, d.data()); });
+      cache.students = next;
+      cache._lastSync.students = Date.now();
+      render();
+    });
+  }
 
   // Pendientes del preceptor: solo los baja la cuenta de administración (los
   // profesores, cuentas de lectura y alumnos ni siquiera se suscriben).
@@ -518,7 +545,7 @@ function startListeners(){
     // NUEVA que la cargada (así el eco de nuestra propia escritura, o un snapshot
     // viejo que llega tarde, no dispara una recarga completa al pedo).
     const rev = (d.exists() && d.data().histRev) || 0;
-    if(!histAsistenciaListo || rev > (histRevCargada || 0)){
+    if(!esAlumno && (!histAsistenciaListo || rev > (histRevCargada || 0))){
       cargarHistoricoAsistencia(rev).catch(err => {
         console.error('No se pudo cargar el histórico de asistencia', err);
         histAsistenciaListo = true; // para no dejar el aviso colgado en pantalla
@@ -527,7 +554,7 @@ function startListeners(){
       });
     }
   });
-  getDoc(configRef).then(d => {
+  if(!esAlumno) getDoc(configRef).then(d => {
     if(!d.exists()) setDoc(configRef, cache.config).catch(()=>{});
   }).catch(()=>{});
 }
@@ -622,6 +649,69 @@ async function reactivarAlumno(id){
   if(!s) return;
   if(!(await customConfirm(`¿Reactivar a ${s.nombre} ${s.apellido}?`))) return;
   setDoc(doc(db,'students', id), { activo: true }, { merge: true }).catch(err=>showSaveError(err));
+}
+
+// Cuando un alumno/a se va del colegio: primero se descarga un archivo (Excel) con todo su
+// historial y recién después, con una segunda confirmación, se borran sus datos de la app.
+async function archivarYBorrarAlumno(id){
+  if(modoPruebaBloquea()) return;
+  const al = cache.students[id];
+  if(!al || al.activo !== false) return;
+  const nombre = `${al.apellido}, ${al.nombre}`;
+  const termina = `|${id}`;
+  const claves = (obj) => Object.keys(obj || {}).filter(k => k.endsWith(termina));
+  const asis = claves(cache.attendance).map(k => ({ id: k, ...cache.attendance[k] }));
+  const ef = claves(cache.ef).map(k => ({ id: k, ...cache.ef[k] }));
+  const sanc = (getSanciones()[id] || []).slice();
+  const certs = getCertificados().filter(c => c.studentId === id);
+  const notas = Object.entries(cache.notas).filter(([, n]) => n.studentId === id);
+  const valor = Object.entries(cache.valoraciones || {}).filter(([, v]) => v.studentId === id);
+  const entregas = Object.entries(cache.entregas || {}).filter(([, e]) => e && e.studentId === id);
+  const cuentas = Object.entries(cache.students_auth || {}).filter(([, a]) => a.studentId === id);
+  const auth = getAutorizaciones()[id];
+
+  if(!(await customConfirm(`¿Archivar y borrar los datos de ${nombre}?\n\nPrimero se va a descargar un archivo Excel con todo su historial (${asis.length} registros de asistencia, ${sanc.length} apercibimientos, ${notas.length} notas, etc.). Después se te va a pedir confirmar el borrado.`, {peligro:true, textoSi:'Descargar archivo'}))) return;
+
+  const wb = XLSX.utils.book_new();
+  const hoja = (nombreHoja, filas) => XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(filas.length ? filas : [{ Info: 'Sin registros' }]), nombreHoja);
+  hoja('Alumno', [{ Apellido: al.apellido, Nombre: al.nombre, Curso: `${al.curso}°${al.division||'A'}`, Mails_familia: (al.familyEmails||[]).join(', '), Archivado: todayISO() }]);
+  const plano = (o) => Object.fromEntries(Object.entries(o).filter(([k]) => k !== 'id' && k !== 'studentId').map(([k, v]) => [k, (v && typeof v === 'object') ? JSON.stringify(v) : v]));
+  hoja('Asistencia', asis.sort((a,b)=> String(a.id).localeCompare(String(b.id))).map(r => ({ Fecha: r.id.split('|')[0], ...plano(r) })));
+  hoja('Ed Fisica', ef.map(r => ({ Fecha: r.id.split('|')[0], Tipo: r.tipo||'' })));
+  hoja('Apercibimientos', sanc.map(x => ({ Folio: x.folio, Fecha: x.fecha, Motivo: x.motivo, Materia: x.materia||'', Profesor: x.profesor||'', Observacion: x.observacion||'' })));
+  hoja('Certificados', certs.map(c => ({ Desde: c.from, Hasta: c.to })));
+  hoja('Notas', notas.map(([, n]) => ({ Materia: n.materia, Cuatrimestre: n.cuatrimestre, Nota: n.nota })));
+  hoja('Valoraciones', valor.map(([, v]) => plano(v)));
+  if(auth) hoja('Autorizacion', [{ Motivo: auth.motivo||'', Hora_tope: auth.horaTope||'', Activa: auth.activa ? 'Sí' : 'No', Desde: auth.desde||'' }]);
+  XLSX.writeFile(wb, `Archivo_${al.apellido}_${al.nombre}_${al.curso}${al.division||'A'}.xlsx`.replace(/\s+/g,'_'));
+
+  if(!(await customConfirm(`Se descargó el archivo de ${nombre}.\n\nGuardalo bien (por ejemplo en el Drive del colegio) antes de seguir. ¿Borrar definitivamente de la app todos sus datos? No se puede deshacer.`, {peligro:true, textoSi:'Borrar definitivamente'}))) return;
+
+  const refs = [
+    ...asis.map(r => doc(db,'attendance', docId(r.id))),
+    ...ef.map(r => doc(db,'ef', docId(r.id))),
+    ...sanc.map(x => doc(db,'sanciones', x.id)),
+    ...certs.map(c => doc(db,'certificados', c.id)),
+    ...notas.map(([k]) => doc(db,'notas', k)),
+    ...valor.map(([k]) => doc(db,'valoraciones', k)),
+    ...entregas.map(([k]) => doc(db,'entregas', k)),
+    ...cuentas.map(([k]) => doc(db,'students_auth', k)),
+    doc(db,'autorizaciones', id),
+    doc(db,'driveMapping', id),
+    doc(db,'students', id),
+  ];
+  try{
+    for(let i = 0; i < refs.length; i += 400){
+      const lote = writeBatch(db);
+      refs.slice(i, i + 400).forEach(r => lote.delete(r));
+      await lote.commit();
+    }
+    asis.forEach(r => { delete cache.attendanceHist[docId(r.id)]; });
+    refrescarAttendance();
+    marcarHistoricoCambiado();
+    showToast(`Datos de ${nombre} borrados`);
+    render();
+  }catch(err){ showSaveError(err); }
 }
 
 // ---------- Horario de materias (editable) ----------
@@ -1774,6 +1864,64 @@ async function activarNotificaciones(mostrarErrores){
     await setDoc(doc(db,'fcmTokens', uid), Object.assign({ token, role: userRole, updatedAt: Date.now() }, datosRol));
     if(mostrarErrores){ showToast('Notificaciones activadas'); render(); }
   }catch(err){ if(mostrarErrores) showSaveError(err); else console.error(err); }
+}
+
+// ---------- Instalar la app en el celular (Android / iPhone) ----------
+let eventoInstalar = null; // en Android/Chrome el navegador ofrece instalar con un botón propio
+window.addEventListener('beforeinstallprompt', (e) => { e.preventDefault(); eventoInstalar = e; });
+window.addEventListener('appinstalled', () => { eventoInstalar = null; try{ localStorage.setItem('isp_instalar_oculto','1'); }catch(e){} });
+function appInstalada(){
+  return (window.matchMedia && window.matchMedia('(display-mode: standalone)').matches) || window.navigator.standalone === true;
+}
+function esIPhone(){ return /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1); }
+function instalarBannerHtml(){
+  if(appInstalada()) return '';
+  try{ if(localStorage.getItem('isp_instalar_oculto') === '1') return ''; }catch(e){}
+  return `<div class="aviso-banner nuevo" style="flex-direction:column;align-items:stretch;">
+    <div style="display:flex;gap:8px;">${icon('info')}<span><b>Instalá la app en tu celular.</b> Se abre más rápido, entra con un toque desde la pantalla de inicio y es la única forma de recibir avisos en el iPhone.</span></div>
+    <div style="display:flex;gap:8px;margin-top:8px;">
+      <button class="btn-primary" id="instalarGuiaBtn" style="flex:1;">Cómo instalarla</button>
+      <button class="btn-secondary" id="instalarOcultarBtn" style="flex:0 0 auto;">Ahora no</button>
+    </div>
+  </div>`;
+}
+function renderInstalarApp(){
+  const plataforma = window.__instalarPlat || (esIPhone() ? 'ios' : 'android');
+  const pasos = plataforma === 'ios' ? [
+    ['Abrí la app en Safari', 'Tiene que ser Safari (la brújula azul), no Chrome ni un navegador dentro de WhatsApp o Instagram. Si estás en otro, copiá el link y pegalo en Safari.'],
+    ['Tocá el botón Compartir', 'Es el cuadrado con una flecha hacia arriba, abajo en el centro de la pantalla.'],
+    ['Elegí "Agregar a inicio"', 'Deslizá hacia arriba el menú hasta encontrar "Agregar a pantalla de inicio" (con un signo +).'],
+    ['Tocá "Agregar"', 'Arriba a la derecha. En tu pantalla de inicio aparece el ícono del Instituto Superior Porteño.'],
+    ['Abrila desde el ícono y activá las notificaciones', 'Importante: en iPhone las notificaciones solo funcionan si la abrís desde el ícono (iOS 16.4 o más nuevo). Cuando la app te lo ofrezca, tocá "Activar notificaciones" y después "Permitir".']
+  ] : [
+    ['Abrí la app en Chrome', 'Tiene que ser Chrome, no un navegador dentro de WhatsApp o Instagram. Si estás en otro, copiá el link y pegalo en Chrome.'],
+    ['Tocá el menú ⋮', 'Son los tres puntitos arriba a la derecha.'],
+    ['Elegí "Instalar app"', 'En algunos celulares dice "Agregar a la pantalla principal" o "Añadir a pantalla de inicio".'],
+    ['Confirmá con "Instalar"', 'En tu pantalla de inicio aparece el ícono del Instituto Superior Porteño.'],
+    ['Abrila desde el ícono y activá las notificaciones', 'Cuando la app te lo ofrezca, tocá "Activar notificaciones" y después "Permitir". Así te avisamos de exámenes, TPs y notas.']
+  ];
+  $app.innerHTML = `
+    <div class="appbar" style="padding:0 0 10px;">
+      <button class="back-btn" id="backBtn">${icon('back')}</button>
+      <h1>Instalar la app</h1>
+    </div>
+    <div class="course-picker">
+      ${pillBtnRow('instalarPlat', [{value:'android',label:'Android'},{value:'ios',label:'iPhone'}], plataforma)}
+    </div>
+    ${plataforma === 'android' && eventoInstalar ? `<button class="btn-primary" id="instalarAhoraBtn" style="margin-bottom:14px;">Instalar ahora</button>` : ''}
+    ${appInstalada() ? `<p class="info-note">${icon('info')}Ya tenés la app instalada en este celular.</p>` : ''}
+    <div class="sancion-list">
+      ${pasos.map((p, i) => `<div class="sancion-item"><p class="folio">${i+1}. ${p[0]}</p><p class="motivo">${p[1]}</p></div>`).join('')}
+    </div>
+  `;
+  document.getElementById('backBtn').addEventListener('click', () => goBack(homeRoute()));
+  attachPillBtns('instalarPlat', (v) => { window.__instalarPlat = v; render(); });
+  if(document.getElementById('instalarAhoraBtn')){
+    document.getElementById('instalarAhoraBtn').addEventListener('click', async () => {
+      try{ eventoInstalar.prompt(); await eventoInstalar.userChoice; }catch(e){}
+      eventoInstalar = null; render();
+    });
+  }
 }
 
 function notifStatusBannerHtml(){
@@ -3082,6 +3230,8 @@ function renderInner(){
   else if(currentRoute === 'ausentismoDocente') renderAusentismoDocente();
   else if(currentRoute === 'resumenValoraciones') renderResumenValoraciones();
   else if(currentRoute === 'resumenNotas') renderResumenNotas();
+  else if(currentRoute === 'historialAlumno') renderHistorialAlumno();
+  else if(currentRoute === 'instalarApp') renderInstalarApp();
   else if(currentRoute === 'importar') renderImportar();
   else if(currentRoute === 'detalleAsistenciaHoy') renderDetalleAsistenciaHoy();
   else if(currentRoute === 'detalleAlertas') renderDetalleAlertas();
@@ -3579,6 +3729,10 @@ function renderResumenAlumno(){
         <div class="txt"><p class="title">Notas</p><p class="desc">1er y 2do cuatrimestre</p></div>
         <span class="chevron">${icon('chevron')}</span>
       </div>
+      <div class="module-row" id="verHistorialBtn">
+        <div class="txt"><p class="title">Historial del año</p><p class="desc">Faltas, apercibimientos y notas, por fecha</p></div>
+        <span class="chevron">${icon('chevron')}</span>
+      </div>
     </div>
     ` : ''}
 
@@ -3648,6 +3802,9 @@ function renderResumenAlumno(){
   if(document.getElementById('verValoracionesBtn')){
     document.getElementById('verValoracionesBtn').addEventListener('click', () => navigate('resumenValoraciones'));
   }
+  if(document.getElementById('verHistorialBtn')){
+    document.getElementById('verHistorialBtn').addEventListener('click', () => navigate('historialAlumno'));
+  }
   if(document.getElementById('verNotasBtn')){
     document.getElementById('verNotasBtn').addEventListener('click', () => navigate('resumenNotas'));
   }
@@ -3697,6 +3854,65 @@ function renderResumenValoraciones(){
 // (Configuración). Docentes, preceptoría y cuentas de lectura las ven siempre.
 function notas2VisiblesParaMi(){
   return userRole !== 'student' || todayISO() > notasLimite();
+}
+
+// Línea de tiempo del alumno/a: todo lo que pasó en el año, de lo más nuevo a lo más viejo.
+function eventosHistorialAlumno(sid){
+  const ev = [];
+  const sufijo = `|${sid}`;
+  Object.entries(cache.attendance).forEach(([k, r]) => {
+    if(!k.endsWith(sufijo)) return;
+    const fecha = k.split('|')[0];
+    if(!/^\d{4}-\d{2}-\d{2}$/.test(fecha)) return;
+    const retiro = r.retiro && r.retiro.hora ? `Retiro a las ${r.retiro.hora}${r.retiro.motivo ? ' · ' + r.retiro.motivo : ''}` : '';
+    if(r.estado === 'A') ev.push({ fecha, tipo:'faltas', titulo:'Ausente', detalle: [r.exencion ? 'Exención' : '', retiro].filter(Boolean).join(' · ') });
+    else if(r.estado === 'J') ev.push({ fecha, tipo:'faltas', titulo:'Ausente justificada', detalle: retiro });
+    else if(r.estado === 'T') ev.push({ fecha, tipo:'faltas', titulo:'Llegó tarde', detalle: [r.hora ? 'Ingresó ' + r.hora : '', retiro].filter(Boolean).join(' · ') });
+    else if(r.estado === 'TJ') ev.push({ fecha, tipo:'faltas', titulo:'Tarde justificada', detalle: [r.hora ? 'Ingresó ' + r.hora : '', retiro].filter(Boolean).join(' · ') });
+    else if(retiro) ev.push({ fecha, tipo:'faltas', titulo:'Retiro anticipado', detalle: retiro });
+  });
+  Object.entries(cache.ef || {}).forEach(([k, r]) => {
+    if(!k.endsWith(sufijo)) return;
+    ev.push({ fecha: k.split('|')[0], tipo:'faltas', titulo: r.tipo === 'saf' ? 'Ed. Física: SAF' : 'Ed. Física: falta', detalle:'' });
+  });
+  (getSanciones()[sid] || []).forEach(x => ev.push({ fecha: x.fecha, tipo:'aperc', titulo:`${ordinal(x.folio)} apercibimiento`, detalle: [x.motivo, x.materia, x.profesor].filter(Boolean).join(' · ') }));
+  getCertificados().filter(c => c.studentId === sid).forEach(c => ev.push({ fecha: c.from, tipo:'faltas', titulo:'Certificado entregado', detalle:`Del ${fmtDateShort(c.from)} al ${fmtDateShort(c.to)}` }));
+  Object.values(cache.notas).filter(n => n.studentId === sid && n.updatedAt).forEach(n => ev.push({ fecha: localISODate(new Date(n.updatedAt)), tipo:'notas', titulo:`Nota ${n.nota}`, detalle:`${n.materia} · ${n.cuatrimestre}° cuatrimestre` }));
+  const aut = getAutorizaciones()[sid];
+  if(aut && aut.desde) ev.push({ fecha: aut.desde, tipo:'aperc', titulo: aut.activa ? 'Autorización de tardanza' : 'Autorización de tardanza (cerrada)', detalle: `Hasta las ${aut.horaTope || '—'}${aut.motivo ? ' · ' + aut.motivo : ''}` });
+  return ev.sort((a,b)=> b.fecha.localeCompare(a.fecha));
+}
+
+function renderHistorialAlumno(){
+  const student = getStudents().find(s => s.id === selectedStudentId);
+  const filtro = window.__histFiltro || 'todo';
+  const todos = eventosHistorialAlumno(selectedStudentId);
+  const vistos = todos.filter(e => filtro === 'todo' || e.tipo === filtro);
+  const meses = ['enero','febrero','marzo','abril','mayo','junio','julio','agosto','septiembre','octubre','noviembre','diciembre'];
+  let mesActual = '', html = '';
+  vistos.forEach(e => {
+    const [y, m] = e.fecha.split('-');
+    const etiqueta = `${meses[Number(m)-1]} ${y}`;
+    if(etiqueta !== mesActual){
+      html += `${mesActual ? '</div>' : ''}<p class="section-label" style="margin-top:16px;text-transform:capitalize;">${etiqueta}</p><div class="sancion-list">`;
+      mesActual = etiqueta;
+    }
+    html += `<div class="sancion-item"><p class="folio">${fmtDateShort(e.fecha)} · ${escapeHtml(e.titulo)}</p>${e.detalle ? `<p class="motivo">${escapeHtml(e.detalle)}</p>` : ''}</div>`;
+  });
+  if(mesActual) html += '</div>';
+  $app.innerHTML = `
+    <div class="appbar" style="padding:0 0 10px;">
+      <button class="back-btn" id="backBtn">${icon('back')}</button>
+      <h1>${escapeHtml(student.apellido)}, ${escapeHtml(student.nombre)}</h1>
+    </div>
+    <p class="date-label">Historial del año · ${todos.length} ${todos.length === 1 ? 'registro' : 'registros'}</p>
+    <div class="course-picker">
+      ${pillBtnRow('histFiltro', [{value:'todo',label:'Todo'},{value:'faltas',label:'Faltas'},{value:'aperc',label:'Apercibimientos'},{value:'notas',label:'Notas'}], filtro)}
+    </div>
+    ${html || `<p class="empty-inline">No hay registros para mostrar.</p>`}
+  `;
+  document.getElementById('backBtn').addEventListener('click', () => goBack('resumenAlumno'));
+  attachPillBtns('histFiltro', (v) => { window.__histFiltro = v; render(); });
 }
 
 function renderResumenNotas(){
@@ -4347,6 +4563,7 @@ function renderStudentHome(){
     </div>
 
     ${avisosBannerHtml(avisos)}
+    ${instalarBannerHtml()}
     ${notifStatusBannerHtml()}
 
     <div class="module-list big">
@@ -4358,6 +4575,8 @@ function renderStudentHome(){
     </div>
 
     <p style="text-align:center;margin-top:18px;">
+      <a href="#" id="instalarLink" style="font-size:calc(12px * var(--fs, 1));color:var(--ink-soft);text-decoration:underline;">Instalar la app</a>
+      &nbsp;·&nbsp;
       <a href="#" id="cambiarPassLink" style="font-size:calc(12px * var(--fs, 1));color:var(--ink-soft);text-decoration:underline;">Cambiar contraseña</a>
       &nbsp;·&nbsp;
       <a href="#" id="salirProfLink" style="font-size:calc(12px * var(--fs, 1));color:var(--ink-soft);text-decoration:underline;">Salir</a>
@@ -4367,12 +4586,20 @@ function renderStudentHome(){
   if(document.getElementById('activarNotifBtn')){
     document.getElementById('activarNotifBtn').addEventListener('click', () => activarNotificaciones(true));
   }
+  if(document.getElementById('instalarGuiaBtn')){
+    document.getElementById('instalarGuiaBtn').addEventListener('click', () => navigate('instalarApp'));
+    document.getElementById('instalarOcultarBtn').addEventListener('click', () => {
+      try{ localStorage.setItem('isp_instalar_oculto','1'); }catch(e){}
+      render();
+    });
+  }
   document.querySelectorAll('.module-row').forEach(r => r.addEventListener('click', () => {
     selectedStudentId = currentStudentAuth.studentId;
     if(r.dataset.route === 'studentFaltas') navigate('resumenAlumno');
     else if(r.dataset.route === 'studentNotas') navigate('resumenNotas');
     else navigate(r.dataset.route);
   }));
+  document.getElementById('instalarLink').addEventListener('click', (e) => { e.preventDefault(); navigate('instalarApp'); });
   document.getElementById('cambiarPassLink').addEventListener('click', (e) => { e.preventDefault(); cambiarPasswordProfesor(); });
   document.getElementById('salirProfLink').addEventListener('click', (e) => { e.preventDefault(); signOut(auth); });
 }
@@ -6593,7 +6820,8 @@ function renderAlumnos(){
         </div>
         <div style="display:flex;flex-direction:column;gap:6px;flex-shrink:0;">
           ${esBaja
-            ? `<button class="btn-chip" data-reactivar="${s.id}">Reactivar</button>`
+            ? `<button class="btn-chip" data-reactivar="${s.id}">Reactivar</button>
+               <button class="btn-chip danger" data-archivar="${s.id}">Archivar y borrar</button>`
             : `<button class="btn-chip" data-editar="${s.id}">Editar</button>
                <button class="btn-chip danger" data-baja="${s.id}">Dar de baja</button>`}
         </div>
@@ -6639,6 +6867,9 @@ function renderAlumnos(){
   });
   document.querySelectorAll('[data-baja]').forEach(b => {
     b.addEventListener('click', () => darDeBajaAlumno(b.dataset.baja));
+  });
+  document.querySelectorAll('[data-archivar]').forEach(b => {
+    b.addEventListener('click', () => archivarYBorrarAlumno(b.dataset.archivar));
   });
   document.querySelectorAll('[data-reactivar]').forEach(b => {
     b.addEventListener('click', () => reactivarAlumno(b.dataset.reactivar));
@@ -6933,6 +7164,14 @@ function renderConfig(){
     </div>
     ` : ''}
 
+    ${esNapo ? `
+    <p class="section-label" style="margin-top:20px;">Seguridad de los datos de alumnos</p>
+    <div class="config-card">
+      <p style="font-size:calc(12.5px * var(--fs, 1));color:var(--ink-soft);margin:0 0 10px;">Completa los registros viejos de asistencia para que cada alumno/a vea solo lo suyo. Es seguro (solo agrega datos que faltan) y se puede repetir.</p>
+      <button class="btn-secondary" id="prepararDatosBtn" style="width:100%;">Preparar datos de alumnos</button>
+    </div>
+    ` : ''}
+
     <p class="section-label" style="margin-top:20px;">Acerca de</p>
     <div class="config-card">
       <p class="v">Instituto Superior Porteño</p>
@@ -6940,6 +7179,21 @@ function renderConfig(){
       <p style="font-size:calc(11.5px * var(--fs, 1));color:var(--ink-soft);margin-top:2px;">Versión ${APP_VERSION}</p>
     </div>
   `;
+  if(document.getElementById('prepararDatosBtn')){
+    document.getElementById('prepararDatosBtn').addEventListener('click', async (e) => {
+      if(modoPruebaBloquea()) return;
+      const b = e.currentTarget;
+      b.disabled = true; b.textContent = 'Preparando… (puede tardar un par de minutos)';
+      try{
+        const r = (await httpsCallable(fbFunctions, 'prepararDatosAlumnos', { timeout: 540000 })()).data || {};
+        const a = r.attendance || {}, f = r.ef || {};
+        await customAlert(`Listo.\n\nAsistencia: ${a.revisados||0} registros revisados, ${a.completados||0} completados, ${a.sinPoderCompletar||0} sin poder completar.\nEd. Física: ${f.revisados||0} revisados, ${f.completados||0} completados, ${f.sinPoderCompletar||0} sin poder completar.`);
+      }catch(err){
+        await customAlert('No se pudo completar: ' + ((err && err.message) || 'error desconocido') + '\n\n¿Ya subiste las funciones nuevas?');
+      }
+      b.disabled = false; b.textContent = 'Preparar datos de alumnos';
+    });
+  }
   document.getElementById('cambiarUsuarioBtn').addEventListener('click', () => {
     localStorage.removeItem('isp_usuario');
     currentRoute = 'quien';
@@ -7283,7 +7537,6 @@ onAuthStateChanged(auth, async (user) => {
     iniciarNotasSegunRol();
     render();
   } else if(user && !user.isAnonymous){
-    startListeners();
     try{
       const tdoc = await getDoc(doc(db,'teachers',user.uid));
       if(tdoc.exists() && tdoc.data().activo !== false){
@@ -7319,6 +7572,8 @@ onAuthStateChanged(auth, async (user) => {
       currentRoute = 'profesorSinAcceso';
     }
     authResolved = true;
+    // Los listeners se arman recién ahora que se sabe qué rol tiene la cuenta.
+    if(userRole) startListeners();
     iniciarNotasSegunRol();
     render();
   } else {
