@@ -1,6 +1,6 @@
 // ===== Preceptoría ISP — lógica de la app (Etapa 1) =====
 
-const APP_VERSION = 127;
+const APP_VERSION = 128;
 const SEED_STUDENTS = []; // la lista de alumnos vive en Firestore (colección students), no en el código
 
 const CURSOS = ['1','2','3','4','5'];
@@ -1265,6 +1265,36 @@ async function marcarTodosPresentes(){
   showToast(`${n} alumno${n>1?'s':''} marcado${n>1?'s':''} presente${n>1?'s':''}`);
 }
 
+// Suspensión: el alumno/a no asiste porque está suspendido. Se carga como ausente (suma 1
+// falta, igual que una común) pero marcada como "suspensión": en la planilla de Drive sale
+// "Suspensión" en lugar de "Clase", y en la app se ve como suspensión.
+async function suspenderAlumno(studentId, fechaBase){
+  if(modoPruebaBloquea()) return;
+  const al = getStudents().find(x => x.id === studentId);
+  if(!al) return;
+  const base = fechaBase || selectedFecha || todayISO();
+  const desde = await customPrompt(`Suspensión de ${al.apellido}, ${al.nombre}.\n\nPrimer día de suspensión:`, base, 'date');
+  if(!desde) return;
+  const hasta = await customPrompt('Último día de suspensión (si es un solo día, dejá la misma fecha):', desde, 'date');
+  if(!hasta) return;
+  if(!/^\d{4}-\d{2}-\d{2}$/.test(desde) || !/^\d{4}-\d{2}-\d{2}$/.test(hasta) || hasta < desde){
+    await customAlert('Las fechas no son válidas: el último día no puede ser anterior al primero.');
+    return;
+  }
+  // Solo los días en que hay clase para ese curso (sin fines de semana, feriados ni días sin clase).
+  const dias = eachDateInRange(desde, hasta).filter(iso => diaKeyFor(iso) && !getDiaSinClase(iso, al.curso));
+  if(!dias.length){ await customAlert('En ese período no hay días de clase para marcar.'); return; }
+  if(dias.length > 30){ await customAlert('El período es muy largo (más de 30 días de clase). Cargalo en tramos más cortos.'); return; }
+  const yaSync = dias.filter(iso => { const r = cache.attendance[`${iso}|${studentId}`]; return r && r.driveSynced; });
+  const conOtraMarca = dias.filter(iso => { const r = cache.attendance[`${iso}|${studentId}`]; return r && !r.suspension; });
+  let aviso = `Se van a marcar ${dias.length} ${dias.length === 1 ? 'día' : 'días'} de suspensión (${dias.length === 1 ? fmtDateShort(dias[0]) : fmtDateShort(dias[0]) + ' al ' + fmtDateShort(dias[dias.length-1])}). Cuentan como falta, igual que una inasistencia común.`;
+  if(conOtraMarca.length) aviso += `\n\n${conOtraMarca.length} ${conOtraMarca.length === 1 ? 'día ya tenía' : 'días ya tenían'} otra marca de asistencia: se reemplaza${conOtraMarca.length === 1 ? '' : 'n'}.`;
+  if(yaSync.length) aviso += `\n\nOjo: ${yaSync.length} ${yaSync.length === 1 ? 'día ya se pasó' : 'días ya se pasaron'} a la planilla de Drive como "Clase". Se va a agregar la fila "Suspensión"; borrá a mano la fila vieja de la planilla para que no quede repetido.`;
+  if(!(await customConfirm(aviso, { textoSi: 'Marcar suspensión' }))) return;
+  dias.forEach(iso => writeAttendance(`${iso}|${studentId}`, { estado: 'A', hora: null, suspension: true }));
+  showToast(`Suspensión marcada (${dias.length} ${dias.length === 1 ? 'día' : 'días'})`);
+}
+
 async function marcarExencion(studentId, fecha){
   fecha = fecha || selectedFecha;
   const key = `${fecha}|${studentId}`;
@@ -1760,7 +1790,9 @@ function customPrompt(msg, valorInicial, inputType){
     // inputmode="numeric" sale el teclado de números, y el ":" se inserta solo.
     document.getElementById('modalExtra').innerHTML = esHora
       ? `<input type="text" inputmode="numeric" maxlength="5" placeholder="07:45" id="modalInput" value="${escapeHtml(valorInicial||'')}" style="margin-bottom:14px;text-align:center;letter-spacing:1px;">`
-      : `<input type="text" id="modalInput" value="${escapeHtml(valorInicial||'')}" style="margin-bottom:14px;">`;
+      : inputType === 'date'
+        ? `<input type="date" id="modalInput" value="${escapeHtml(valorInicial||'')}" style="margin-bottom:14px;">`
+        : `<input type="text" id="modalInput" value="${escapeHtml(valorInicial||'')}" style="margin-bottom:14px;">`;
     document.getElementById('modalBtns').innerHTML = `
       <button class="btn-secondary" id="modalCancelBtn">Cancelar</button>
       <button class="btn-primary" id="modalOkBtn">Aceptar</button>
@@ -2260,7 +2292,9 @@ function renderAsistencia(){
     } else if(estado === 'TJ'){
       metaHtml = `<p class="meta j" data-edit="${s.id}">${icon('clock')} ${rec.hora} · tarde justificada</p>`;
     } else if(estado === 'A'){
-      if(rec.exencion){
+      if(rec.suspension){
+        metaHtml = `<p class="meta">Suspendido/a · cuenta como falta</p>`;
+      } else if(rec.exencion){
         metaHtml = `<p class="meta j" data-exent="${s.id}">Exenta (${rec.exencion}) · no cuenta</p>`;
       } else if(rec.llegoTarde){
         metaHtml = `<p class="meta" data-exent="${s.id}">Ausente · llegó ${rec.hora} (pasó las ${cfg.corteFaltaCompleta})</p>`;
@@ -2746,7 +2780,7 @@ async function guardarJustificativo(){
       // justificada.
       writeAttendance(key, { estado: 'J', hora: null });
       count++;
-    } else if(rec.estado === 'A'){
+    } else if(rec.estado === 'A' && !rec.suspension){
       writeAttendance(key, Object.assign({}, rec, { estado: 'J' }));
       count++;
     }
@@ -2948,6 +2982,7 @@ function abrirMenuAlumno(studentId){
         <div class="mr-chips">${chips}</div>
         <div class="mr-lista">
           ${puedeRetiro ? accion('retiro', 'salida', tieneRetiro(rec) ? 'Editar retiro anticipado' : 'Retiro anticipado', tieneRetiro(rec) ? `Se retiró ${escapeHtml(rec.retiro.hora)}` : 'Cargar hora y motivo') : ''}
+          ${accion('suspension', 'alert', 'Marcar suspensión', rec && rec.suspension ? 'Hoy figura suspendido/a' : 'Uno o varios días, pasa a Drive como Suspensión')}
           ${accion('apercibimiento', 'alert', 'Cargar apercibimiento', 'Va a sus sanciones')}
           ${accion('justificativo', 'file', 'Cargar certificado', 'Justificar faltas con un certificado')}
           ${accion('autorizacion', 'clock', authActiva ? 'Editar autorización de tardanza' : 'Agregar autorización de tardanza', authActiva ? `Hasta ${escapeHtml(auth.horaTope)}${auth.motivo ? ' · ' + escapeHtml(auth.motivo) : ''}` : 'Para alumnos que llegan tarde con permiso')}
@@ -2965,6 +3000,7 @@ function abrirMenuAlumno(studentId){
     const a = b.dataset.mr;
     cerrarMenuAlumno();
     if(a === 'retiro') editarRetiro(studentId, fecha);
+    else if(a === 'suspension') suspenderAlumno(studentId, fecha);
     else if(a === 'apercibimiento'){ selectedStudentId = studentId; navigate('sancionDetalle'); }
     else if(a === 'justificativo'){ selectedStudentId = studentId; pendingFileDataUrl = null; pendingFileName = ''; justFechas = null; navigate('justificativoAlumno'); }
     else if(a === 'autorizacion'){ authActiva ? editarAutorizacion(studentId) : agregarAutorizacion(studentId); }
@@ -3156,6 +3192,7 @@ function render(){
   // profesor/lectura/alumno). No dibujamos nada todavía: dejamos la pantalla
   // de carga puesta para no mostrar una pantalla equivocada por un instante.
   if(!authResolved) return;
+  document.body.classList.remove('hoja-notas-abierta'); // la pantalla de notas la vuelve a poner si hace falta
   const hb = document.getElementById('histBanner');
   if(hb) hb.classList.toggle('show', !histAsistenciaListo);
   const borrador = (!pendingTransicion && primerRenderHecho) ? capturarBorrador() : null;
@@ -3654,13 +3691,14 @@ function renderResumenAlumno(){
     : (selectedBimestreN ? BIMESTRES.find(b => b.n === selectedBimestreN) : bimestreActual());
   const att = getAttendance();
 
-  let presentes=0, tardes=0, ausentes=0, justificadas=0, exentas=0;
+  let presentes=0, tardes=0, ausentes=0, justificadas=0, exentas=0, suspendidas=0;
   Object.entries(att).forEach(([key, rec]) => {
     const [fecha, sid] = key.split('|');
     if(sid !== selectedStudentId || fecha < bim.from || fecha > bim.to) return;
     if(rec.exencion) exentas++;
     else if(rec.estado==='P') presentes++;
     else if(rec.estado==='T') tardes++;
+    else if(rec.estado==='A' && rec.suspension) suspendidas++;
     else if(rec.estado==='A') ausentes++;
     else if(rec.estado==='J') justificadas++;
   });
@@ -3742,6 +3780,7 @@ function renderResumenAlumno(){
       <div><p class="k">Tardes</p><p class="v">${tardes}</p></div>
       <div><p class="k">Ausentes</p><p class="v">${ausentes}</p></div>
       <div><p class="k">Justificadas</p><p class="v">${justificadas}</p></div>
+      ${suspendidas ? `<div><p class="k">Suspensión</p><p class="v">${suspendidas}</p></div>` : ''}
       <div><p class="k">Exentas</p><p class="v">${exentas}</p></div>
       <div><p class="k">Ed. Física (falta)</p><p class="v">${efFaltas}</p></div>
       <div><p class="k">SAF usados</p><p class="v">${efSaf}</p></div>
@@ -3865,7 +3904,8 @@ function eventosHistorialAlumno(sid){
     const fecha = k.split('|')[0];
     if(!/^\d{4}-\d{2}-\d{2}$/.test(fecha)) return;
     const retiro = r.retiro && r.retiro.hora ? `Retiro a las ${r.retiro.hora}${r.retiro.motivo ? ' · ' + r.retiro.motivo : ''}` : '';
-    if(r.estado === 'A') ev.push({ fecha, tipo:'faltas', titulo:'Ausente', detalle: [r.exencion ? 'Exención' : '', retiro].filter(Boolean).join(' · ') });
+    if(r.suspension && (r.estado === 'A' || r.estado === 'J')) ev.push({ fecha, tipo:'faltas', titulo:'Suspensión', detalle: 'Cuenta como falta' });
+    else if(r.estado === 'A') ev.push({ fecha, tipo:'faltas', titulo:'Ausente', detalle: [r.exencion ? 'Exención' : '', retiro].filter(Boolean).join(' · ') });
     else if(r.estado === 'J') ev.push({ fecha, tipo:'faltas', titulo:'Ausente justificada', detalle: retiro });
     else if(r.estado === 'T') ev.push({ fecha, tipo:'faltas', titulo:'Llegó tarde', detalle: [r.hora ? 'Ingresó ' + r.hora : '', retiro].filter(Boolean).join(' · ') });
     else if(r.estado === 'TJ') ev.push({ fecha, tipo:'faltas', titulo:'Tarde justificada', detalle: [r.hora ? 'Ingresó ' + r.hora : '', retiro].filter(Boolean).join(' · ') });
@@ -5232,16 +5272,33 @@ function renderNotasLista(){
     ? `<select id="materiaSelect">${opcionesMateria.map(m => `<option value="${m}" ${m===materia?'selected':''}>${m}</option>`).join('')}</select>`
     : '';
 
+  const claveNota = (sid) => docId(`${sid}_${window.__notaCuatri}_${slugify(materia)}`);
+  const notaDe = (sid) => cache.notas[claveNota(sid)] ? cache.notas[claveNota(sid)].nota : null;
+  const fmtNota = (n) => n === null ? '—' : String(n).replace('.', ',');
+  // Alumno seleccionado para cargar (si cambió de curso/materia/cuatrimestre, se cierra).
+  const idxAct = students.findIndex(s => s.id === window.__notaAct);
+  if(idxAct < 0 || bloqueo) window.__notaAct = null;
+  const act = window.__notaAct ? students[idxAct] : null;
+  const cargadas = students.filter(s => notaDe(s.id) !== null).length;
+
   const rows = students.map(s => {
-    const key = docId(`${s.id}_${window.__notaCuatri}_${slugify(materia)}`);
-    const nota = cache.notas[key] ? cache.notas[key].nota : '';
-    return `<div class="student-card">
-      <div class="row" style="align-items:center;">
-        <span class="name" style="flex:1;">${escapeHtml(s.apellido)}, ${escapeHtml(s.nombre)}</span>
-        <input type="number" min="1" max="10" step="0.5" style="width:64px;text-align:center;" id="nota_${s.id}_${window.__notaCuatri}_${slugify(materia)}" data-nota="${s.id}" value="${nota}" ${bloqueo ? 'disabled' : ''}>
-      </div>
+    const n = notaDe(s.id);
+    return `<div class="nota-fila ${act && act.id === s.id ? 'actual' : ''}" id="fila_${s.id}">
+      <span class="n">${escapeHtml(s.apellido)}, ${escapeHtml(s.nombre)}</span>
+      <button type="button" class="nota-btn ${n === null ? 'vacia' : ''} ${n !== null && n < 6 ? 'baja' : ''} ${act && act.id === s.id ? 'activo' : ''}" data-nota="${s.id}" ${bloqueo ? 'disabled' : ''}>${fmtNota(n)}</button>
     </div>`;
   }).join('');
+
+  const hoja = act ? `<div class="hoja-notas" id="hojaNotas">
+      <h3>${escapeHtml(act.apellido)}, ${escapeHtml(act.nombre)}</h3>
+      <p class="sub">Tocá la nota: se guarda y pasa al siguiente.</p>
+      <div class="grilla-notas">${[1,2,3,4,5,6,7,8,9,10].map(n => `<button type="button" class="${n < 6 ? 'baja' : ''}" data-valor="${n}">${n}</button>`).join('')}</div>
+      <div class="acciones-notas">
+        <button type="button" class="btn-secondary ${window.__notaMedio ? 'medio-on' : ''}" id="notaMedioBtn">+ ½${window.__notaMedio ? ' (activado)' : ''}</button>
+        <button type="button" class="btn-secondary" id="notaBorrarBtn" style="color:var(--stamp);" ${notaDe(act.id) === null ? 'disabled' : ''}>Borrar nota</button>
+        <button type="button" class="btn-secondary" id="notaListoBtn">Listo</button>
+      </div>
+    </div>` : '';
 
   $app.innerHTML = `
     <div class="appbar" style="padding:0 0 10px;">
@@ -5253,33 +5310,65 @@ function renderNotasLista(){
       ${cursoBtns(cursos)}
       ${pillBtnRow('cuatri', [{value:1,label:'1° cuatri.'},{value:2,label:'2° cuatri.'}], window.__notaCuatri)}
     </div>
-    ${rows}
-    <p class="info-note">${icon('info')}${bloqueo ? bloqueo : `Se guarda solo al salir del campo (tocá afuera después de escribir la nota). Se pueden modificar hasta el ${fmtDateShort(notasLimite())}.`}</p>
+    <p class="date-label" style="margin:10px 0 0;">${cargadas} de ${students.length} cargadas</p>
+    <div class="prog-notas"><i style="width:${students.length ? cargadas / students.length * 100 : 0}%"></i></div>
+    <div class="module-list">${rows}</div>
+    <p class="info-note">${icon('info')}${bloqueo ? bloqueo : `Tocá la nota de cada alumno/a para cargarla o corregirla. Se pueden modificar hasta el ${fmtDateShort(notasLimite())}.`}</p>
     ${userRole==='admin' ? `<button class="btn-secondary" id="exportarNotasBtn" style="width:100%;margin-top:14px;">${icon('file')} Exportar notas de ${selectedCurso}° A a Excel</button>` : ''}
+    ${act ? '<div style="height:290px;"></div>' : ''}
+    ${hoja}
   `;
-  document.getElementById('backBtn').addEventListener('click', () => goBack(userRole==='admin' ? 'notasMenu' : homeRoute()));
-  attachCursoBtns((c) => { selectedCurso = c; render(); });
-  attachPillBtns('cuatri', (v) => { window.__notaCuatri = Number(v); render(); });
+  document.body.classList.toggle('hoja-notas-abierta', !!act);
+  document.getElementById('backBtn').addEventListener('click', () => { window.__notaAct = null; goBack(userRole==='admin' ? 'notasMenu' : homeRoute()); });
+  attachCursoBtns((c) => { window.__notaAct = null; selectedCurso = c; render(); });
+  attachPillBtns('cuatri', (v) => { window.__notaAct = null; window.__notaCuatri = Number(v); render(); });
   if(document.getElementById('exportarNotasBtn')){
     document.getElementById('exportarNotasBtn').addEventListener('click', () => exportarNotasCurso(selectedCurso));
   }
   if(document.getElementById('materiaSelect')){
-    document.getElementById('materiaSelect').addEventListener('change', (e) => { window.__materiaSel = e.target.value; render(); });
+    document.getElementById('materiaSelect').addEventListener('change', (e) => { window.__notaAct = null; window.__materiaSel = e.target.value; render(); });
   }
-  document.querySelectorAll('[data-nota]').forEach(inp => {
-    inp.addEventListener('change', async (e) => {
-      const sid = e.target.dataset.nota;
+
+  const guardar = (sid, val) => {
+    const student = getStudents().find(x => x.id === sid);
+    const ref = doc(db, 'notas', claveNota(sid));
+    if(val === null) return deleteDoc(ref).then(() => showToast('Nota borrada')).catch(err => showSaveError(err));
+    return setDoc(ref, { studentId: sid, curso: student.curso, materia, cuatrimestre: window.__notaCuatri, nota: val, autor: userRole==='teacher' ? currentTeacher.nombre : getUsuario(), updatedAt: Date.now() })
+      .catch(err => showSaveError(err));
+  };
+  const mostrarActual = () => {
+    const f = document.getElementById('fila_' + window.__notaAct);
+    if(f) f.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  };
+  document.querySelectorAll('[data-nota]').forEach(b => {
+    b.addEventListener('click', () => {
       const bloq = bloqueoNotas(window.__notaCuatri);
-      if(bloq){ await customAlert(bloq); render(); return; }
-      const val = parseFloat(e.target.value);
-      if(isNaN(val) || val < 1 || val > 10){ await customAlert('La nota debe estar entre 1 y 10.'); return; }
-      const student = getStudents().find(s => s.id === sid);
-      const key = docId(`${sid}_${window.__notaCuatri}_${slugify(materia)}`);
-      setDoc(doc(db,'notas',key), { studentId: sid, curso: student.curso, materia, cuatrimestre: window.__notaCuatri, nota: val, autor: userRole==='teacher' ? currentTeacher.nombre : getUsuario(), updatedAt: Date.now() })
-        .then(() => showToast('Nota guardada'))
-        .catch(err=>showSaveError(err));
+      if(bloq){ customAlert(bloq); return; }
+      window.__notaAct = b.dataset.nota; window.__notaMedio = false;
+      render(); mostrarActual();
     });
   });
+  document.querySelectorAll('[data-valor]').forEach(b => {
+    b.addEventListener('click', () => {
+      if(bloqueoNotas(window.__notaCuatri)) return;
+      let v = Number(b.dataset.valor);
+      if(window.__notaMedio && v < 10) v += 0.5;
+      window.__notaMedio = false;
+      guardar(window.__notaAct, v);
+      // Pasa al siguiente alumno/a; si era el último, cierra.
+      const sig = students[idxAct + 1];
+      window.__notaAct = sig ? sig.id : null;
+      render(); if(sig) mostrarActual();
+    });
+  });
+  if(document.getElementById('notaMedioBtn')){
+    document.getElementById('notaMedioBtn').addEventListener('click', () => { window.__notaMedio = !window.__notaMedio; render(); });
+    document.getElementById('notaBorrarBtn').addEventListener('click', async () => {
+      if(!(await customConfirm(`¿Borrar la nota de ${act.apellido}, ${act.nombre}?`, { peligro: true, textoSi: 'Borrar' }))) return;
+      guardar(act.id, null);
+    });
+    document.getElementById('notaListoBtn').addEventListener('click', () => { window.__notaAct = null; render(); });
+  }
 }
 
 // ---------- Reglas de edición de notas ----------
