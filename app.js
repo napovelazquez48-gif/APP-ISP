@@ -1,6 +1,6 @@
 // ===== Preceptoría ISP — lógica de la app (Etapa 1) =====
 
-const APP_VERSION = 133;
+const APP_VERSION = 134;
 const SEED_STUDENTS = []; // la lista de alumnos vive en Firestore (colección students), no en el código
 
 const CURSOS = ['1','2','3','4','5'];
@@ -2147,6 +2147,8 @@ function renderHome(){
       ${moduleTile('calendar','Horarios y suplencias','horarios')}
       ${moduleTile('calendar','Calendario del ciclo','calendarioCiclo')}
       ${moduleTile('clipboard','Agenda','agenda')}
+      ${moduleTile('file','Quizes','quizzes')}
+      ${moduleTile('clipboard','Trabajos prácticos','tps')}
       ${moduleTile('users','Familias','familias')}
       ${moduleTile('chart','Resumen del alumno','resumen')}
       ${moduleTile('chart','Vista por curso','vistaCurso')}
@@ -8065,7 +8067,7 @@ function escucharQuizYTps(esAlumno, miId, cursoAl){
 // DOCENTE: lista de quizes
 // ======================================================================
 function misQuizzes(){
-  return Object.values(cache.quizzes || {}).filter(q => q.docenteUid === uidDocente())
+  return Object.values(cache.quizzes || {}).filter(q => userRole !== 'teacher' || q.docenteUid === uidDocente())
     .sort((a, b) => (b.abreAt || 0) - (a.abreAt || 0));
 }
 function estadoDeQuiz(q){
@@ -8083,7 +8085,7 @@ function renderQuizzesDocente(){
     return `<div class="module-row" data-quiz="${q.id}">
       <div class="txt">
         <p class="title">${escapeHtml(q.titulo)}</p>
-        <p class="desc">${q.curso}° A · ${escapeHtml(q.materia || '')} · ${fmtFechaHora(q.abreAt)} · ${q.minutos} min</p>
+        <p class="desc">${q.curso}° A · ${escapeHtml(q.materia || '')} · ${fmtFechaHora(q.abreAt)} · ${q.minutos} min${userRole !== 'teacher' && q.docenteNombre ? ' · ' + escapeHtml(q.docenteNombre) : ''}</p>
       </div>
       <span class="badge-soon quiz-estado ${e.cls}">${e.txt}</span>
     </div>`;
@@ -8133,7 +8135,7 @@ async function abrirEditorQuiz(id){
     const ps = await getDoc(doc(db,'quizzesPreguntas', id));
     const pregs = ps.exists() ? (ps.data().preguntas || []) : [];
     window.__quizEd = {
-      id, titulo: q.titulo, curso: q.curso, materia: q.materia || '',
+      id, titulo: q.titulo, curso: q.curso, materia: q.materia || '', docenteUid: q.docenteUid, docenteNombre: q.docenteNombre,
       abre: msALocalInput(q.abreAt), minutos: q.minutos, cierra: msALocalInput(q.cierraAt),
       preguntas: pregs.map(p => ({ tipo: p.tipo, texto: p.texto, opciones: p.tipo === 'mc' ? (p.opciones || []).slice() : undefined,
         correcta: p.correcta, puntos: p.puntos || 1, banco: false })),
@@ -8310,12 +8312,12 @@ async function guardarQuiz(publicar){
     titulo: ed.titulo.trim(), curso: ed.curso, materia: ed.materia, abreAt, cierraAt, minutos,
     nPreguntas: prep.preguntas.length, puntosTotal: total,
     estado: publicar ? 'publicado' : 'borrador',
-    docenteUid: uidDocente(), docenteNombre: nombreDocente(),
+    docenteUid: ed.docenteUid || uidDocente(), docenteNombre: ed.docenteNombre || nombreDocente(),
     notificadoAbierto: false, createdAt: ed.createdAt || Date.now(), updatedAt: Date.now()
   };
   try{
     // Primero las preguntas y después el quiz, así un alumno nunca ve un quiz sin preguntas.
-    await setDoc(doc(db, 'quizzesPreguntas', id), { docenteUid: uidDocente(), curso: ed.curso, preguntas: prep.preguntas });
+    await setDoc(doc(db, 'quizzesPreguntas', id), { docenteUid: ed.docenteUid || uidDocente(), curso: ed.curso, preguntas: prep.preguntas });
     await setDoc(doc(db, 'quizzes', id), meta);
     // Preguntas que se marcaron para guardar en el banco.
     const alBanco = ed.preguntas.map((p, i) => ({ p, q: prep.preguntas[i] })).filter(x => x.p.banco);
