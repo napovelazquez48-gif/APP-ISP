@@ -1,6 +1,6 @@
 // ===== Preceptoría ISP — lógica de la app (Etapa 1) =====
 
-const APP_VERSION = 136;
+const APP_VERSION = 138;
 const SEED_STUDENTS = []; // la lista de alumnos vive en Firestore (colección students), no en el código
 
 const CURSOS = ['1','2','3','4','5'];
@@ -6221,6 +6221,54 @@ function exportarRegistroPDF(curso, mesISO){
   doc.save(mesISO ? `Registro_${curso}A_${mesISO}.pdf` : `Registro_${curso}A_${todayISO().slice(0, 4)}_completo.pdf`);
 }
 
+// Listado de todos los alumnos: Año, apellido y nombre y 4 columnas en blanco para completar a mano.
+function exportarListadoAlumnosPDF(curso){
+  const alumnos = getStudents().filter(a => !curso || a.curso === curso).sort((a, b) => Number(a.curso) - Number(b.curso) || a.apellido.localeCompare(b.apellido) || a.nombre.localeCompare(b.nombre));
+  if(!alumnos.length){ customAlert('No hay alumnos cargados.'); return; }
+  const { jsPDF } = window.jspdf;
+  const doc = new jsPDF({ unit: 'mm', format: 'a4' });
+  const tituloListado = curso ? `Listado de alumnos — ${curso}° año` : 'Listado de alumnos';
+  const mL = 12, ancho = 186, hFila = 7.2, yIni = 34, yMax = 284;
+  const cN = 9, cAnio = 14, cNombre = 70, cLibre = (ancho - cN - cAnio - cNombre) / 4;
+  const x0 = mL, x1 = x0 + cN, x2 = x1 + cAnio, x3 = x2 + cNombre;
+  const encabezado = () => {
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(13); doc.setTextColor(31, 42, 58);
+    doc.text(`Instituto Superior Porteño — ${tituloListado}`, mL, 14);
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(9); doc.setTextColor(90, 100, 110);
+    doc.text(`${alumnos.length} alumnos · ${fmtDateLong(todayISO())}`, mL, 20);
+    doc.setFillColor(237, 231, 216); doc.setDrawColor(150, 150, 150); doc.setLineWidth(0.2);
+    doc.rect(x0, 25, ancho, 8, 'FD');
+    doc.setFont('helvetica', 'bold'); doc.setFontSize(9); doc.setTextColor(31, 42, 58);
+    doc.text('N°', x0 + cN / 2, 30.2, { align: 'center' });
+    doc.text('Año', x1 + cAnio / 2, 30.2, { align: 'center' });
+    doc.text('Apellido y nombre', x2 + 2, 30.2);
+    for(let k = 0; k < 4; k++) doc.line(x3 + k * cLibre, 25, x3 + k * cLibre, 33);
+    [x1, x2, x3].forEach(x => doc.line(x, 25, x, 33));
+  };
+  encabezado();
+  let y = yIni, n = 0, cursoPrevio = null;
+  alumnos.forEach(a => {
+    if(a.curso !== cursoPrevio){ n = 0; }
+    const cambioCurso = cursoPrevio !== null && a.curso !== cursoPrevio;
+    if(y + hFila > yMax || (cambioCurso && y + hFila * 4 > yMax)){ doc.addPage('a4'); encabezado(); y = yIni; }
+    n++;
+    doc.setDrawColor(190, 190, 190); doc.setLineWidth(0.15);
+    doc.rect(x0, y, ancho, hFila);
+    [x1, x2, x3].forEach(x => doc.line(x, y, x, y + hFila));
+    for(let k = 1; k < 4; k++) doc.line(x3 + k * cLibre, y, x3 + k * cLibre, y + hFila);
+    if(cambioCurso){ doc.setDrawColor(31, 42, 58); doc.setLineWidth(0.6); doc.line(x0, y, x0 + ancho, y); }
+    doc.setFont('helvetica', 'normal'); doc.setFontSize(9.5); doc.setTextColor(0, 0, 0);
+    doc.text(String(n), x0 + cN / 2, y + 4.9, { align: 'center' });
+    doc.text(`${a.curso}° ${a.division || 'A'}`, x1 + cAnio / 2, y + 4.9, { align: 'center' });
+    let nombre = `${a.apellido}, ${a.nombre}`;
+    while(doc.getTextWidth(nombre) > cNombre - 4 && nombre.length > 4) nombre = nombre.slice(0, -2);
+    doc.text(nombre, x2 + 2, y + 4.9);
+    cursoPrevio = a.curso;
+    y += hFila;
+  });
+  doc.save(curso ? `Listado_alumnos_${curso}A_${todayISO()}.pdf` : `Listado_alumnos_${todayISO()}.pdf`);
+}
+
 function computeTendenciaCurso(curso){
   const students = getStudents().filter(s => s.curso === curso);
   return BIMESTRES.map(bim => {
@@ -7316,6 +7364,10 @@ function renderAlumnos(){
     <input type="text" id="filtroAlumnos" placeholder="Buscar por nombre..." style="margin-bottom:12px;" value="${window.__alumnosFiltro||''}">
     `}
 
+    <p class="section-label" style="margin-top:0;">Listado en PDF</p>
+    <button class="btn-secondary" id="listadoAlumnosPdfBtn" style="width:100%;margin-bottom:8px;"><span class="btn-icon-fix">${icon('file')}</span> Todo el colegio</button>
+    <div class="curso-btn-row" style="margin-bottom:14px;">${CURSOS.map(c => `<button type="button" class="curso-pick-btn c${c}" data-listado-curso="${c}">${c}°</button>`).join('')}</div>
+
     <p class="section-label">Alumnos activos (${activos.length})</p>
     ${activos.length ? `<div class="sancion-list" style="margin-bottom:18px;">${activos.map(s=>filaAlumno(s,false)).join('')}</div>` : `<p style="font-size:calc(13px * var(--fs, 1));color:var(--ink-soft);margin-bottom:18px;">Nadie coincide con esa búsqueda.</p>`}
 
@@ -7325,6 +7377,8 @@ function renderAlumnos(){
     ` : ''}
   `;
   document.getElementById('backBtn').addEventListener('click', () => goBack('config'));
+  document.getElementById('listadoAlumnosPdfBtn').addEventListener('click', () => exportarListadoAlumnosPDF());
+  document.querySelectorAll('[data-listado-curso]').forEach(b => b.addEventListener('click', () => exportarListadoAlumnosPDF(b.dataset.listadoCurso)));
   if(document.getElementById('migrarAlumnosBtn')){
     document.getElementById('migrarAlumnosBtn').addEventListener('click', migrarAlumnosAFirestore);
   }
