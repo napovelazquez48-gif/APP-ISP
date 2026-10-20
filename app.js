@@ -1,6 +1,6 @@
 // ===== Preceptoría ISP — lógica de la app (Etapa 1) =====
 
-const APP_VERSION = 129;
+const APP_VERSION = 130;
 const SEED_STUDENTS = []; // la lista de alumnos vive en Firestore (colección students), no en el código
 
 const CURSOS = ['1','2','3','4','5'];
@@ -1285,14 +1285,20 @@ async function marcarTodosPresentes(){
 // Suspensión: el alumno/a no asiste porque está suspendido. Se carga como ausente (suma 1
 // falta, igual que una común) pero marcada como "suspensión": en la planilla de Drive sale
 // "Suspensión" en lugar de "Clase", y en la app se ve como suspensión.
-async function suspenderAlumno(studentId, fechaBase){
+// Vacaciones (tipo 'vacaciones'): misma mecánica, para una alumna que se va de viaje o está
+// ausente un período largo. Cuenta 1 falta por día como cualquier ausente y en Drive y en el
+// registro figura igual que una falta común ("Clase" / A); en la app se ve como "de vacaciones".
+async function suspenderAlumno(studentId, fechaBase, tipo){
+  const esVac = tipo === 'vacaciones';
+  const flag = esVac ? 'vacaciones' : 'suspension';
+  const sust = esVac ? 'vacaciones' : 'suspensión';
   if(modoPruebaBloquea()) return null;
   const al = getStudents().find(x => x.id === studentId);
   if(!al) return null;
   const base = fechaBase || selectedFecha || todayISO();
-  const desde = await customPrompt(`Suspensión de ${al.apellido}, ${al.nombre}.\n\nPrimer día de suspensión:`, base, 'date');
+  const desde = await customPrompt(`${esVac ? 'Vacaciones' : 'Suspensión'} de ${al.apellido}, ${al.nombre}.\n\nPrimer día de ${sust}:`, base, 'date');
   if(!desde) return null;
-  const hasta = await customPrompt('Último día de suspensión (si es un solo día, dejá la misma fecha):', desde, 'date');
+  const hasta = await customPrompt(`Último día de ${sust} (si es un solo día, dejá la misma fecha):`, desde, 'date');
   if(!hasta) return null;
   if(!/^\d{4}-\d{2}-\d{2}$/.test(desde) || !/^\d{4}-\d{2}-\d{2}$/.test(hasta) || hasta < desde){
     await customAlert('Las fechas no son válidas: el último día no puede ser anterior al primero.');
@@ -1303,13 +1309,13 @@ async function suspenderAlumno(studentId, fechaBase){
   if(!dias.length){ await customAlert('En ese período no hay días de clase para marcar.'); return null; }
   if(dias.length > 30){ await customAlert('El período es muy largo (más de 30 días de clase). Cargalo en tramos más cortos.'); return null; }
   const yaSync = dias.filter(iso => { const r = cache.attendance[`${iso}|${studentId}`]; return r && r.driveSynced; });
-  const conOtraMarca = dias.filter(iso => { const r = cache.attendance[`${iso}|${studentId}`]; return r && !r.suspension; });
-  let aviso = `Se van a marcar ${dias.length} ${dias.length === 1 ? 'día' : 'días'} de suspensión (${dias.length === 1 ? fmtDateShort(dias[0]) : fmtDateShort(dias[0]) + ' al ' + fmtDateShort(dias[dias.length-1])}). Cuentan como falta, igual que una inasistencia común.`;
+  const conOtraMarca = dias.filter(iso => { const r = cache.attendance[`${iso}|${studentId}`]; return r && !r[flag]; });
+  let aviso = `Se van a marcar ${dias.length} ${dias.length === 1 ? 'día' : 'días'} de ${sust} (${dias.length === 1 ? fmtDateShort(dias[0]) : fmtDateShort(dias[0]) + ' al ' + fmtDateShort(dias[dias.length-1])}). Cuentan como falta, igual que una inasistencia común.`;
   if(conOtraMarca.length) aviso += `\n\n${conOtraMarca.length} ${conOtraMarca.length === 1 ? 'día ya tenía' : 'días ya tenían'} otra marca de asistencia: se reemplaza${conOtraMarca.length === 1 ? '' : 'n'}.`;
-  if(yaSync.length) aviso += `\n\nOjo: ${yaSync.length} ${yaSync.length === 1 ? 'día ya se pasó' : 'días ya se pasaron'} a la planilla de Drive como "Clase". Se va a agregar la fila "Suspensión"; borrá a mano la fila vieja de la planilla para que no quede repetido.`;
-  if(!(await customConfirm(aviso, { textoSi: 'Marcar suspensión' }))) return null;
-  dias.forEach(iso => writeAttendance(`${iso}|${studentId}`, { estado: 'A', hora: null, suspension: true }));
-  showToast(`Suspensión marcada (${dias.length} ${dias.length === 1 ? 'día' : 'días'})`);
+  if(yaSync.length && !esVac) aviso += `\n\nOjo: ${yaSync.length} ${yaSync.length === 1 ? 'día ya se pasó' : 'días ya se pasaron'} a la planilla de Drive como "Clase". Se va a agregar la fila "Suspensión"; borrá a mano la fila vieja de la planilla para que no quede repetido.`;
+  if(!(await customConfirm(aviso, { textoSi: esVac ? 'Marcar vacaciones' : 'Marcar suspensión' }))) return null;
+  dias.forEach(iso => writeAttendance(`${iso}|${studentId}`, { estado: 'A', hora: null, [flag]: true }));
+  showToast(`${esVac ? 'Vacaciones marcadas' : 'Suspensión marcada'} (${dias.length} ${dias.length === 1 ? 'día' : 'días'})`);
   return { desde: dias[0], hasta: dias[dias.length - 1], dias: dias.length };
 }
 
@@ -2312,6 +2318,8 @@ function renderAsistencia(){
     } else if(estado === 'A'){
       if(rec.suspension){
         metaHtml = `<p class="meta">Suspendido/a · cuenta como falta</p>`;
+      } else if(rec.vacaciones){
+        metaHtml = `<p class="meta">De vacaciones · cuenta como falta</p>`;
       } else if(rec.exencion){
         metaHtml = `<p class="meta j" data-exent="${s.id}">Exenta (${rec.exencion}) · no cuenta</p>`;
       } else if(rec.llegoTarde){
@@ -3014,6 +3022,7 @@ function abrirMenuAlumno(studentId){
         <div class="mr-lista">
           ${puedeRetiro ? accion('retiro', 'salida', tieneRetiro(rec) ? 'Editar retiro anticipado' : 'Retiro anticipado', tieneRetiro(rec) ? `Se retiró ${escapeHtml(rec.retiro.hora)}` : 'Cargar hora y motivo') : ''}
           ${accion('suspension', 'alert', 'Marcar suspensión', rec && rec.suspension ? 'Hoy figura suspendido/a' : 'Uno o varios días, pasa a Drive como Suspensión')}
+          ${accion('vacaciones', 'calendar', 'Marcar vacaciones', rec && rec.vacaciones ? 'Hoy figura de vacaciones' : 'Uno o varios días, cuenta como falta común')}
           ${accion('apercibimiento', 'alert', 'Cargar apercibimiento', 'Va a sus sanciones')}
           ${accion('justificativo', 'file', 'Cargar certificado', 'Justificar faltas con un certificado')}
           ${accion('autorizacion', 'clock', authActiva ? 'Editar autorización de tardanza' : 'Agregar autorización de tardanza', authActiva ? `Hasta ${escapeHtml(auth.horaTope)}${auth.motivo ? ' · ' + escapeHtml(auth.motivo) : ''}` : 'Para alumnos que llegan tarde con permiso')}
@@ -3032,6 +3041,7 @@ function abrirMenuAlumno(studentId){
     cerrarMenuAlumno();
     if(a === 'retiro') editarRetiro(studentId, fecha);
     else if(a === 'suspension') suspenderAlumno(studentId, fecha);
+    else if(a === 'vacaciones') suspenderAlumno(studentId, fecha, 'vacaciones');
     else if(a === 'apercibimiento'){ selectedStudentId = studentId; navigate('sancionDetalle'); }
     else if(a === 'justificativo'){ selectedStudentId = studentId; pendingFileDataUrl = null; pendingFileName = ''; justFechas = null; navigate('justificativoAlumno'); }
     else if(a === 'autorizacion'){ authActiva ? editarAutorizacion(studentId) : agregarAutorizacion(studentId); }
@@ -3936,6 +3946,7 @@ function eventosHistorialAlumno(sid){
     if(!/^\d{4}-\d{2}-\d{2}$/.test(fecha)) return;
     const retiro = r.retiro && r.retiro.hora ? `Retiro a las ${r.retiro.hora}${r.retiro.motivo ? ' · ' + r.retiro.motivo : ''}` : '';
     if(r.suspension && (r.estado === 'A' || r.estado === 'J')) ev.push({ fecha, tipo:'faltas', titulo:'Suspensión', detalle: 'Cuenta como falta' });
+    else if(r.vacaciones && r.estado === 'A') ev.push({ fecha, tipo:'faltas', titulo:'Vacaciones', detalle: 'Cuenta como falta' });
     else if(r.estado === 'A') ev.push({ fecha, tipo:'faltas', titulo:'Ausente', detalle: [r.exencion ? 'Exención' : '', retiro].filter(Boolean).join(' · ') });
     else if(r.estado === 'J') ev.push({ fecha, tipo:'faltas', titulo:'Ausente justificada', detalle: retiro });
     else if(r.estado === 'T') ev.push({ fecha, tipo:'faltas', titulo:'Llegó tarde', detalle: [r.hora ? 'Ingresó ' + r.hora : '', retiro].filter(Boolean).join(' · ') });
