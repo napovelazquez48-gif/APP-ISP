@@ -1,6 +1,6 @@
 // ===== Preceptoría ISP — lógica de la app (Etapa 1) =====
 
-const APP_VERSION = 132;
+const APP_VERSION = 133;
 const SEED_STUDENTS = []; // la lista de alumnos vive en Firestore (colección students), no en el código
 
 const CURSOS = ['1','2','3','4','5'];
@@ -8122,7 +8122,7 @@ function estadoInicialEditor(){
   const manana = new Date(); manana.setDate(manana.getDate() + 1); manana.setHours(9, 0, 0, 0);
   return {
     id: null, titulo: '', curso, materia: (materiasDocenteEnCurso(curso)[0] || ''),
-    abre: msALocalInput(manana.getTime()), minutos: 20, ventana: 15,
+    abre: msALocalInput(manana.getTime()), minutos: 20, cierra: msALocalInput(manana.getTime() + 3600000),
     preguntas: [preguntaVacia('mc')], createdAt: null, bloqueado: false
   };
 }
@@ -8134,7 +8134,7 @@ async function abrirEditorQuiz(id){
     const pregs = ps.exists() ? (ps.data().preguntas || []) : [];
     window.__quizEd = {
       id, titulo: q.titulo, curso: q.curso, materia: q.materia || '',
-      abre: msALocalInput(q.abreAt), minutos: q.minutos, ventana: Math.max(0, Math.round((q.cierraAt - q.abreAt) / 60000)),
+      abre: msALocalInput(q.abreAt), minutos: q.minutos, cierra: msALocalInput(q.cierraAt),
       preguntas: pregs.map(p => ({ tipo: p.tipo, texto: p.texto, opciones: p.tipo === 'mc' ? (p.opciones || []).slice() : undefined,
         correcta: p.correcta, puntos: p.puntos || 1, banco: false })),
       createdAt: q.createdAt || null,
@@ -8202,13 +8202,11 @@ function renderQuizEditar(){
     </div>
     <label class="qz-label">Se habilita el</label>
     <input type="datetime-local" class="qz-input" id="qzAbre" value="${ed.abre}" ${bloq ? 'disabled' : ''}>
-    <div class="qz-fila">
-      <div><label class="qz-label">Tiempo para resolverlo (min)</label>
-        <input type="number" class="qz-input" id="qzMin" min="1" max="180" value="${ed.minutos}" ${bloq ? 'disabled' : ''}></div>
-      <div><label class="qz-label">Pueden empezar durante (min)</label>
-        <input type="number" class="qz-input" id="qzVentana" min="0" max="1440" value="${ed.ventana}" ${bloq ? 'disabled' : ''}></div>
-    </div>
-    <p class="qz-ayuda">Cuando se habilita, los alumnos de ese curso lo ven y reciben un aviso. Cada uno tiene los minutos indicados desde que toca "Empezar", y solo puede empezar durante la ventana indicada.</p>
+    <label class="qz-label">Se cierra el <span style="opacity:.8">(después de esta hora ya no se puede empezar)</span></label>
+    <input type="datetime-local" class="qz-input" id="qzCierra" value="${ed.cierra}" ${bloq ? 'disabled' : ''}>
+    <label class="qz-label">Tiempo para resolverlo (minutos)</label>
+    <input type="number" class="qz-input" id="qzMin" min="1" max="180" value="${ed.minutos}" ${bloq ? 'disabled' : ''}>
+    <p class="qz-ayuda">Los alumnos del curso lo ven y reciben un aviso cuando se habilita. Cada uno tiene los minutos indicados desde que toca "Empezar", y puede empezar en cualquier momento entre la apertura y el cierre.</p>
 
     <p class="section-label" style="margin-top:18px;">Preguntas · ${ed.preguntas.length} · ${totalPts} ${totalPts === 1 ? 'punto' : 'puntos'}</p>
     ${preguntasHtml}
@@ -8227,9 +8225,13 @@ function renderQuizEditar(){
   const $ = (id) => document.getElementById(id);
   // Los campos actualizan el estado sin redibujar (así no se pierde el cursor).
   $('qzTitulo').addEventListener('input', (e) => { ed.titulo = e.target.value; });
-  $('qzAbre').addEventListener('input', (e) => { ed.abre = e.target.value; });
+  $('qzAbre').addEventListener('input', (e) => {
+    ed.abre = e.target.value;
+    const a = new Date(ed.abre).getTime(), c = new Date(ed.cierra).getTime();
+    if(isFinite(a) && !(c > a)){ ed.cierra = msALocalInput(a + 3600000); $('qzCierra').value = ed.cierra; }
+  });
   $('qzMin').addEventListener('input', (e) => { ed.minutos = e.target.value; });
-  $('qzVentana').addEventListener('input', (e) => { ed.ventana = e.target.value; });
+  $('qzCierra').addEventListener('input', (e) => { ed.cierra = e.target.value; });
   $('qzCurso').addEventListener('change', (e) => { ed.curso = e.target.value; render(); });
   $('qzMateria').addEventListener('change', (e) => { ed.materia = e.target.value; });
   document.querySelectorAll('[data-texto]').forEach(el => el.addEventListener('input', (e) => { ed.preguntas[+el.dataset.texto].texto = e.target.value; }));
@@ -8293,12 +8295,12 @@ async function guardarQuiz(publicar){
   const abreAt = ed.abre ? new Date(ed.abre).getTime() : NaN;
   if(!isFinite(abreAt)) return falla('Elegí cuándo se habilita el quiz.');
   const minutos = Math.round(Number(ed.minutos));
-  const ventana = Math.round(Number(ed.ventana));
+  const cierraAt = ed.cierra ? new Date(ed.cierra).getTime() : NaN;
   if(!(minutos >= 1 && minutos <= 180)) return falla('El tiempo para resolverlo tiene que estar entre 1 y 180 minutos.');
-  if(!(ventana >= 0 && ventana <= 1440)) return falla('El tiempo para empezar tiene que estar entre 0 y 1440 minutos.');
+  if(!isFinite(cierraAt)) return falla('Elegí cuándo se cierra el quiz.');
+  if(cierraAt <= abreAt) return falla('El cierre tiene que ser después de la apertura.');
   const prep = prepararPreguntas(ed);
   if(prep.error) return falla(prep.error);
-  const cierraAt = abreAt + ventana * 60000;
   if(publicar && cierraAt < Date.now()) return falla('Ese horario ya pasó: elegí una fecha y hora futuras.');
 
   const id = ed.id || nuevoIdCorto('q');
@@ -8500,7 +8502,6 @@ function renderQuizResultados(){
       const pregs = ps.exists() ? (ps.data().preguntas || []) : [];
       const nuevo = estadoInicialEditor();
       nuevo.titulo = q.titulo + ' (copia)'; nuevo.curso = q.curso; nuevo.materia = q.materia || nuevo.materia; nuevo.minutos = q.minutos;
-      nuevo.ventana = Math.max(0, Math.round((q.cierraAt - q.abreAt) / 60000));
       nuevo.preguntas = pregs.map(p => ({ tipo: p.tipo, texto: p.texto, opciones: p.tipo === 'mc' ? (p.opciones || []).slice() : undefined, correcta: p.correcta, puntos: p.puntos || 1, banco: false }));
       if(!nuevo.preguntas.length) nuevo.preguntas = [preguntaVacia('mc')];
       window.__quizEd = nuevo; navigate('quizEditar');

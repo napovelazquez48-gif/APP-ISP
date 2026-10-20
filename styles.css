@@ -992,3 +992,5 @@ textarea.qz-input{resize:vertical;}
 .faltas-barra.warn p{color:var(--gold);}
 .faltas-barra.danger p{color:var(--stamp);font-weight:500;}
 .qz-banco input[type="checkbox"],.banco-item input[type="checkbox"],.check-susp input[type="checkbox"]{width:auto;flex:none;margin:0;}
+input[type="datetime-local"].qz-input,input[type="date"].qz-input{min-width:0;max-width:100%;-webkit-appearance:none;appearance:none;display:block;text-align:left;min-height:44px;}
+input[type="datetime-local"].qz-input::-webkit-date-and-time-value{text-align:left;}
