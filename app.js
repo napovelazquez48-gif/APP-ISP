@@ -1,6 +1,6 @@
 // ===== Preceptoría ISP — lógica de la app (Etapa 1) =====
 
-const APP_VERSION = 135;
+const APP_VERSION = 136;
 const SEED_STUDENTS = []; // la lista de alumnos vive en Firestore (colección students), no en el código
 
 const CURSOS = ['1','2','3','4','5'];
@@ -8335,9 +8335,11 @@ function renderQuizEditar(){
     <button class="btn-primary" id="publicarQuizBtn" style="width:100%;margin-top:16px;">${ed.id && !bloq && cache.quizzes[ed.id] && cache.quizzes[ed.id].estado === 'publicado' ? 'Guardar cambios' : 'Publicar quiz'}</button>
     <button class="btn-secondary" id="borradorQuizBtn" style="width:100%;margin-top:8px;">Guardar como borrador</button>
     <p id="qzError" class="qz-error"></p>`}
+    ${ed.id ? `<button class="btn-secondary" id="qzEliminarEd" style="width:100%;margin-top:8px;color:var(--stamp);">Eliminar quiz</button>` : ''}
   `;
 
   document.getElementById('backBtn').addEventListener('click', () => goBack('agenda'));
+  if(document.getElementById('qzEliminarEd')) document.getElementById('qzEliminarEd').addEventListener('click', () => eliminarQuiz(ed.id, 0));
   if(bloq) return;
   const $ = (id) => document.getElementById(id);
   // Los campos actualizan el estado sin redibujar (así no se pierde el cursor).
@@ -8530,6 +8532,26 @@ function renderBanco(){
   }));
 }
 
+async function eliminarQuiz(id, nEntregas){
+  if(modoPruebaBloquea()) return;
+  const q = (cache.quizzes || {})[id];
+  const aviso = nEntregas ? `Este quiz ya tiene ${nEntregas} ${nEntregas === 1 ? 'entrega' : 'entregas'}: se pierden las notas y los alumnos ya no lo van a ver. ¿Eliminarlo igual? No se puede deshacer.`
+    : '¿Eliminar este quiz? No se puede deshacer.';
+  if(!(await customConfirm(aviso, { peligro: true, textoSi: 'Eliminar' }))) return;
+  try{
+    if(q) await deleteDoc(doc(db, 'quizzes', id));
+    await deleteDoc(doc(db, 'quizzesPreguntas', id)).catch(() => {});
+    if((cache.eventos || {})['quiz_' + id]) await deleteDoc(doc(db, 'eventos', 'quiz_' + id)).catch(() => {});
+    // Los intentos de los alumnos: solo la preceptoría puede borrarlos; si falla, quedan sin efecto.
+    if(userRole === 'admin'){
+      const snap = await getDocs(query(collection(db, 'quizIntentos'), where('quizId', '==', id))).catch(() => null);
+      if(snap){ const docs = []; snap.forEach(d => docs.push(d)); await Promise.all(docs.map(d => deleteDoc(doc(db, 'quizIntentos', d.id)).catch(() => {}))); }
+    }
+    window.__quizEd = null;
+    showToast('Quiz eliminado'); navigate('quizzes');
+  }catch(err){ showSaveError(err); }
+}
+
 // ======================================================================
 // DOCENTE: resultados de un quiz
 // ======================================================================
@@ -8620,7 +8642,7 @@ function renderQuizResultados(){
     ${puedeEditar ? `<button class="btn-secondary" id="qzEditar" style="width:100%;margin-top:8px;">Editar quiz</button>` : ''}
     ${e.txt !== 'Cerrado' && q.estado === 'publicado' && !puedeEditar ? `<button class="btn-secondary" id="qzCerrarYa" style="width:100%;margin-top:8px;">Cerrar ahora (nadie más puede empezar)</button>` : ''}
     <button class="btn-secondary" id="qzDuplicar" style="width:100%;margin-top:8px;">Duplicar quiz</button>
-    ${puedeEditar ? `<button class="btn-secondary" id="qzEliminar" style="width:100%;margin-top:8px;color:var(--stamp);">Eliminar quiz</button>` : ''}
+    <button class="btn-secondary" id="qzEliminar" style="width:100%;margin-top:8px;color:var(--stamp);">Eliminar quiz</button>
   `;
   document.getElementById('backBtn').addEventListener('click', () => goBack('quizzes'));
   document.getElementById('qzActualizar').addEventListener('click', () => cargarIntentosQuiz(id, true));
@@ -8641,15 +8663,7 @@ function renderQuizResultados(){
       window.__quizEd = nuevo; navigate('quizEditar');
     }catch(err){ showSaveError(err); }
   });
-  if(document.getElementById('qzEliminar')) document.getElementById('qzEliminar').addEventListener('click', async () => {
-    if(modoPruebaBloquea()) return;
-    if(!(await customConfirm('¿Eliminar este quiz? No se puede deshacer.', { peligro: true, textoSi: 'Eliminar' }))) return;
-    try{
-      await deleteDoc(doc(db, 'quizzes', id)); await deleteDoc(doc(db, 'quizzesPreguntas', id));
-      if((cache.eventos || {})['quiz_' + id]) await deleteDoc(doc(db, 'eventos', 'quiz_' + id)).catch(() => {});
-      showToast('Quiz eliminado'); navigate('quizzes');
-    }catch(err){ showSaveError(err); }
-  });
+  document.getElementById('qzEliminar').addEventListener('click', () => eliminarQuiz(id, entregados.length));
 }
 
 // ======================================================================
