@@ -1,6 +1,6 @@
 // ===== Preceptoría ISP — lógica de la app (Etapa 1) =====
 
-const APP_VERSION = 131;
+const APP_VERSION = 132;
 const SEED_STUDENTS = []; // la lista de alumnos vive en Firestore (colección students), no en el código
 
 const CURSOS = ['1','2','3','4','5'];
@@ -140,6 +140,7 @@ let cache = {
   autorizaciones: {},
   teachers: {},
   valoraciones: {},
+  quizzes: {}, quizIntentos: {}, tps: {}, tpEstados: {}, bancoPreguntas: {},
   notas: {},
   viewers: {},
   driveMapping: {},
@@ -433,6 +434,9 @@ function startListeners(){
     cache._lastSync.teachers = Date.now();
     render();
   });
+
+  if(userRole === 'student' && !esAlumno){ /* sin cuenta de alumno todavía */ }
+  else escucharQuizYTps(esAlumno, miId, esAlumno ? currentStudentAuth.curso : null);
 
   if(!esAlumno) escucharColeccion('valoraciones', snap => {
     const next = {};
@@ -3415,6 +3419,17 @@ function renderInner(){
   else if(currentRoute === 'agendaNuevo') renderAgendaNuevo();
   else if(currentRoute === 'agendaDetalle') renderAgendaDetalle();
   else if(currentRoute === 'studentAgenda') renderStudentAgenda();
+  else if(currentRoute === 'quizzes') renderQuizzesDocente();
+  else if(currentRoute === 'quizEditar') renderQuizEditar();
+  else if(currentRoute === 'quizResultados') renderQuizResultados();
+  else if(currentRoute === 'banco') renderBanco();
+  else if(currentRoute === 'tps') renderTps();
+  else if(currentRoute === 'tpNuevo') renderTpNuevo();
+  else if(currentRoute === 'tpDetalle') renderTpDetalle();
+  else if(currentRoute === 'studentQuizzes') renderStudentQuizzes();
+  else if(currentRoute === 'quizRendir') renderQuizRendir();
+  else if(currentRoute === 'quizResultado') renderQuizResultado();
+  else if(currentRoute === 'studentTps') renderStudentTps();
   renderTabbar();
 }
 
@@ -3857,6 +3872,7 @@ function renderResumenAlumno(){
         <p class="value">${faltasAnio}<span class="sub"> / ${UMBRAL_ANUAL}</span></p>
       </div>` : ''}
     </div>
+    ${barraFaltasHtml(faltasAnio)}
 
     ${userRole!=='student' ? `
     <p class="section-label" style="margin-top:4px;">Docencia</p>
@@ -4673,6 +4689,8 @@ function renderTeacherHome(){
       ${moduleRow('chart','Notas','Cuatrimestral, escala 1 a 10', 'notas')}
       ${moduleRow('users','Resumen del alumno','Faltas, apercibimientos y certificados', 'resumen')}
       ${moduleRow('calendar','Agenda','Exámenes, recuperatorios, TPs y más', 'agenda')}
+      ${moduleRow('file','Quizes','Con tiempo, corrección automática', 'quizzes')}
+      ${moduleRow('clipboard','Trabajos prácticos','Quién entregó y quién no', 'tps')}
     </div>
 
     <p style="text-align:center;margin-top:18px;">
@@ -4714,6 +4732,8 @@ function renderStudentHome(){
       ${moduleRow('chart','Mis notas','1er y 2do cuatrimestre', 'studentNotas')}
       ${moduleRow('calendar','Mi horario','Materias y profesores por día', 'studentHorario')}
       ${moduleRow('calendar','Mi agenda','Exámenes, recuperatorios, TPs y más', 'studentAgenda')}
+      ${moduleRow('file','Mis quizes','Se habilitan en un horario y tienen tiempo', 'studentQuizzes')}
+      ${moduleRow('clipboard','Mis trabajos prácticos','Entregados y pendientes', 'studentTps')}
       ${moduleRow('users','Mis profesores','Materia y mail de contacto', 'studentProfesores')}
     </div>
 
@@ -7965,8 +7985,9 @@ function avisosBannerHtml(avisos){
 }
 
 function renderStudentAgenda(){
-  const eventos = eventosDeCurso(currentStudentAuth.curso).filter(e => diasHasta(e.fecha) >= 0);
-  const pasados = eventosDeCurso(currentStudentAuth.curso).filter(e => diasHasta(e.fecha) < 0).reverse();
+  const todosEv = eventosDeCurso(currentStudentAuth.curso).concat(eventosQuizAlumno()).sort((a, b) => (a.fecha || '').localeCompare(b.fecha || ''));
+  const eventos = todosEv.filter(e => diasHasta(e.fecha) >= 0);
+  const pasados = todosEv.filter(e => diasHasta(e.fecha) < 0).reverse();
 
   $app.innerHTML = `
     <div class="appbar" style="padding:0 0 10px;">
@@ -7978,6 +7999,912 @@ function renderStudentAgenda(){
     ${pasados.length ? `<p class="section-label" style="margin-top:18px;">Pasados</p>${pasados.map(e=>filaAgenda(e,false)).join('')}` : ''}
   `;
   document.getElementById('backBtn').addEventListener('click', () => goBack('studentHome'));
+}
+
+// ======================================================================
+// Quizes con tiempo, banco de preguntas y seguimiento de TPs (v132)
+// ======================================================================
+// Las respuestas correctas de un quiz viven en 'quizzesPreguntas' (solo el docente que lo
+// armó puede leerlas) y la corrección la hace el servidor (funciones iniciarQuiz/enviarQuiz).
+
+function uidDocente(){ return userRole === 'teacher' && currentTeacher ? currentTeacher.uid : 'admin'; }
+function nombreDocente(){ return userRole === 'teacher' && currentTeacher ? currentTeacher.nombre : getUsuario(); }
+function cursosDocente(){
+  if(userRole === 'teacher' && currentTeacher) return (currentTeacher.cursos || []).slice().sort();
+  return ['1','2','3','4','5'];
+}
+function materiasDocenteEnCurso(curso){
+  if(userRole === 'teacher' && currentTeacher){
+    const asig = currentTeacher.asignaciones;
+    if(Array.isArray(asig) && asig.length){
+      const m = asig.filter(a => (a.cursos || []).includes(curso)).map(a => a.materia);
+      if(m.length) return m;
+    }
+    return currentTeacher.materias || [];
+  }
+  return materiasDeCurso(curso);
+}
+function dosDig(n){ return String(n).padStart(2, '0'); }
+function msALocalInput(ms){
+  const d = new Date(ms);
+  return `${d.getFullYear()}-${dosDig(d.getMonth() + 1)}-${dosDig(d.getDate())}T${dosDig(d.getHours())}:${dosDig(d.getMinutes())}`;
+}
+function fmtFechaHora(ms){
+  const d = new Date(ms);
+  return `${fmtDateShort(localISODate(d))} ${dosDig(d.getHours())}:${dosDig(d.getMinutes())}`;
+}
+function nuevoIdCorto(pre){ return pre + Date.now().toString(36) + Math.random().toString(36).slice(2, 6); }
+
+// ---------- Datos que se escuchan en tiempo real ----------
+function escucharQuizYTps(esAlumno, miId, cursoAl){
+  const aMapa = (clave, extra) => (snap) => {
+    const next = {};
+    snap.forEach(d => { next[d.id] = Object.assign({ id: d.id }, d.data()); });
+    cache[clave] = next;
+    cache._lastSync[clave] = Date.now();
+    if(extra) extra();
+    render();
+  };
+  const sinPerm = (n) => (e) => console.warn('No se pudo leer', n, e && e.code);
+  if(esAlumno){
+    onSnapshot(query(collection(db,'quizzes'), where('curso','==', cursoAl), where('estado','==','publicado')), aMapa('quizzes'), sinPerm('quizzes'));
+    onSnapshot(query(collection(db,'quizIntentos'), where('studentId','==', miId)), aMapa('quizIntentos'), sinPerm('quizIntentos'));
+    onSnapshot(query(collection(db,'tps'), where('curso','==', cursoAl)), aMapa('tps'), sinPerm('tps'));
+    onSnapshot(query(collection(db,'tpEstados'), where('studentId','==', miId)), aMapa('tpEstados'), sinPerm('tpEstados'));
+    return;
+  }
+  escucharColeccion('quizzes', aMapa('quizzes'));
+  escucharColeccion('tps', aMapa('tps'));
+  escucharColeccion('tpEstados', aMapa('tpEstados'));
+  if((userRole === 'teacher' && currentTeacher) || userRole === 'admin'){
+    onSnapshot(query(collection(db,'bancoPreguntas'), where('docenteUid','==', uidDocente())), aMapa('bancoPreguntas'), sinPerm('bancoPreguntas'));
+  }
+}
+
+// ======================================================================
+// DOCENTE: lista de quizes
+// ======================================================================
+function misQuizzes(){
+  return Object.values(cache.quizzes || {}).filter(q => q.docenteUid === uidDocente())
+    .sort((a, b) => (b.abreAt || 0) - (a.abreAt || 0));
+}
+function estadoDeQuiz(q){
+  if(q.estado !== 'publicado') return { txt: 'Borrador', cls: '' };
+  const ahora = Date.now();
+  if(ahora < q.abreAt) return { txt: 'Programado', cls: 'prog' };
+  if(ahora <= q.cierraAt) return { txt: 'Abierto', cls: 'on' };
+  return { txt: 'Cerrado', cls: '' };
+}
+
+function renderQuizzesDocente(){
+  const lista = misQuizzes();
+  const filas = lista.map(q => {
+    const e = estadoDeQuiz(q);
+    return `<div class="module-row" data-quiz="${q.id}">
+      <div class="txt">
+        <p class="title">${escapeHtml(q.titulo)}</p>
+        <p class="desc">${q.curso}° A · ${escapeHtml(q.materia || '')} · ${fmtFechaHora(q.abreAt)} · ${q.minutos} min</p>
+      </div>
+      <span class="badge-soon quiz-estado ${e.cls}">${e.txt}</span>
+    </div>`;
+  }).join('');
+  $app.innerHTML = `
+    <div class="appbar" style="padding:0 0 10px;">
+      <button class="back-btn" id="backBtn">${icon('back')}</button>
+      <h1>Quizes</h1>
+    </div>
+    <button class="btn-primary" id="nuevoQuizBtn" style="width:100%;margin:4px 0 8px;">+ Nuevo quiz</button>
+    <button class="btn-secondary" id="bancoBtn" style="width:100%;margin-bottom:16px;">Mi banco de preguntas (${Object.keys(cache.bancoPreguntas || {}).length})</button>
+    ${lista.length ? `<div class="module-list">${filas}</div>` : `<p class="empty-inline">Todavía no armaste ningún quiz.</p>`}
+  `;
+  document.getElementById('backBtn').addEventListener('click', () => goBack(homeRoute()));
+  document.getElementById('nuevoQuizBtn').addEventListener('click', () => { window.__quizEd = null; navigate('quizEditar'); });
+  document.getElementById('bancoBtn').addEventListener('click', () => navigate('banco'));
+  document.querySelectorAll('[data-quiz]').forEach(el => el.addEventListener('click', () => {
+    const q = cache.quizzes[el.dataset.quiz];
+    if(!q) return;
+    window.__quizSel = q.id;
+    if(q.estado !== 'publicado'){ abrirEditorQuiz(q.id); } else navigate('quizResultados');
+  }));
+}
+
+// ======================================================================
+// DOCENTE: editor de quiz
+// ======================================================================
+function preguntaVacia(tipo){
+  return tipo === 'vf'
+    ? { tipo: 'vf', texto: '', correcta: true, puntos: 1, banco: false }
+    : { tipo: 'mc', texto: '', opciones: ['', '', '', ''], correcta: 0, puntos: 1, banco: false };
+}
+function estadoInicialEditor(){
+  const cursos = cursosDocente();
+  const curso = cursos.includes(selectedCurso) ? selectedCurso : (cursos[0] || '1');
+  const manana = new Date(); manana.setDate(manana.getDate() + 1); manana.setHours(9, 0, 0, 0);
+  return {
+    id: null, titulo: '', curso, materia: (materiasDocenteEnCurso(curso)[0] || ''),
+    abre: msALocalInput(manana.getTime()), minutos: 20, ventana: 15,
+    preguntas: [preguntaVacia('mc')], createdAt: null, bloqueado: false
+  };
+}
+async function abrirEditorQuiz(id){
+  const q = cache.quizzes[id];
+  if(!q) return;
+  try{
+    const ps = await getDoc(doc(db,'quizzesPreguntas', id));
+    const pregs = ps.exists() ? (ps.data().preguntas || []) : [];
+    window.__quizEd = {
+      id, titulo: q.titulo, curso: q.curso, materia: q.materia || '',
+      abre: msALocalInput(q.abreAt), minutos: q.minutos, ventana: Math.max(0, Math.round((q.cierraAt - q.abreAt) / 60000)),
+      preguntas: pregs.map(p => ({ tipo: p.tipo, texto: p.texto, opciones: p.tipo === 'mc' ? (p.opciones || []).slice() : undefined,
+        correcta: p.correcta, puntos: p.puntos || 1, banco: false })),
+      createdAt: q.createdAt || null,
+      bloqueado: q.estado === 'publicado' && Date.now() >= q.abreAt
+    };
+    navigate('quizEditar');
+  }catch(err){ showSaveError(err); }
+}
+
+function renderQuizEditar(){
+  if(!window.__quizEd) window.__quizEd = estadoInicialEditor();
+  const ed = window.__quizEd;
+  const cursos = cursosDocente();
+  const materias = materiasDocenteEnCurso(ed.curso);
+  if(materias.length && !materias.includes(ed.materia)) ed.materia = materias[0];
+  const bloq = ed.bloqueado;
+  const totalPts = ed.preguntas.reduce((a, p) => a + (Number(p.puntos) || 0), 0);
+
+  const preguntasHtml = ed.preguntas.map((p, i) => {
+    const cuerpo = p.tipo === 'vf'
+      ? `<div class="qz-vf">
+          <button type="button" class="chip-val ${p.correcta === true ? 'on' : ''}" data-vf="${i}" data-v="1">Verdadero</button>
+          <button type="button" class="chip-val ${p.correcta === false ? 'on' : ''}" data-vf="${i}" data-v="0">Falso</button>
+        </div><p class="qz-ayuda">Tocá la respuesta correcta.</p>`
+      : `<div class="qz-opciones">${p.opciones.map((o, k) => `
+          <div class="qz-opcion">
+            <button type="button" class="qz-radio ${p.correcta === k ? 'on' : ''}" data-correcta="${i}" data-k="${k}" aria-label="Marcar como correcta">${p.correcta === k ? '✓' : ''}</button>
+            <input type="text" class="qz-input" id="qzo_${i}_${k}" data-opt="${i}" data-k="${k}" value="${escapeHtml(o)}" placeholder="Opción ${k + 1}" ${bloq ? 'disabled' : ''}>
+            ${p.opciones.length > 2 && !bloq ? `<button type="button" class="qz-x" data-quitaropt="${i}" data-k="${k}" aria-label="Quitar opción">×</button>` : ''}
+          </div>`).join('')}
+        </div>
+        ${p.opciones.length < 5 && !bloq ? `<button type="button" class="qz-link" data-masopt="${i}">+ Agregar opción</button>` : ''}
+        <p class="qz-ayuda">El círculo marca la respuesta correcta.</p>`;
+    return `<div class="qz-preg">
+      <div class="qz-preg-cab">
+        <span class="qz-num">Pregunta ${i + 1} · ${p.tipo === 'vf' ? 'Verdadero / falso' : 'Opción múltiple'}</span>
+        ${bloq ? '' : `<span class="qz-acc">
+          ${i > 0 ? `<button type="button" data-subir="${i}" aria-label="Subir">↑</button>` : ''}
+          ${i < ed.preguntas.length - 1 ? `<button type="button" data-bajar="${i}" aria-label="Bajar">↓</button>` : ''}
+          <button type="button" data-borrarp="${i}" aria-label="Borrar pregunta">${icon('trash')}</button>
+        </span>`}
+      </div>
+      <textarea class="qz-input" id="qzt_${i}" data-texto="${i}" rows="2" placeholder="Escribí la pregunta..." ${bloq ? 'disabled' : ''}>${escapeHtml(p.texto)}</textarea>
+      ${cuerpo}
+      <div class="qz-pie">
+        <label>Puntos <input type="number" class="qz-pts" id="qzp_${i}" data-pts="${i}" min="1" max="20" value="${p.puntos}" ${bloq ? 'disabled' : ''}></label>
+        ${bloq ? '' : `<label class="qz-banco"><input type="checkbox" data-banco="${i}" ${p.banco ? 'checked' : ''}> Guardar en mi banco</label>`}
+      </div>
+    </div>`;
+  }).join('');
+
+  $app.innerHTML = `
+    <div class="appbar" style="padding:0 0 10px;">
+      <button class="back-btn" id="backBtn">${icon('back')}</button>
+      <h1>${ed.id ? 'Editar quiz' : 'Nuevo quiz'}</h1>
+    </div>
+    ${bloq ? `<div class="aviso-banner nuevo">${icon('info')}<span>Este quiz ya se abrió: no se pueden cambiar las preguntas ni el horario. Podés cerrarlo o duplicarlo desde los resultados.</span></div>` : ''}
+    <label class="qz-label">Título</label>
+    <input type="text" class="qz-input" id="qzTitulo" value="${escapeHtml(ed.titulo)}" placeholder="Ej: Quiz de fracciones" ${bloq ? 'disabled' : ''}>
+    <div class="qz-fila">
+      <div><label class="qz-label">Curso</label>
+        <select id="qzCurso" ${bloq ? 'disabled' : ''}>${cursos.map(c => `<option value="${c}" ${c === ed.curso ? 'selected' : ''}>${c}° A</option>`).join('')}</select></div>
+      <div><label class="qz-label">Materia</label>
+        <select id="qzMateria" ${bloq ? 'disabled' : ''}>${materias.map(m => `<option value="${escapeHtml(m)}" ${m === ed.materia ? 'selected' : ''}>${escapeHtml(m)}</option>`).join('')}</select></div>
+    </div>
+    <label class="qz-label">Se habilita el</label>
+    <input type="datetime-local" class="qz-input" id="qzAbre" value="${ed.abre}" ${bloq ? 'disabled' : ''}>
+    <div class="qz-fila">
+      <div><label class="qz-label">Tiempo para resolverlo (min)</label>
+        <input type="number" class="qz-input" id="qzMin" min="1" max="180" value="${ed.minutos}" ${bloq ? 'disabled' : ''}></div>
+      <div><label class="qz-label">Pueden empezar durante (min)</label>
+        <input type="number" class="qz-input" id="qzVentana" min="0" max="1440" value="${ed.ventana}" ${bloq ? 'disabled' : ''}></div>
+    </div>
+    <p class="qz-ayuda">Cuando se habilita, los alumnos de ese curso lo ven y reciben un aviso. Cada uno tiene los minutos indicados desde que toca "Empezar", y solo puede empezar durante la ventana indicada.</p>
+
+    <p class="section-label" style="margin-top:18px;">Preguntas · ${ed.preguntas.length} · ${totalPts} ${totalPts === 1 ? 'punto' : 'puntos'}</p>
+    ${preguntasHtml}
+    ${bloq ? '' : `<div class="qz-agregar">
+      <button type="button" class="btn-secondary" id="addMc">+ Opción múltiple</button>
+      <button type="button" class="btn-secondary" id="addVf">+ Verdadero / falso</button>
+      <button type="button" class="btn-secondary" id="addBanco">+ Traer del banco</button>
+    </div>
+    <button class="btn-primary" id="publicarQuizBtn" style="width:100%;margin-top:16px;">${ed.id && !bloq && cache.quizzes[ed.id] && cache.quizzes[ed.id].estado === 'publicado' ? 'Guardar cambios' : 'Publicar quiz'}</button>
+    <button class="btn-secondary" id="borradorQuizBtn" style="width:100%;margin-top:8px;">Guardar como borrador</button>
+    <p id="qzError" class="qz-error"></p>`}
+  `;
+
+  document.getElementById('backBtn').addEventListener('click', () => goBack('quizzes'));
+  if(bloq) return;
+  const $ = (id) => document.getElementById(id);
+  // Los campos actualizan el estado sin redibujar (así no se pierde el cursor).
+  $('qzTitulo').addEventListener('input', (e) => { ed.titulo = e.target.value; });
+  $('qzAbre').addEventListener('input', (e) => { ed.abre = e.target.value; });
+  $('qzMin').addEventListener('input', (e) => { ed.minutos = e.target.value; });
+  $('qzVentana').addEventListener('input', (e) => { ed.ventana = e.target.value; });
+  $('qzCurso').addEventListener('change', (e) => { ed.curso = e.target.value; render(); });
+  $('qzMateria').addEventListener('change', (e) => { ed.materia = e.target.value; });
+  document.querySelectorAll('[data-texto]').forEach(el => el.addEventListener('input', (e) => { ed.preguntas[+el.dataset.texto].texto = e.target.value; }));
+  document.querySelectorAll('[data-opt]').forEach(el => el.addEventListener('input', (e) => { ed.preguntas[+el.dataset.opt].opciones[+el.dataset.k] = e.target.value; }));
+  document.querySelectorAll('[data-pts]').forEach(el => el.addEventListener('input', (e) => { ed.preguntas[+el.dataset.pts].puntos = e.target.value; }));
+  document.querySelectorAll('[data-banco]').forEach(el => el.addEventListener('change', (e) => { ed.preguntas[+el.dataset.banco].banco = e.target.checked; }));
+  document.querySelectorAll('[data-correcta]').forEach(el => el.addEventListener('click', () => { ed.preguntas[+el.dataset.correcta].correcta = +el.dataset.k; render(); }));
+  document.querySelectorAll('[data-vf]').forEach(el => el.addEventListener('click', () => { ed.preguntas[+el.dataset.vf].correcta = el.dataset.v === '1'; render(); }));
+  document.querySelectorAll('[data-masopt]').forEach(el => el.addEventListener('click', () => { ed.preguntas[+el.dataset.masopt].opciones.push(''); render(); }));
+  document.querySelectorAll('[data-quitaropt]').forEach(el => el.addEventListener('click', () => {
+    const p = ed.preguntas[+el.dataset.quitaropt], k = +el.dataset.k;
+    p.opciones.splice(k, 1);
+    if(p.correcta === k) p.correcta = 0; else if(p.correcta > k) p.correcta--;
+    render();
+  }));
+  document.querySelectorAll('[data-subir]').forEach(el => el.addEventListener('click', () => { const i = +el.dataset.subir; [ed.preguntas[i - 1], ed.preguntas[i]] = [ed.preguntas[i], ed.preguntas[i - 1]]; render(); }));
+  document.querySelectorAll('[data-bajar]').forEach(el => el.addEventListener('click', () => { const i = +el.dataset.bajar; [ed.preguntas[i + 1], ed.preguntas[i]] = [ed.preguntas[i], ed.preguntas[i + 1]]; render(); }));
+  document.querySelectorAll('[data-borrarp]').forEach(el => el.addEventListener('click', async () => {
+    const i = +el.dataset.borrarp;
+    if(ed.preguntas[i].texto.trim() && !(await customConfirm('¿Borrar esta pregunta?', { peligro: true, textoSi: 'Borrar' }))) return;
+    ed.preguntas.splice(i, 1);
+    if(!ed.preguntas.length) ed.preguntas.push(preguntaVacia('mc'));
+    render();
+  }));
+  $('addMc').addEventListener('click', () => { ed.preguntas.push(preguntaVacia('mc')); render(); setTimeout(() => window.scrollTo(0, document.body.scrollHeight), 50); });
+  $('addVf').addEventListener('click', () => { ed.preguntas.push(preguntaVacia('vf')); render(); setTimeout(() => window.scrollTo(0, document.body.scrollHeight), 50); });
+  $('addBanco').addEventListener('click', () => traerDelBanco());
+  $('publicarQuizBtn').addEventListener('click', () => guardarQuiz(true));
+  $('borradorQuizBtn').addEventListener('click', () => guardarQuiz(false));
+}
+
+// Valida y arma las preguntas listas para guardar. Devuelve { error } o { preguntas }.
+function prepararPreguntas(ed){
+  const out = [];
+  for(let i = 0; i < ed.preguntas.length; i++){
+    const p = ed.preguntas[i];
+    const texto = (p.texto || '').trim();
+    const puntos = Math.max(1, Math.min(20, Math.round(Number(p.puntos) || 1)));
+    if(!texto) return { error: `Falta escribir la pregunta ${i + 1}.` };
+    if(p.tipo === 'vf'){
+      out.push({ id: 'p' + (out.length + 1), tipo: 'vf', texto, correcta: p.correcta === true, puntos });
+    } else {
+      const opciones = [], mapa = {};
+      p.opciones.forEach((o, k) => { const t = (o || '').trim(); if(t){ mapa[k] = opciones.length; opciones.push(t); } });
+      if(opciones.length < 2) return { error: `La pregunta ${i + 1} necesita al menos 2 opciones con texto.` };
+      if(!(p.correcta in mapa)) return { error: `En la pregunta ${i + 1}, la opción marcada como correcta está vacía.` };
+      out.push({ id: 'p' + (out.length + 1), tipo: 'mc', texto, opciones, correcta: mapa[p.correcta], puntos });
+    }
+  }
+  return { preguntas: out };
+}
+
+async function guardarQuiz(publicar){
+  if(modoPruebaBloquea()) return;
+  const ed = window.__quizEd;
+  const errEl = document.getElementById('qzError');
+  const falla = (m) => { if(errEl) errEl.textContent = m; };
+  falla('');
+  if(!ed.titulo.trim()) return falla('Escribí un título.');
+  if(!ed.materia) return falla('Elegí la materia.');
+  const abreAt = ed.abre ? new Date(ed.abre).getTime() : NaN;
+  if(!isFinite(abreAt)) return falla('Elegí cuándo se habilita el quiz.');
+  const minutos = Math.round(Number(ed.minutos));
+  const ventana = Math.round(Number(ed.ventana));
+  if(!(minutos >= 1 && minutos <= 180)) return falla('El tiempo para resolverlo tiene que estar entre 1 y 180 minutos.');
+  if(!(ventana >= 0 && ventana <= 1440)) return falla('El tiempo para empezar tiene que estar entre 0 y 1440 minutos.');
+  const prep = prepararPreguntas(ed);
+  if(prep.error) return falla(prep.error);
+  const cierraAt = abreAt + ventana * 60000;
+  if(publicar && cierraAt < Date.now()) return falla('Ese horario ya pasó: elegí una fecha y hora futuras.');
+
+  const id = ed.id || nuevoIdCorto('q');
+  const total = prep.preguntas.reduce((a, p) => a + p.puntos, 0);
+  const publicadoAntes = ed.id && cache.quizzes[ed.id] && cache.quizzes[ed.id].estado === 'publicado';
+  const meta = {
+    titulo: ed.titulo.trim(), curso: ed.curso, materia: ed.materia, abreAt, cierraAt, minutos,
+    nPreguntas: prep.preguntas.length, puntosTotal: total,
+    estado: publicar ? 'publicado' : 'borrador',
+    docenteUid: uidDocente(), docenteNombre: nombreDocente(),
+    notificadoAbierto: false, createdAt: ed.createdAt || Date.now(), updatedAt: Date.now()
+  };
+  try{
+    // Primero las preguntas y después el quiz, así un alumno nunca ve un quiz sin preguntas.
+    await setDoc(doc(db, 'quizzesPreguntas', id), { docenteUid: uidDocente(), curso: ed.curso, preguntas: prep.preguntas });
+    await setDoc(doc(db, 'quizzes', id), meta);
+    // Preguntas que se marcaron para guardar en el banco.
+    const alBanco = ed.preguntas.map((p, i) => ({ p, q: prep.preguntas[i] })).filter(x => x.p.banco);
+    await Promise.all(alBanco.map(({ q }) => setDoc(doc(db, 'bancoPreguntas', nuevoIdCorto('b')), {
+      docenteUid: uidDocente(), materia: ed.materia, tipo: q.tipo, texto: q.texto,
+      opciones: q.tipo === 'mc' ? q.opciones : null, correcta: q.correcta, puntos: q.puntos, createdAt: Date.now()
+    })));
+    window.__quizEd = null;
+    showToast(publicar ? (publicadoAntes ? 'Cambios guardados' : 'Quiz publicado') : 'Borrador guardado');
+    navigate('quizzes');
+  }catch(err){ showSaveError(err); }
+}
+
+// ---------- Banco de preguntas ----------
+function traerDelBanco(){
+  const ed = window.__quizEd;
+  const todas = Object.values(cache.bancoPreguntas || {}).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+  const ov = document.createElement('div');
+  ov.className = 'guia-inst-overlay banco-ov';
+  document.body.appendChild(ov);
+  let soloMateria = true, busca = '';
+  const elegidas = new Set();
+  const cerrar = () => { ov.classList.remove('show'); setTimeout(() => ov.remove(), 200); };
+  const dibujar = () => {
+    const lista = todas.filter(b => (!soloMateria || b.materia === ed.materia) && (!busca || (b.texto || '').toLowerCase().includes(busca.toLowerCase())));
+    ov.innerHTML = `<div class="gi-caja banco-caja" role="dialog" aria-modal="true">
+      <p class="gi-titulo">Mi banco de preguntas</p>
+      <input type="text" class="qz-input" id="bcBusca" placeholder="Buscar..." value="${escapeHtml(busca)}">
+      <label class="qz-banco" style="margin:8px 0;"><input type="checkbox" id="bcMateria" ${soloMateria ? 'checked' : ''}> Solo de ${escapeHtml(ed.materia || 'esta materia')}</label>
+      <div class="banco-lista">${lista.length ? lista.map(b => `<label class="banco-item">
+          <input type="checkbox" data-b="${b.id}" ${elegidas.has(b.id) ? 'checked' : ''}>
+          <span><b>${b.tipo === 'vf' ? 'V/F' : 'Op. múltiple'}</b> · ${escapeHtml(b.texto)}</span></label>`).join('')
+        : `<p class="empty-inline">No hay preguntas guardadas${soloMateria ? ' para esta materia' : ''}. Al armar un quiz, tildá "Guardar en mi banco" en las preguntas que quieras reutilizar.</p>`}</div>
+      <div class="gi-botones" style="margin-top:12px;">
+        <button class="btn-secondary" id="bcCerrar">Cancelar</button>
+        <button class="btn-primary" id="bcAgregar" ${elegidas.size ? '' : 'disabled'}>Agregar${elegidas.size ? ' (' + elegidas.size + ')' : ''}</button>
+      </div></div>`;
+    const q = (id) => ov.querySelector('#' + id);
+    q('bcCerrar').addEventListener('click', cerrar);
+    q('bcMateria').addEventListener('change', (e) => { soloMateria = e.target.checked; dibujar(); });
+    q('bcBusca').addEventListener('input', (e) => { busca = e.target.value; const pos = e.target.selectionStart; dibujar(); const n = q('bcBusca'); n.focus(); n.setSelectionRange(pos, pos); });
+    ov.querySelectorAll('[data-b]').forEach(c => c.addEventListener('change', () => { if(c.checked) elegidas.add(c.dataset.b); else elegidas.delete(c.dataset.b); q('bcAgregar').disabled = !elegidas.size; q('bcAgregar').textContent = 'Agregar' + (elegidas.size ? ' (' + elegidas.size + ')' : ''); }));
+    q('bcAgregar').addEventListener('click', () => {
+      todas.filter(b => elegidas.has(b.id)).forEach(b => {
+        ed.preguntas.push(b.tipo === 'vf'
+          ? { tipo: 'vf', texto: b.texto, correcta: b.correcta === true, puntos: b.puntos || 1, banco: false }
+          : { tipo: 'mc', texto: b.texto, opciones: (b.opciones || []).slice(), correcta: b.correcta, puntos: b.puntos || 1, banco: false });
+      });
+      // Si la única pregunta era la vacía del principio, se saca.
+      if(ed.preguntas.length > 1 && !ed.preguntas[0].texto.trim() && ed.preguntas[0].tipo === 'mc' && ed.preguntas[0].opciones.every(o => !o.trim())) ed.preguntas.shift();
+      cerrar(); render();
+    });
+  };
+  dibujar();
+  requestAnimationFrame(() => ov.classList.add('show'));
+}
+
+function renderBanco(){
+  const todas = Object.values(cache.bancoPreguntas || {}).sort((a, b) => (a.materia || '').localeCompare(b.materia || '') || (b.createdAt || 0) - (a.createdAt || 0));
+  $app.innerHTML = `
+    <div class="appbar" style="padding:0 0 10px;">
+      <button class="back-btn" id="backBtn">${icon('back')}</button>
+      <h1>Mi banco de preguntas</h1>
+    </div>
+    <p class="qz-ayuda">Son las preguntas que guardaste para reutilizar. Al armar un quiz, tocá "Traer del banco".</p>
+    ${todas.length ? todas.map(b => `<div class="sancion-item">
+      <div style="display:flex;justify-content:space-between;gap:8px;">
+        <div><p class="folio">${escapeHtml(b.materia || '')} · ${b.tipo === 'vf' ? 'Verdadero / falso' : 'Opción múltiple'}</p>
+        <p class="motivo">${escapeHtml(b.texto)}</p>
+        <p class="sancion-meta">${b.tipo === 'vf' ? 'Correcta: ' + (b.correcta ? 'Verdadero' : 'Falso') : 'Correcta: ' + escapeHtml((b.opciones || [])[b.correcta] || '')}</p></div>
+        <button class="borrar-btn" data-borrar="${b.id}">${icon('trash')}</button>
+      </div></div>`).join('') : `<p class="empty-inline">Tu banco está vacío.</p>`}
+  `;
+  document.getElementById('backBtn').addEventListener('click', () => goBack('quizzes'));
+  document.querySelectorAll('[data-borrar]').forEach(b => b.addEventListener('click', async () => {
+    if(!(await customConfirm('¿Sacar esta pregunta del banco? Los quizes que ya la usan no cambian.', { peligro: true, textoSi: 'Sacar' }))) return;
+    deleteDoc(doc(db, 'bancoPreguntas', b.dataset.borrar)).catch(err => showSaveError(err));
+  }));
+}
+
+// ======================================================================
+// DOCENTE: resultados de un quiz
+// ======================================================================
+async function cargarIntentosQuiz(id, forzar){
+  const q = cache.quizzes[id];
+  if(!q) return;
+  window.__quizInt = window.__quizInt || {};
+  const est = window.__quizInt[id];
+  if(est && (est.cargando || (est.listo && !forzar))) return;
+  window.__quizInt[id] = { cargando: true };
+  try{
+    const snap = await getDocs(query(collection(db,'quizIntentos'), where('quizId','==', id), where('curso','==', q.curso)));
+    const lista = [];
+    snap.forEach(d => lista.push(Object.assign({ id: d.id }, d.data())));
+    window.__quizInt[id] = { listo: true, lista, cuando: Date.now() };
+  }catch(err){
+    console.warn('No se pudieron leer los resultados', err && err.code);
+    window.__quizInt[id] = { error: true };
+  }
+  render();
+}
+
+function renderQuizResultados(){
+  const id = window.__quizSel;
+  const q = cache.quizzes[id];
+  if(!q){ $app.innerHTML = `<p class="empty-inline" style="margin-top:40px;">No encontramos ese quiz.</p>`; setTimeout(() => navigate('quizzes'), 0); return; }
+  cargarIntentosQuiz(id, false);
+  const est = (window.__quizInt || {})[id] || {};
+  const e = estadoDeQuiz(q);
+  const alumnos = getStudents().filter(s => s.curso === q.curso).sort((a, b) => a.apellido.localeCompare(b.apellido) || a.nombre.localeCompare(b.nombre));
+  const intentos = est.lista || [];
+  const porAlumno = {}; intentos.forEach(i => { porAlumno[i.studentId] = i; });
+  const entregados = intentos.filter(i => i.estado === 'entregado');
+  const total = q.puntosTotal || 0;
+  const pcts = entregados.map(i => total ? (i.puntaje / total) * 100 : 0);
+  const prom = pcts.length ? pcts.reduce((a, b) => a + b, 0) / pcts.length : null;
+
+  // % de acierto por pregunta
+  const preg = {};
+  entregados.forEach(i => (i.detalle || []).forEach(d => {
+    if(!preg[d.id]) preg[d.id] = { texto: d.texto, ok: 0, n: 0 };
+    preg[d.id].n++; if(d.ok) preg[d.id].ok++;
+  }));
+  const pregLista = Object.keys(preg).sort((a, b) => parseInt(a.slice(1)) - parseInt(b.slice(1))).map(k => ({ id: k, ...preg[k] }));
+
+  const filas = alumnos.map(s => {
+    const i = porAlumno[s.id];
+    let der, cls = '';
+    if(!i){ der = e.txt === 'Programado' ? '—' : 'No lo hizo'; cls = e.txt === 'Programado' ? '' : 'no'; }
+    else if(i.estado === 'entregado'){
+      const p = total ? Math.round((i.puntaje / total) * 100) : 0;
+      const min = i.submittedAt && i.startedAt ? Math.max(1, Math.round((i.submittedAt - i.startedAt) / 60000)) : null;
+      der = `${i.puntaje} / ${total} · ${p}%${min ? ` · ${min} min` : ''}`; cls = p >= 60 ? 'ok' : 'bajo';
+    } else if(i.estado === 'vencido'){ der = 'No entregó a tiempo'; cls = 'no'; }
+    else { der = 'Resolviendo ahora'; cls = 'curso'; }
+    return `<div class="qz-res-fila"><span>${escapeHtml(s.apellido)}, ${escapeHtml(s.nombre)}</span><span class="qz-res ${cls}">${der}</span></div>`;
+  }).join('');
+
+  const noHizo = e.txt === 'Programado' ? 0 : alumnos.filter(s => !porAlumno[s.id] || porAlumno[s.id].estado === 'vencido').length;
+  const puedeEditar = Date.now() < q.abreAt;
+
+  $app.innerHTML = `
+    <div class="appbar" style="padding:0 0 10px;">
+      <button class="back-btn" id="backBtn">${icon('back')}</button>
+      <h1>${escapeHtml(q.titulo)}</h1>
+    </div>
+    <p class="date-label">${q.curso}° A · ${escapeHtml(q.materia || '')} · ${fmtFechaHora(q.abreAt)} · ${q.minutos} min · <b>${e.txt}</b></p>
+
+    ${est.cargando ? `<p class="empty-inline">Cargando resultados…</p>` : ''}
+    ${est.error ? `<p class="empty-inline">No se pudieron cargar los resultados. Probá actualizar.</p>` : ''}
+
+    <div class="stat-grid">
+      <div class="stat-card"><p class="label">Entregaron</p><p class="value">${entregados.length}<span class="sub"> / ${alumnos.length}</span></p></div>
+      <div class="stat-card"><p class="label">Promedio</p><p class="value">${prom === null ? '—' : Math.round(prom) + '%'}</p></div>
+      <div class="stat-card ${noHizo ? 'alert' : ''}"><p class="label">No lo hicieron</p><p class="value">${noHizo}</p></div>
+      <div class="stat-card"><p class="label">Mejor / peor</p><p class="value" style="font-size:calc(18px * var(--fs, 1));">${pcts.length ? Math.round(Math.max(...pcts)) + '% / ' + Math.round(Math.min(...pcts)) + '%' : '—'}</p></div>
+    </div>
+
+    ${pregLista.length ? `<p class="section-label">Qué preguntas costaron más</p>
+      ${pregLista.slice().sort((a, b) => (a.ok / a.n) - (b.ok / b.n)).map(p => { const pc = Math.round(p.ok / p.n * 100); return `<div class="qz-barra">
+        <div class="qz-barra-txt"><span>${escapeHtml((p.texto || '').slice(0, 90))}${(p.texto || '').length > 90 ? '…' : ''}</span><b>${pc}%</b></div>
+        <div class="qz-barra-fondo"><div class="qz-barra-llena ${pc < 50 ? 'bajo' : ''}" style="width:${pc}%"></div></div></div>`; }).join('')}` : ''}
+
+    <p class="section-label" style="margin-top:16px;">Alumnos</p>
+    <div class="qz-res-lista">${filas || '<p class="empty-inline">El curso no tiene alumnos cargados.</p>'}</div>
+
+    <button class="btn-secondary" id="qzActualizar" style="width:100%;margin-top:14px;">Actualizar resultados</button>
+    ${puedeEditar ? `<button class="btn-secondary" id="qzEditar" style="width:100%;margin-top:8px;">Editar quiz</button>` : ''}
+    ${e.txt !== 'Cerrado' && q.estado === 'publicado' && !puedeEditar ? `<button class="btn-secondary" id="qzCerrarYa" style="width:100%;margin-top:8px;">Cerrar ahora (nadie más puede empezar)</button>` : ''}
+    <button class="btn-secondary" id="qzDuplicar" style="width:100%;margin-top:8px;">Duplicar quiz</button>
+    ${puedeEditar ? `<button class="btn-secondary" id="qzEliminar" style="width:100%;margin-top:8px;color:var(--stamp);">Eliminar quiz</button>` : ''}
+  `;
+  document.getElementById('backBtn').addEventListener('click', () => goBack('quizzes'));
+  document.getElementById('qzActualizar').addEventListener('click', () => cargarIntentosQuiz(id, true));
+  if(document.getElementById('qzEditar')) document.getElementById('qzEditar').addEventListener('click', () => abrirEditorQuiz(id));
+  if(document.getElementById('qzCerrarYa')) document.getElementById('qzCerrarYa').addEventListener('click', async () => {
+    if(modoPruebaBloquea()) return;
+    if(!(await customConfirm('Nadie más va a poder empezar este quiz. Los que ya están resolviendo pueden terminar. ¿Cerrarlo ahora?', { textoSi: 'Cerrar quiz' }))) return;
+    setDoc(doc(db, 'quizzes', id), { cierraAt: Date.now(), updatedAt: Date.now() }, { merge: true }).then(() => showToast('Quiz cerrado')).catch(err => showSaveError(err));
+  });
+  document.getElementById('qzDuplicar').addEventListener('click', async () => {
+    try{
+      const ps = await getDoc(doc(db, 'quizzesPreguntas', id));
+      const pregs = ps.exists() ? (ps.data().preguntas || []) : [];
+      const nuevo = estadoInicialEditor();
+      nuevo.titulo = q.titulo + ' (copia)'; nuevo.curso = q.curso; nuevo.materia = q.materia || nuevo.materia; nuevo.minutos = q.minutos;
+      nuevo.ventana = Math.max(0, Math.round((q.cierraAt - q.abreAt) / 60000));
+      nuevo.preguntas = pregs.map(p => ({ tipo: p.tipo, texto: p.texto, opciones: p.tipo === 'mc' ? (p.opciones || []).slice() : undefined, correcta: p.correcta, puntos: p.puntos || 1, banco: false }));
+      if(!nuevo.preguntas.length) nuevo.preguntas = [preguntaVacia('mc')];
+      window.__quizEd = nuevo; navigate('quizEditar');
+    }catch(err){ showSaveError(err); }
+  });
+  if(document.getElementById('qzEliminar')) document.getElementById('qzEliminar').addEventListener('click', async () => {
+    if(modoPruebaBloquea()) return;
+    if(!(await customConfirm('¿Eliminar este quiz? No se puede deshacer.', { peligro: true, textoSi: 'Eliminar' }))) return;
+    try{
+      await deleteDoc(doc(db, 'quizzes', id)); await deleteDoc(doc(db, 'quizzesPreguntas', id));
+      showToast('Quiz eliminado'); navigate('quizzes');
+    }catch(err){ showSaveError(err); }
+  });
+}
+
+// ======================================================================
+// DOCENTE: trabajos prácticos (planilla de seguimiento)
+// ======================================================================
+const TP_ESTADOS = { e: 'Entregó', t: 'Tarde', n: 'No entregó' };
+function estadosDeTp(tpId){
+  const out = {};
+  Object.values(cache.tpEstados || {}).forEach(x => { if(x.tpId === tpId) out[x.studentId] = x.estado; });
+  return out;
+}
+function tpsDeCurso(curso){
+  return Object.values(cache.tps || {}).filter(t => t.curso === curso).sort((a, b) => (b.fecha || '').localeCompare(a.fecha || ''));
+}
+
+function renderTps(){
+  const cursos = cursosDocente();
+  if(!cursos.includes(selectedCurso)) selectedCurso = cursos[0];
+  const lista = tpsDeCurso(selectedCurso);
+  const alumnos = getStudents().filter(s => s.curso === selectedCurso).length;
+  $app.innerHTML = `
+    <div class="appbar" style="padding:0 0 10px;">
+      <button class="back-btn" id="backBtn">${icon('back')}</button>
+      <h1>Trabajos prácticos</h1>
+    </div>
+    <div class="course-picker">${cursoBtns(cursos)}</div>
+    <button class="btn-primary" id="nuevoTpBtn" style="width:100%;margin:4px 0 16px;">+ Nuevo trabajo práctico</button>
+    ${lista.length ? `<div class="module-list">${lista.map(t => {
+      const est = estadosDeTp(t.id);
+      const ent = Object.values(est).filter(v => v === 'e' || v === 't').length;
+      return `<div class="module-row" data-tp="${t.id}">
+        <div class="txt"><p class="title">${escapeHtml(t.titulo)}</p>
+        <p class="desc">${escapeHtml(t.materia || '')} · entrega ${fmtDateShort(t.fecha)}</p></div>
+        <span class="badge-soon">${ent} / ${alumnos}</span>
+      </div>`; }).join('')}</div>` : `<p class="empty-inline">No hay trabajos prácticos cargados para este curso.</p>`}
+  `;
+  document.getElementById('backBtn').addEventListener('click', () => goBack(homeRoute()));
+  attachCursoBtns((c) => { selectedCurso = c; render(); });
+  document.getElementById('nuevoTpBtn').addEventListener('click', () => navigate('tpNuevo'));
+  document.querySelectorAll('[data-tp]').forEach(el => el.addEventListener('click', () => { window.__tpSel = el.dataset.tp; navigate('tpDetalle'); }));
+}
+
+function renderTpNuevo(){
+  const materias = materiasDocenteEnCurso(selectedCurso);
+  $app.innerHTML = `
+    <div class="appbar" style="padding:0 0 10px;">
+      <button class="back-btn" id="backBtn">${icon('back')}</button>
+      <h1>Nuevo trabajo práctico</h1>
+    </div>
+    <p class="date-label">${selectedCurso}° A</p>
+    <label class="qz-label">Título</label>
+    <input type="text" class="qz-input" id="tpTitulo" placeholder="Ej: TP 2 - Ecuaciones">
+    <label class="qz-label">Materia</label>
+    <select id="tpMateria">${materias.map(m => `<option value="${escapeHtml(m)}">${escapeHtml(m)}</option>`).join('')}</select>
+    <label class="qz-label" style="margin-top:12px;">Fecha de entrega</label>
+    <input type="date" class="qz-input" id="tpFecha" value="${todayISO()}">
+    <label class="qz-label" style="margin-top:12px;">Detalle (opcional)</label>
+    <textarea class="qz-input" id="tpDetalle" rows="2" placeholder="Ej: en parejas, en hoja aparte"></textarea>
+    <label class="check-susp"><input type="checkbox" id="tpAgenda" checked> <span>Avisar en la agenda del curso <small>(los alumnos lo ven en "Mi agenda" y reciben recordatorios antes de la fecha)</small></span></label>
+    <button class="btn-primary" id="guardarTpBtn" style="width:100%;margin-top:14px;">Guardar</button>
+    <p id="tpError" class="qz-error"></p>
+  `;
+  document.getElementById('backBtn').addEventListener('click', () => goBack('tps'));
+  document.getElementById('guardarTpBtn').addEventListener('click', async () => {
+    if(modoPruebaBloquea()) return;
+    const titulo = document.getElementById('tpTitulo').value.trim();
+    const materia = document.getElementById('tpMateria').value;
+    const fecha = document.getElementById('tpFecha').value;
+    const detalle = document.getElementById('tpDetalle').value.trim();
+    const errEl = document.getElementById('tpError');
+    if(!titulo){ errEl.textContent = 'Escribí un título.'; return; }
+    if(!fecha){ errEl.textContent = 'Elegí la fecha de entrega.'; return; }
+    const id = nuevoIdCorto('t');
+    const tp = { curso: selectedCurso, materia, titulo, fecha, detalle, docenteUid: uidDocente(), docenteNombre: nombreDocente(), createdAt: Date.now() };
+    try{
+      if(document.getElementById('tpAgenda').checked){
+        const ev = await addDoc(collection(db, 'eventos'), {
+          curso: selectedCurso, materia, titulo: `${titulo}`, tipo: 'tp', fecha, detalle,
+          autor: nombreDocente(), autorUid: uidDocente(), createdAt: Date.now()
+        });
+        tp.eventoId = ev.id;
+      }
+      await setDoc(doc(db, 'tps', id), tp);
+      showToast('Trabajo práctico guardado');
+      window.__tpSel = id; navigate('tpDetalle');
+    }catch(err){ showSaveError(err); }
+  });
+}
+
+function renderTpDetalle(){
+  const t = (cache.tps || {})[window.__tpSel];
+  if(!t){ $app.innerHTML = `<p class="empty-inline" style="margin-top:40px;">No encontramos ese trabajo.</p>`; setTimeout(() => navigate('tps'), 0); return; }
+  const alumnos = getStudents().filter(s => s.curso === t.curso).sort((a, b) => a.apellido.localeCompare(b.apellido) || a.nombre.localeCompare(b.nombre));
+  const est = estadosDeTp(t.id);
+  const cuenta = { e: 0, t: 0, n: 0, sin: 0 };
+  alumnos.forEach(s => { const v = est[s.id]; if(v) cuenta[v]++; else cuenta.sin++; });
+  const filas = alumnos.map(s => {
+    const v = est[s.id] || '';
+    return `<div class="tp-fila" data-s="${s.id}">
+      <span class="tp-nombre">${escapeHtml(s.apellido)}, ${escapeHtml(s.nombre)}</span>
+      <span class="tp-btns">
+        ${['e', 't', 'n'].map(k => `<button type="button" class="tp-btn ${k} ${v === k ? 'on' : ''}" data-k="${k}">${k === 'e' ? '✓' : k === 't' ? 'Tarde' : '✗'}</button>`).join('')}
+      </span></div>`;
+  }).join('');
+  $app.innerHTML = `
+    <div class="appbar" style="padding:0 0 10px;">
+      <button class="back-btn" id="backBtn">${icon('back')}</button>
+      <h1>${escapeHtml(t.titulo)}</h1>
+    </div>
+    <p class="date-label">${t.curso}° A · ${escapeHtml(t.materia || '')} · entrega ${fmtDateShort(t.fecha)}</p>
+    ${t.detalle ? `<p class="qz-ayuda" style="margin-top:0;">${escapeHtml(t.detalle)}</p>` : ''}
+    <div class="stat-grid">
+      <div class="stat-card"><p class="label">Entregaron</p><p class="value">${cuenta.e}</p></div>
+      <div class="stat-card"><p class="label">Tarde</p><p class="value">${cuenta.t}</p></div>
+      <div class="stat-card ${cuenta.n ? 'alert' : ''}"><p class="label">No entregaron</p><p class="value">${cuenta.n}</p></div>
+      <div class="stat-card"><p class="label">Sin marcar</p><p class="value">${cuenta.sin}</p></div>
+    </div>
+    <p class="qz-ayuda">Tocá ✓ si entregó en fecha, "Tarde" si entregó después, ✗ si no entregó. Tocá de nuevo para borrar la marca.</p>
+    <button class="btn-secondary" id="tpTodos" style="width:100%;margin-bottom:10px;">Marcar a los que faltan como "entregó"</button>
+    <div class="tp-lista">${filas}</div>
+    <button class="btn-secondary" id="tpFechaBtn" style="width:100%;margin-top:16px;">Cambiar fecha de entrega</button>
+    <button class="btn-secondary" id="tpBorrarBtn" style="width:100%;margin-top:8px;color:var(--stamp);">Eliminar trabajo práctico</button>
+  `;
+  document.getElementById('backBtn').addEventListener('click', () => goBack('tps'));
+  const escribir = (sid, k) => {
+    const ref = doc(db, 'tpEstados', `${t.id}_${sid}`);
+    if(!k) return deleteDoc(ref).catch(err => showSaveError(err));
+    return setDoc(ref, { tpId: t.id, studentId: sid, curso: t.curso, estado: k, updatedAt: Date.now(), autor: nombreDocente() }).catch(err => showSaveError(err));
+  };
+  document.querySelectorAll('.tp-btn').forEach(b => b.addEventListener('click', () => {
+    if(modoPruebaBloquea()) return;
+    const sid = b.closest('.tp-fila').dataset.s;
+    escribir(sid, (est[sid] === b.dataset.k) ? null : b.dataset.k);
+  }));
+  document.getElementById('tpTodos').addEventListener('click', async () => {
+    if(modoPruebaBloquea()) return;
+    const faltan = alumnos.filter(s => !est[s.id]);
+    if(!faltan.length){ showToast('No queda nadie sin marcar'); return; }
+    if(!(await customConfirm(`Se marca "entregó" a los ${faltan.length} alumnos que no tienen marca. ¿Seguir?`, { textoSi: 'Marcar' }))) return;
+    faltan.forEach(s => escribir(s.id, 'e'));
+  });
+  document.getElementById('tpFechaBtn').addEventListener('click', async () => {
+    if(modoPruebaBloquea()) return;
+    const f = await customPrompt('Nueva fecha de entrega:', t.fecha, 'date');
+    if(!f || !/^\d{4}-\d{2}-\d{2}$/.test(f)) return;
+    try{
+      await setDoc(doc(db, 'tps', t.id), { fecha: f }, { merge: true });
+      if(t.eventoId) await setDoc(doc(db, 'eventos', t.eventoId), { fecha: f, notificadoSemana: false, notificadoDia: false }, { merge: true }).catch(() => {});
+      showToast('Fecha actualizada');
+    }catch(err){ showSaveError(err); }
+  });
+  document.getElementById('tpBorrarBtn').addEventListener('click', async () => {
+    if(modoPruebaBloquea()) return;
+    if(!(await customConfirm('¿Eliminar este trabajo práctico y todas sus marcas? No se puede deshacer.', { peligro: true, textoSi: 'Eliminar' }))) return;
+    try{
+      const marcas = Object.values(cache.tpEstados || {}).filter(x => x.tpId === t.id);
+      await Promise.all(marcas.map(x => deleteDoc(doc(db, 'tpEstados', x.id))));
+      if(t.eventoId) await deleteDoc(doc(db, 'eventos', t.eventoId)).catch(() => {});
+      await deleteDoc(doc(db, 'tps', t.id));
+      showToast('Trabajo práctico eliminado'); navigate('tps');
+    }catch(err){ showSaveError(err); }
+  });
+}
+
+// ======================================================================
+// ALUMNO: quizes y trabajos prácticos
+// ======================================================================
+function quizzesDelAlumno(){
+  const curso = currentStudentAuth.curso;
+  return Object.values(cache.quizzes || {}).filter(q => q.curso === curso && q.estado === 'publicado')
+    .sort((a, b) => (b.abreAt || 0) - (a.abreAt || 0));
+}
+function intentoDe(quizId){
+  const miId = currentStudentAuth.studentId;
+  return (cache.quizIntentos || {})[`${quizId}_${miId}`] || null;
+}
+// Estado de un quiz visto por el alumno.
+function estadoQuizAlumno(q){
+  const ahora = Date.now();
+  const i = intentoDe(q.id);
+  if(i && i.estado === 'entregado') return { k: 'hecho', txt: `Nota: ${i.puntaje} / ${q.puntosTotal}`, i };
+  if(i && i.estado === 'vencido') return { k: 'vencido', txt: 'No entregado a tiempo', i };
+  if(i && i.estado === 'en_curso' && ahora < (i.finAt || 0) + 60000) return { k: 'curso', txt: 'Continuar', i };
+  if(ahora < q.abreAt) return { k: 'prog', txt: `Se abre ${fmtFechaHora(q.abreAt)}`, i };
+  if(ahora <= q.cierraAt) return { k: 'abierto', txt: 'Empezar', i };
+  return { k: 'cerrado', txt: 'Cerrado', i };
+}
+
+let _tickQuizzes = null;
+function renderStudentQuizzes(){
+  clearInterval(_tickQuizzes);
+  _tickQuizzes = setInterval(() => { if(currentRoute === 'studentQuizzes') render(); else clearInterval(_tickQuizzes); }, 30000);
+  const lista = quizzesDelAlumno();
+  const filas = lista.map(q => {
+    const e = estadoQuizAlumno(q);
+    const accion = e.k === 'abierto' || e.k === 'curso';
+    return `<div class="module-row quiz-al ${e.k}" data-q="${q.id}">
+      <div class="txt"><p class="title">${escapeHtml(q.titulo)}</p>
+      <p class="desc">${escapeHtml(q.materia || '')} · ${q.minutos} min · ${q.nPreguntas} preguntas</p></div>
+      <span class="${accion ? 'btn-empezar' : 'badge-soon'}">${e.txt}</span>
+    </div>`;
+  }).join('');
+  $app.innerHTML = `
+    <div class="appbar" style="padding:0 0 10px;">
+      <button class="back-btn" id="backBtn">${icon('back')}</button>
+      <h1>Mis quizes</h1>
+    </div>
+    ${lista.length ? `<div class="module-list">${filas}</div>` : `<p class="empty-inline">Por ahora no hay quizes para tu curso.</p>`}
+  `;
+  document.getElementById('backBtn').addEventListener('click', () => goBack('studentHome'));
+  document.querySelectorAll('[data-q]').forEach(el => el.addEventListener('click', () => {
+    const q = cache.quizzes[el.dataset.q]; if(!q) return;
+    const e = estadoQuizAlumno(q);
+    window.__quizSel = q.id;
+    if(e.k === 'hecho') navigate('quizResultado');
+    else if(e.k === 'abierto') empezarQuiz(q);
+    else if(e.k === 'curso') empezarQuiz(q, true);
+    else if(e.k === 'prog') showToast(`Se abre el ${fmtFechaHora(q.abreAt)}`);
+    else if(e.k === 'vencido') showToast('No se entregó a tiempo');
+    else showToast('Este quiz ya cerró');
+  }));
+}
+
+async function empezarQuiz(q, reanudar){
+  if(modoPrueba){ avisoPrueba(); return; }
+  if(!reanudar){
+    const ok = await customConfirm(`Vas a empezar "${q.titulo}". Tenés ${q.minutos} minutos desde que toques Empezar y el tiempo no se puede pausar. ¿Empezar ahora?`, { textoSi: 'Empezar' });
+    if(!ok) return;
+  }
+  try{
+    showToast('Cargando quiz…');
+    const res = await httpsCallable(fbFunctions, 'iniciarQuiz')({ quizId: q.id });
+    const d = res.data || {};
+    // Guardamos la diferencia entre el reloj del servidor y el del celular.
+    const offset = (d.ahora || Date.now()) - Date.now();
+    let resp = {};
+    try{ resp = JSON.parse(localStorage.getItem('quiz_' + q.id) || '{}') || {}; }catch(e){}
+    window.__quizRun = { quizId: q.id, titulo: d.titulo || q.titulo, preguntas: d.preguntas || [], finAt: d.finAt, offset, resp, enviando: false, avisoMin: false };
+    navigate('quizRendir');
+  }catch(err){
+    console.warn('iniciarQuiz', err);
+    const m = (err && err.message) || '';
+    showToast(m && !/internal/i.test(m) ? m : 'No se pudo iniciar el quiz. Revisá tu conexión e intentá de nuevo.', 'error');
+  }
+}
+
+let _tickRun = null;
+function restanteMs(){ const r = window.__quizRun; return r.finAt - (Date.now() + r.offset); }
+function fmtReloj(ms){
+  const s = Math.max(0, Math.ceil(ms / 1000));
+  return `${Math.floor(s / 60)}:${dosDig(s % 60)}`;
+}
+function guardarRespLocal(){
+  const r = window.__quizRun; if(!r) return;
+  try{ localStorage.setItem('quiz_' + r.quizId, JSON.stringify(r.resp)); }catch(e){}
+}
+function renderQuizRendir(){
+  const r = window.__quizRun;
+  if(!r){ setTimeout(() => navigate('studentQuizzes'), 0); return; }
+  document.body.classList.add('hoja-notas-abierta');
+  const n = r.preguntas.length;
+  const respondidas = r.preguntas.filter(p => r.resp[p.id] !== undefined).length;
+  $app.innerHTML = `
+    <div class="quiz-barra"><div class="qb-titulo">${escapeHtml(r.titulo)}</div>
+      <div class="qb-reloj" id="qbReloj">${fmtReloj(restanteMs())}</div></div>
+    <p class="qz-ayuda" style="margin:8px 0 12px;">Respondidas: <b id="qbCuenta">${respondidas}</b> de ${n}. Si se acaba el tiempo, se entrega solo lo que respondiste.</p>
+    ${r.preguntas.map((p, i) => `<div class="qz-preg alumno">
+      <p class="qz-num">Pregunta ${i + 1} · ${p.puntos} ${p.puntos === 1 ? 'punto' : 'puntos'}</p>
+      <p class="qr-texto">${escapeHtml(p.texto)}</p>
+      ${p.tipo === 'vf'
+        ? `<div class="qr-ops">${[['true', 'Verdadero'], ['false', 'Falso']].map(([v, t]) => `<button type="button" class="qr-op ${String(r.resp[p.id]) === v ? 'on' : ''}" data-p="${p.id}" data-v="${v}">${t}</button>`).join('')}</div>`
+        : `<div class="qr-ops">${p.opciones.map((o, k) => `<button type="button" class="qr-op ${r.resp[p.id] === k ? 'on' : ''}" data-p="${p.id}" data-v="${k}">${escapeHtml(o)}</button>`).join('')}</div>`}
+    </div>`).join('')}
+    <button class="btn-primary" id="qrEntregar" style="width:100%;margin:16px 0 40px;">Entregar</button>
+  `;
+  document.querySelectorAll('.qr-op').forEach(b => b.addEventListener('click', () => {
+    const p = r.preguntas.find(x => x.id === b.dataset.p);
+    r.resp[p.id] = p.tipo === 'vf' ? (b.dataset.v === 'true') : +b.dataset.v;
+    guardarRespLocal();
+    b.parentElement.querySelectorAll('.qr-op').forEach(x => x.classList.toggle('on', x === b));
+    document.getElementById('qbCuenta').textContent = r.preguntas.filter(x => r.resp[x.id] !== undefined).length;
+  }));
+  document.getElementById('qrEntregar').addEventListener('click', async () => {
+    const faltan = r.preguntas.filter(x => r.resp[x.id] === undefined).length;
+    const msg = faltan ? `Te faltan ${faltan} sin responder. ¿Entregar igual?` : '¿Entregar el quiz? Después no se puede cambiar.';
+    if(await customConfirm(msg, { textoSi: 'Entregar' })) entregarQuiz();
+  });
+  clearInterval(_tickRun);
+  _tickRun = setInterval(() => {
+    if(currentRoute !== 'quizRendir' || !window.__quizRun){ clearInterval(_tickRun); return; }
+    const ms = restanteMs();
+    const el = document.getElementById('qbReloj');
+    if(el){ el.textContent = fmtReloj(ms); el.classList.toggle('poco', ms < 60000); }
+    if(ms <= 0){ clearInterval(_tickRun); entregarQuiz(true); }
+  }, 500);
+}
+
+async function entregarQuiz(auto){
+  const r = window.__quizRun;
+  if(!r || r.enviando) return;
+  r.enviando = true;
+  clearInterval(_tickRun);
+  showToast(auto ? 'Se acabó el tiempo: entregando…' : 'Entregando…');
+  try{
+    await httpsCallable(fbFunctions, 'enviarQuiz')({ quizId: r.quizId, respuestas: r.resp });
+    try{ localStorage.removeItem('quiz_' + r.quizId); }catch(e){}
+    window.__quizSel = r.quizId;
+    window.__quizRun = null;
+    document.body.classList.remove('hoja-notas-abierta');
+    navigate('quizResultado');
+  }catch(err){
+    console.warn('enviarQuiz', err);
+    r.enviando = false;
+    showToast('No se pudo entregar. Tus respuestas están guardadas: revisá la conexión y tocá Entregar de nuevo.', 'error');
+    if(auto){ _tickRun = setInterval(() => { if(currentRoute === 'quizRendir' && window.__quizRun) entregarQuiz(true); else clearInterval(_tickRun); }, 5000); }
+  }
+}
+
+function renderQuizResultado(){
+  document.body.classList.remove('hoja-notas-abierta');
+  const q = (cache.quizzes || {})[window.__quizSel];
+  const i = q ? intentoDe(q.id) : null;
+  if(!q || !i){
+    $app.innerHTML = `
+      <div class="appbar" style="padding:0 0 10px;"><button class="back-btn" id="backBtn">${icon('back')}</button><h1>Resultado</h1></div>
+      <p class="empty-inline">Cargando tu resultado…</p>`;
+    document.getElementById('backBtn').addEventListener('click', () => goBack('studentQuizzes'));
+    return;
+  }
+  const total = q.puntosTotal || 0;
+  const pc = total ? Math.round((i.puntaje / total) * 100) : 0;
+  const det = i.detalle || [];
+  $app.innerHTML = `
+    <div class="appbar" style="padding:0 0 10px;"><button class="back-btn" id="backBtn">${icon('back')}</button><h1>${escapeHtml(q.titulo)}</h1></div>
+    <div class="qz-nota ${pc >= 60 ? 'ok' : 'bajo'}">
+      <p class="qz-nota-num">${i.puntaje} / ${total}</p>
+      <p class="qz-nota-pc">${pc}% de respuestas correctas${i.fueraDeTiempo ? ' · entregado fuera de tiempo' : ''}</p>
+    </div>
+    ${det.map((d, k) => `<div class="qz-preg alumno ${d.ok ? 'bien' : 'mal'}">
+      <p class="qz-num">Pregunta ${k + 1} · ${d.ok ? '✓ Correcta' : '✗ Incorrecta'} · ${d.puntos || 0} ${d.puntos === 1 ? 'punto' : 'puntos'}</p>
+      <p class="qr-texto">${escapeHtml(d.texto || '')}</p>
+      <p class="qr-res">Tu respuesta: <b>${textoRespuesta(d, d.respuesta)}</b></p>
+      ${d.ok ? '' : `<p class="qr-res correcta">Correcta: <b>${textoRespuesta(d, d.correcta)}</b></p>`}
+    </div>`).join('')}
+  `;
+  document.getElementById('backBtn').addEventListener('click', () => goBack('studentQuizzes'));
+}
+function textoRespuesta(d, v){
+  if(v === undefined || v === null) return 'Sin responder';
+  if(d.tipo === 'vf') return v === true ? 'Verdadero' : 'Falso';
+  return escapeHtml((d.opciones || [])[v] || 'Sin responder');
+}
+
+// ---------- TPs del alumno ----------
+function renderStudentTps(){
+  const miId = currentStudentAuth.studentId;
+  const lista = Object.values(cache.tps || {}).filter(t => t.curso === currentStudentAuth.curso).sort((a, b) => (b.fecha || '').localeCompare(a.fecha || ''));
+  const est = {}; Object.values(cache.tpEstados || {}).forEach(x => { if(x.studentId === miId) est[x.tpId] = x.estado; });
+  const txt = { e: ['Entregado', 'ok'], t: ['Entregado tarde', 'tarde'], n: ['No entregado', 'no'] };
+  $app.innerHTML = `
+    <div class="appbar" style="padding:0 0 10px;"><button class="back-btn" id="backBtn">${icon('back')}</button><h1>Mis trabajos prácticos</h1></div>
+    ${lista.length ? lista.map(t => {
+      const e = txt[est[t.id]] || [diasHasta(t.fecha) < 0 ? 'Sin marcar' : 'Pendiente', 'sin'];
+      return `<div class="sancion-item">
+        <div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start;">
+          <div><p class="folio">${escapeHtml(t.materia || '')}</p><p class="motivo">${escapeHtml(t.titulo)}</p>
+          <p class="sancion-meta">Entrega: ${fmtDateShort(t.fecha)}${t.detalle ? ' · ' + escapeHtml(t.detalle) : ''}</p></div>
+          <span class="tp-chip ${e[1]}">${e[0]}</span>
+        </div></div>`; }).join('') : `<p class="empty-inline">Todavía no hay trabajos prácticos cargados.</p>`}
+  `;
+  document.getElementById('backBtn').addEventListener('click', () => goBack('studentHome'));
+}
+
+// Quizes como eventos de la agenda del alumno (no se guardan: se arman a partir de los quizes publicados).
+function eventosQuizAlumno(){
+  return quizzesDelAlumno().map(q => ({
+    id: 'quiz_' + q.id, tipo: 'otro', curso: q.curso, materia: q.materia || '',
+    titulo: 'Quiz: ' + escapeHtml(q.titulo), fecha: localISODate(new Date(q.abreAt)),
+    detalle: `Se habilita ${fmtFechaHora(q.abreAt).split(' ').pop()} · ${q.minutos} min`, createdAt: q.updatedAt || 0, esQuiz: true
+  }));
+}
+
+// ---------- Barra de faltas (solo en pantalla) ----------
+function barraFaltasHtml(faltasAnio){
+  const pct = Math.min(100, Math.round((faltasAnio / UMBRAL_ANUAL) * 100));
+  const quedan = Math.max(0, UMBRAL_ANUAL - faltasAnio);
+  const cls = faltasAnio >= UMBRAL_ANUAL ? 'danger' : faltasAnio >= 15 ? 'warn' : 'ok';
+  const msg = faltasAnio >= UMBRAL_ANUAL ? `Superaste el tope de ${UMBRAL_ANUAL} faltas.`
+    : faltasAnio >= 15 ? `Cuidado: te quedan ${String(quedan).replace('.', ',')} ${quedan === 1 ? 'falta' : 'faltas'} para llegar al tope.`
+    : `Te quedan ${String(quedan).replace('.', ',')} faltas para el tope de ${UMBRAL_ANUAL}.`;
+  return `<div class="faltas-barra ${cls}"><div class="fb-fondo"><div class="fb-llena" style="width:${pct}%"></div></div><p>${msg}</p></div>`;
 }
 
 // ---------- Init ----------
