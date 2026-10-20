@@ -1,6 +1,6 @@
 // ===== Preceptoría ISP — lógica de la app (Etapa 1) =====
 
-const APP_VERSION = 130;
+const APP_VERSION = 131;
 const SEED_STUDENTS = []; // la lista de alumnos vive en Firestore (colección students), no en el código
 
 const CURSOS = ['1','2','3','4','5'];
@@ -1941,9 +1941,8 @@ function instalarBannerHtml(){
     </div>
   </div>`;
 }
-function renderInstalarApp(){
-  const plataforma = window.__instalarPlat || (esIPhone() ? 'ios' : 'android');
-  const pasos = plataforma === 'ios' ? [
+function pasosInstalacion(plataforma){
+  return plataforma === 'ios' ? [
     ['Abrí la app en Safari', 'Tiene que ser Safari (la brújula azul), no Chrome ni un navegador dentro de WhatsApp o Instagram. Si estás en otro, copiá el link y pegalo en Safari.'],
     ['Tocá el botón Compartir', 'Es el cuadrado con una flecha hacia arriba, abajo en el centro de la pantalla.'],
     ['Elegí "Agregar a inicio"', 'Deslizá hacia arriba el menú hasta encontrar "Agregar a pantalla de inicio" (con un signo +).'],
@@ -1956,6 +1955,67 @@ function renderInstalarApp(){
     ['Confirmá con "Instalar"', 'En tu pantalla de inicio aparece el ícono del Instituto Superior Porteño.'],
     ['Abrila desde el ícono y activá las notificaciones', 'Cuando la app te lo ofrezca, tocá "Activar notificaciones" y después "Permitir". Así te avisamos de exámenes, TPs y notas.']
   ];
+}
+
+// ---------- Guía de instalación la primera vez que alguien entra ----------
+// Aparece una sola vez por celular (queda anotado en el propio dispositivo), solo si la app
+// todavía no está instalada y se abrió desde un celular. Se puede volver a ver desde Config.
+function esCelular(){ return /android|iphone|ipad|ipod|mobile/i.test(navigator.userAgent) || esIPhone(); }
+function navegadorIntegrado(){ return /FBAN|FBAV|Instagram|WhatsApp|Line\/|Snapchat|TikTok|Messenger/i.test(navigator.userAgent); }
+let guiaInstalarEnPantalla = false;
+function guiaInstalarVista(){ try{ return localStorage.getItem('isp_guia_instalar') === '1'; }catch(e){ return false; } }
+function marcarGuiaVista(){ try{ localStorage.setItem('isp_guia_instalar', '1'); }catch(e){} }
+function mostrarGuiaInstalarSiCorresponde(){
+  if(guiaInstalarEnPantalla || guiaInstalarVista() || modoPrueba || appInstalada() || !esCelular()) return;
+  mostrarGuiaInstalar();
+}
+function mostrarGuiaInstalar(){
+  if(guiaInstalarEnPantalla) return;
+  guiaInstalarEnPantalla = true;
+  const plat = esIPhone() ? 'ios' : 'android';
+  const pasos = pasosInstalacion(plat);
+  let i = -1; // -1 = pantalla de bienvenida
+  const ov = document.createElement('div');
+  ov.className = 'guia-inst-overlay';
+  document.body.appendChild(ov);
+  const cerrar = () => { marcarGuiaVista(); guiaInstalarEnPantalla = false; ov.classList.remove('show'); setTimeout(() => ov.remove(), 200); };
+  const dibujar = () => {
+    let cuerpo;
+    if(i < 0){
+      cuerpo = `<p class="gi-titulo">Instalá la app en tu celular</p>
+        <p class="gi-texto">Así se abre con un toque desde la pantalla de inicio, más rápido, y es la única forma de recibir avisos de exámenes, notas y novedades.</p>
+        ${navegadorIntegrado() ? `<p class="gi-alerta">Ahora la abriste dentro de otra aplicación (WhatsApp, Instagram…). Para instalarla tenés que abrirla en ${plat === 'ios' ? 'Safari' : 'Chrome'}: copiá el link y pegalo ahí.</p>` : ''}
+        <div class="gi-botones"><button class="btn-primary" id="giSigue">Mostrame cómo</button><button class="btn-secondary" id="giCerrar">Ahora no</button></div>`;
+    } else {
+      const p = pasos[i], ultimo = i === pasos.length - 1;
+      cuerpo = `<p class="gi-paso">Paso ${i + 1} de ${pasos.length}</p>
+        <div class="gi-puntos">${pasos.map((_, k) => `<span class="${k === i ? 'on' : (k < i ? 'hecho' : '')}"></span>`).join('')}</div>
+        <p class="gi-titulo">${p[0]}</p>
+        <p class="gi-texto">${p[1]}</p>
+        ${i === 0 && plat === 'android' && eventoInstalar ? `<button class="btn-primary" id="giInstalar" style="margin-bottom:10px;">Instalar ahora (más fácil)</button>` : ''}
+        <div class="gi-botones">
+          <button class="btn-secondary" id="giAtras">Anterior</button>
+          <button class="btn-primary" id="${ultimo ? 'giCerrar' : 'giSigue'}">${ultimo ? 'Listo' : 'Siguiente'}</button>
+        </div>
+        ${ultimo ? '' : `<button class="gi-salir" id="giCerrar">Salir de la guía</button>`}`;
+    }
+    ov.innerHTML = `<div class="gi-caja" role="dialog" aria-modal="true">${cuerpo}</div>`;
+    const q = (id) => ov.querySelector('#' + id);
+    if(q('giSigue')) q('giSigue').addEventListener('click', () => { i++; dibujar(); });
+    if(q('giAtras')) q('giAtras').addEventListener('click', () => { i--; dibujar(); });
+    if(q('giCerrar')) q('giCerrar').addEventListener('click', cerrar);
+    if(q('giInstalar')) q('giInstalar').addEventListener('click', async () => {
+      try{ eventoInstalar.prompt(); await eventoInstalar.userChoice; }catch(e){}
+      eventoInstalar = null; cerrar();
+    });
+  };
+  dibujar();
+  requestAnimationFrame(() => ov.classList.add('show'));
+}
+
+function renderInstalarApp(){
+  const plataforma = window.__instalarPlat || (esIPhone() ? 'ios' : 'android');
+  const pasos = pasosInstalacion(plataforma);
   $app.innerHTML = `
     <div class="appbar" style="padding:0 0 10px;">
       <button class="back-btn" id="backBtn">${icon('back')}</button>
@@ -3243,6 +3303,7 @@ function render(){
   renderInner();
   restaurarBorrador(borrador);
   franjaPrueba();
+  setTimeout(mostrarGuiaInstalarSiCorresponde, 900);
   const transicion = pendingTransicion;
   pendingTransicion = null;
   let clase = null;
@@ -7579,8 +7640,10 @@ function renderConfig(){
       <p class="v">Instituto Superior Porteño</p>
       <p style="font-size:calc(12px * var(--fs, 1));color:var(--ink-soft);margin-top:4px;">Preceptoría Digital · A-80 · Montañeses 1936, CABA</p>
       <p style="font-size:calc(11.5px * var(--fs, 1));color:var(--ink-soft);margin-top:2px;">Versión ${APP_VERSION}</p>
+      <button class="btn-secondary" id="verGuiaInstalarBtn" style="margin-top:10px;width:100%;">Ver la guía de instalación</button>
     </div>
   `;
+  document.getElementById('verGuiaInstalarBtn').addEventListener('click', () => mostrarGuiaInstalar());
   if(document.getElementById('prepararDatosBtn')){
     document.getElementById('prepararDatosBtn').addEventListener('click', async (e) => {
       if(modoPruebaBloquea()) return;
