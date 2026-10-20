@@ -994,3 +994,8 @@ textarea.qz-input{resize:vertical;}
 .qz-banco input[type="checkbox"],.banco-item input[type="checkbox"],.check-susp input[type="checkbox"]{width:auto;flex:none;margin:0;}
 input[type="datetime-local"].qz-input,input[type="date"].qz-input{min-width:0;max-width:100%;-webkit-appearance:none;appearance:none;display:block;text-align:left;min-height:44px;}
 input[type="datetime-local"].qz-input::-webkit-date-and-time-value{text-align:left;}
+.nota-input{width:54px;padding:7px 6px;text-align:center;font:inherit;font-size:calc(14px * var(--fs, 1));border:0.5px solid var(--border);border-radius:8px;background:var(--card);color:var(--ink);}
+.chips-col{display:flex;flex-direction:column;gap:4px;align-items:flex-end;flex:none;}
+.tp-chip.nota{background:var(--sage);color:#fff;font-weight:600;}
+.agenda-date.quiz{background:var(--gold-bg);}
+.agenda-date.quiz .dom{color:var(--gold);}

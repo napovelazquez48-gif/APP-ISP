@@ -1,6 +1,6 @@
 // ===== Preceptoría ISP — lógica de la app (Etapa 1) =====
 
-const APP_VERSION = 134;
+const APP_VERSION = 135;
 const SEED_STUDENTS = []; // la lista de alumnos vive en Firestore (colección students), no en el código
 
 const CURSOS = ['1','2','3','4','5'];
@@ -140,7 +140,7 @@ let cache = {
   autorizaciones: {},
   teachers: {},
   valoraciones: {},
-  quizzes: {}, quizIntentos: {}, tps: {}, tpEstados: {}, bancoPreguntas: {},
+  quizzes: {}, quizIntentos: {}, eventoNotas: {}, bancoPreguntas: {},
   notas: {},
   viewers: {},
   driveMapping: {},
@@ -2147,8 +2147,6 @@ function renderHome(){
       ${moduleTile('calendar','Horarios y suplencias','horarios')}
       ${moduleTile('calendar','Calendario del ciclo','calendarioCiclo')}
       ${moduleTile('clipboard','Agenda','agenda')}
-      ${moduleTile('file','Quizes','quizzes')}
-      ${moduleTile('clipboard','Trabajos prácticos','tps')}
       ${moduleTile('users','Familias','familias')}
       ${moduleTile('chart','Resumen del alumno','resumen')}
       ${moduleTile('chart','Vista por curso','vistaCurso')}
@@ -3355,6 +3353,7 @@ function renderInner(){
   if(RUTAS_SOLO_NAPO.includes(currentRoute) && (userRole!=='admin' || getUsuario()!=='Napo')){
     currentRoute = userRole==='admin' ? 'home' : homeRoute();
   }
+  if(userRole === 'teacher' && (currentRoute === 'sanciones' || currentRoute === 'sancionDetalle')) currentRoute = 'teacherHome';
   if(currentRoute === 'bienvenida'){ currentRoute = 'profesorLogin'; }
   if(currentRoute === 'quien'){ renderQuien(); renderTabbar(); return; }
   if(currentRoute === 'profesorLogin'){ renderProfesorLogin(); renderTabbar(); return; }
@@ -3425,13 +3424,8 @@ function renderInner(){
   else if(currentRoute === 'quizEditar') renderQuizEditar();
   else if(currentRoute === 'quizResultados') renderQuizResultados();
   else if(currentRoute === 'banco') renderBanco();
-  else if(currentRoute === 'tps') renderTps();
-  else if(currentRoute === 'tpNuevo') renderTpNuevo();
-  else if(currentRoute === 'tpDetalle') renderTpDetalle();
-  else if(currentRoute === 'studentQuizzes') renderStudentQuizzes();
   else if(currentRoute === 'quizRendir') renderQuizRendir();
   else if(currentRoute === 'quizResultado') renderQuizResultado();
-  else if(currentRoute === 'studentTps') renderStudentTps();
   renderTabbar();
 }
 
@@ -4686,13 +4680,10 @@ function renderTeacherHome(){
 
     <div class="module-list">
       ${moduleRow('clipboard','Asistencia diaria','Solo consulta, por curso', 'asistencia')}
-      ${moduleRow('alert','Sanciones e incidentes','Registro por alumno', 'sanciones')}
       ${moduleRow('file','Valoraciones pedagógicas','Bimestral, por materia', 'valoraciones')}
       ${moduleRow('chart','Notas','Cuatrimestral, escala 1 a 10', 'notas')}
       ${moduleRow('users','Resumen del alumno','Faltas, apercibimientos y certificados', 'resumen')}
-      ${moduleRow('calendar','Agenda','Exámenes, recuperatorios, TPs y más', 'agenda')}
-      ${moduleRow('file','Quizes','Con tiempo, corrección automática', 'quizzes')}
-      ${moduleRow('clipboard','Trabajos prácticos','Quién entregó y quién no', 'tps')}
+      ${moduleRow('calendar','Agenda','Exámenes, TPs, quizes y sus notas', 'agenda')}
     </div>
 
     <p style="text-align:center;margin-top:18px;">
@@ -4733,9 +4724,7 @@ function renderStudentHome(){
       ${moduleRow('clipboard','Mis faltas','Bimestre, materias y detalle día por día', 'studentFaltas')}
       ${moduleRow('chart','Mis notas','1er y 2do cuatrimestre', 'studentNotas')}
       ${moduleRow('calendar','Mi horario','Materias y profesores por día', 'studentHorario')}
-      ${moduleRow('calendar','Mi agenda','Exámenes, recuperatorios, TPs y más', 'studentAgenda')}
-      ${moduleRow('file','Mis quizes','Se habilitan en un horario y tienen tiempo', 'studentQuizzes')}
-      ${moduleRow('clipboard','Mis trabajos prácticos','Entregados y pendientes', 'studentTps')}
+      ${moduleRow('calendar','Mi agenda','Exámenes, TPs, quizes y tus notas', 'studentAgenda')}
       ${moduleRow('users','Mis profesores','Materia y mail de contacto', 'studentProfesores')}
     </div>
 
@@ -6679,12 +6668,10 @@ function renderTabbar(){
   if(userRole === 'teacher'){
     tb.innerHTML = `
       <button class="tab ${currentRoute==='teacherHome'?'active':''}" id="tabHome">${icon('home')}<span>Inicio</span></button>
-      <button class="tab ${currentRoute==='sanciones'||currentRoute==='sancionDetalle'?'active':''}" id="tabSanciones">${icon('alert')}<span>Sanciones</span></button>
       <button class="tab ${currentRoute==='resumen'||currentRoute==='resumenAlumno'?'active':''}" id="tabResumen">${icon('chart')}<span>Resumen</span></button>
       <button class="tab ${currentRoute==='agenda'||currentRoute==='agendaNuevo'||currentRoute==='agendaDetalle'?'active':''}" id="tabAgenda">${icon('calendar')}<span>Agenda</span></button>
     `;
     document.getElementById('tabHome').addEventListener('click', () => navigate('teacherHome', null, 'tab'));
-    document.getElementById('tabSanciones').addEventListener('click', () => navigate('sanciones', null, 'tab'));
     document.getElementById('tabResumen').addEventListener('click', () => navigate('resumen', null, 'tab'));
     document.getElementById('tabAgenda').addEventListener('click', () => navigate('agenda', null, 'tab'));
     return;
@@ -6857,7 +6844,7 @@ function fmtDiasHasta(dias){
   if(dias === 1) return 'Mañana';
   return `En ${dias} días`;
 }
-const EVENTO_TIPOS = { examen:'Examen', recuperatorio:'Recuperatorio', tp:'Entrega de TP', otro:'Otro' };
+const EVENTO_TIPOS = { examen:'Examen', recuperatorio:'Recuperatorio', tp:'Entrega de TP', quiz:'Quiz', otro:'Otro' };
 function eventoIcon(tipo){
   return tipo==='examen' ? 'file' : tipo==='recuperatorio' ? 'clock' : tipo==='tp' ? 'clipboard' : 'calendar';
 }
@@ -7823,7 +7810,7 @@ function cursosAgendaDisponibles(){
 const MESES_CORTOS = ['ene','feb','mar','abr','may','jun','jul','ago','sep','oct','nov','dic'];
 
 // Tarjeta compartida entre la agenda del preceptor/profesor y la del alumno.
-function filaAgenda(e, clickeable){
+function filaAgenda(e, clickeable, extra){
   const d = new Date(e.fecha+'T12:00:00');
   const dias = diasHasta(e.fecha);
   const urgente = dias <= 1;
@@ -7833,7 +7820,7 @@ function filaAgenda(e, clickeable){
       <p class="title">${e.titulo}</p>
       <p class="agenda-materia">${e.materia || 'Todas las materias'}${e.detalle ? ' · '+e.detalle : ''}</p>
     </div>
-    <span class="badge-dias ${urgente?'urgente':''}">${fmtDiasHasta(dias)}</span>
+    ${extra ? extra : `<span class="badge-dias ${urgente?'urgente':''}">${fmtDiasHasta(dias)}</span>`}
   </div>`;
 }
 
@@ -7850,7 +7837,11 @@ function renderAgenda(){
       <h1>Agenda</h1>
     </div>
     <div class="course-picker">${cursoBtns(cursos)}</div>
-    <button class="btn-primary" id="nuevoEventoBtn" style="width:100%;margin:4px 0 16px;">+ Nuevo evento</button>
+    <div class="qz-agregar" style="margin:4px 0 8px;">
+      <button class="btn-primary" id="nuevoEventoBtn">+ Examen, TP u otro</button>
+      <button class="btn-primary" id="nuevoQuizAgBtn">+ Quiz con tiempo</button>
+    </div>
+    <button class="btn-secondary" id="quizzesBancoBtn" style="width:100%;margin-bottom:16px;">Mis quizes y banco de preguntas</button>
     <p class="section-label">Próximos</p>
     ${proximos.length ? proximos.map(e=>filaAgenda(e,true)).join('') : `<p class="empty-inline">No hay eventos próximos para este curso.</p>`}
     ${pasados.length ? `<p class="section-label" style="margin-top:18px;">Pasados</p>${pasados.map(e=>filaAgenda(e,true)).join('')}` : ''}
@@ -7858,6 +7849,8 @@ function renderAgenda(){
   document.getElementById('backBtn').addEventListener('click', () => goBack(homeRoute()));
   attachCursoBtns((c) => { selectedCurso = c; render(); });
   document.getElementById('nuevoEventoBtn').addEventListener('click', () => navigate('agendaNuevo'));
+  document.getElementById('nuevoQuizAgBtn').addEventListener('click', () => { window.__quizEd = null; navigate('quizEditar'); });
+  document.getElementById('quizzesBancoBtn').addEventListener('click', () => navigate('quizzes'));
   document.querySelectorAll('[data-evento]').forEach(el => {
     el.addEventListener('click', () => { selectedEventoId = el.dataset.evento; navigate('agendaDetalle'); });
   });
@@ -7876,7 +7869,7 @@ function renderAgendaNuevo(){
     <p style="font-size:calc(12.5px * var(--fs, 1));color:var(--ink-soft);margin:0 0 6px;">Curso</p>
     <div class="course-picker" style="margin-bottom:14px;">${cursoBtns(cursos)}</div>
     <div class="field-row"><label>Tipo</label>
-      <select id="eventoTipo">${Object.entries(EVENTO_TIPOS).map(([k,v])=>`<option value="${k}">${v}</option>`).join('')}</select>
+      <select id="eventoTipo">${Object.entries(EVENTO_TIPOS).filter(([k]) => k !== 'quiz').map(([k,v])=>`<option value="${k}">${v}</option>`).join('')}</select>
     </div>
     <div class="field-row"><label>Materia</label>
       <select id="eventoMateria">
@@ -7926,10 +7919,36 @@ async function crearEvento(){
   }catch(err){ showSaveError(err); }
 }
 
+function notasDeEvento(eventoId){
+  const out = {};
+  Object.values(cache.eventoNotas || {}).forEach(x => { if(x.eventoId === eventoId) out[x.studentId] = x; });
+  return out;
+}
+function nombreCorto(n){ return String(n).replace('.', ','); }
 function renderAgendaDetalle(){
   const e = getEventos()[selectedEventoId];
   if(!e){ navigate('agenda'); return; }
   const puedeBorrar = userRole === 'admin' || (userRole === 'teacher' && e.autorUid === currentTeacher.uid);
+  const puedeNotas = userRole === 'admin' || userRole === 'teacher';
+  const esQuiz = e.tipo === 'quiz';
+  const esTp = e.tipo === 'tp';
+  const quiz = esQuiz ? (cache.quizzes || {})[e.quizId] : null;
+  const alumnos = getStudents().filter(s => s.curso === e.curso).sort((a, b) => a.apellido.localeCompare(b.apellido) || a.nombre.localeCompare(b.nombre));
+  const notas = notasDeEvento(e.id);
+  const valores = Object.values(notas).map(x => x.nota).filter(n => typeof n === 'number');
+  const prom = valores.length ? valores.reduce((a, b) => a + b, 0) / valores.length : null;
+  const cuenta = { e: 0, t: 0, n: 0 };
+  Object.values(notas).forEach(x => { if(x.estado && cuenta[x.estado] !== undefined) cuenta[x.estado]++; });
+
+  const filas = alumnos.map(s => {
+    const x = notas[s.id] || {};
+    return `<div class="tp-fila" data-s="${s.id}">
+      <span class="tp-nombre">${escapeHtml(s.apellido)}, ${escapeHtml(s.nombre)}</span>
+      <span class="tp-btns">
+        ${esTp ? ['e', 't', 'n'].map(k => `<button type="button" class="tp-btn ${k} ${x.estado === k ? 'on' : ''}" data-k="${k}">${k === 'e' ? '✓' : k === 't' ? 'Tarde' : '✗'}</button>`).join('') : ''}
+        <input type="text" inputmode="decimal" class="nota-input" id="en_${s.id}" data-nota="${s.id}" placeholder="Nota" maxlength="4" value="${typeof x.nota === 'number' ? nombreCorto(x.nota) : ''}">
+      </span></div>`;
+  }).join('');
 
   $app.innerHTML = `
     <div class="appbar" style="padding:0 0 10px;">
@@ -7944,13 +7963,81 @@ function renderAgendaDetalle(){
       ${e.detalle ? `<p class="k">Detalle</p><p class="v">${e.detalle}</p>` : ''}
       <p class="k">Cargado por</p><p class="v">${e.autor||'—'}</p>
     </div>
-    ${puedeBorrar ? `<button class="btn-secondary" id="borrarEventoBtn" style="width:100%;margin-top:16px;color:var(--stamp);">Borrar evento</button>` : ''}
+
+    ${esQuiz ? `
+      ${quiz ? `<button class="btn-primary" id="verQuizBtn" style="width:100%;margin-top:16px;">Ver resultados del quiz</button>
+      ${Date.now() < quiz.abreAt ? `<button class="btn-secondary" id="editQuizBtn" style="width:100%;margin-top:8px;">Editar quiz</button>` : ''}`
+      : `<p class="empty-inline">No se encontró el quiz de este evento.</p>`}
+    ` : (puedeNotas ? `
+      <p class="section-label" style="margin-top:18px;">${esTp ? 'Entregas y notas' : 'Notas'}</p>
+      <div class="stat-grid">
+        ${esTp ? `<div class="stat-card"><p class="label">Entregaron</p><p class="value">${cuenta.e + cuenta.t}<span class="sub"> / ${alumnos.length}</span></p></div>
+        <div class="stat-card ${cuenta.n ? 'alert' : ''}"><p class="label">No entregaron</p><p class="value">${cuenta.n}</p></div>` : ''}
+        <div class="stat-card"><p class="label">Notas cargadas</p><p class="value">${valores.length}<span class="sub"> / ${alumnos.length}</span></p></div>
+        <div class="stat-card"><p class="label">Promedio</p><p class="value">${prom === null ? '—' : nombreCorto(Math.round(prom * 10) / 10)}</p></div>
+      </div>
+      <p class="qz-ayuda">${esTp ? 'Tocá ✓ si entregó en fecha, "Tarde" si entregó después, ✗ si no entregó (tocá de nuevo para borrar la marca). ' : ''}La nota va de 1 a 10 y se guarda sola al salir del casillero. Los alumnos ven su propia nota en "Mi agenda".</p>
+      ${esTp ? `<button class="btn-secondary" id="tpTodos" style="width:100%;margin:8px 0;">Marcar a los que faltan como "entregó"</button>` : ''}
+      <div class="tp-lista">${filas || '<p class="empty-inline">El curso no tiene alumnos cargados.</p>'}</div>
+    ` : '')}
+
+    ${puedeBorrar && !esQuiz ? `<button class="btn-secondary" id="cambiarFechaBtn" style="width:100%;margin-top:16px;">Cambiar fecha</button>
+    <button class="btn-secondary" id="borrarEventoBtn" style="width:100%;margin-top:8px;color:var(--stamp);">Borrar evento${Object.keys(notas).length ? ' y sus notas' : ''}</button>` : ''}
   `;
   document.getElementById('backBtn').addEventListener('click', () => goBack('agenda'));
+  if(esQuiz){
+    if(document.getElementById('verQuizBtn')) document.getElementById('verQuizBtn').addEventListener('click', () => { window.__quizSel = quiz.id; navigate('quizResultados'); });
+    if(document.getElementById('editQuizBtn')) document.getElementById('editQuizBtn').addEventListener('click', () => abrirEditorQuiz(quiz.id));
+    return;
+  }
+  const escribir = (sid, cambios) => {
+    const ref = doc(db, 'eventoNotas', `${e.id}_${sid}`);
+    const prev = notas[sid] || {};
+    const nuevo = Object.assign({}, prev, cambios);
+    const vacio = (nuevo.estado === undefined || nuevo.estado === null) && (nuevo.nota === undefined || nuevo.nota === null);
+    if(vacio) return deleteDoc(ref).catch(err => showSaveError(err));
+    const datos = { eventoId: e.id, studentId: sid, curso: e.curso, estado: nuevo.estado || null, nota: (typeof nuevo.nota === 'number') ? nuevo.nota : null, updatedAt: Date.now(), autor: userRole === 'teacher' ? currentTeacher.nombre : getUsuario() };
+    return setDoc(ref, datos).catch(err => showSaveError(err));
+  };
+  if(puedeNotas){
+    document.querySelectorAll('.tp-btn').forEach(b => b.addEventListener('click', () => {
+      if(modoPruebaBloquea()) return;
+      const sid = b.closest('.tp-fila').dataset.s;
+      const actual = (notas[sid] || {}).estado;
+      escribir(sid, { estado: actual === b.dataset.k ? null : b.dataset.k });
+    }));
+    document.querySelectorAll('[data-nota]').forEach(inp => inp.addEventListener('change', () => {
+      if(modoPruebaBloquea()){ render(); return; }
+      const t = inp.value.trim().replace(',', '.');
+      if(t === ''){ escribir(inp.dataset.nota, { nota: null }); return; }
+      const n = Number(t);
+      if(!isFinite(n) || n < 1 || n > 10){ showToast('La nota tiene que estar entre 1 y 10', 'error'); render(); return; }
+      escribir(inp.dataset.nota, { nota: Math.round(n * 10) / 10 });
+    }));
+    if(document.getElementById('tpTodos')) document.getElementById('tpTodos').addEventListener('click', async () => {
+      if(modoPruebaBloquea()) return;
+      const faltan = alumnos.filter(s => !(notas[s.id] || {}).estado);
+      if(!faltan.length){ showToast('No queda nadie sin marcar'); return; }
+      if(!(await customConfirm(`Se marca "entregó" a los ${faltan.length} alumnos que no tienen marca. ¿Seguir?`, { textoSi: 'Marcar' }))) return;
+      faltan.forEach(s => escribir(s.id, { estado: 'e' }));
+    });
+  }
   if(puedeBorrar){
+    document.getElementById('cambiarFechaBtn').addEventListener('click', async () => {
+      if(modoPruebaBloquea()) return;
+      const f = await customPrompt('Nueva fecha:', e.fecha, 'date');
+      if(!f || !/^\d{4}-\d{2}-\d{2}$/.test(f)) return;
+      setDoc(doc(db, 'eventos', e.id), { fecha: f, notificadoSemana: false, notificadoDia: false }, { merge: true })
+        .then(() => showToast('Fecha actualizada')).catch(err => showSaveError(err));
+    });
     document.getElementById('borrarEventoBtn').addEventListener('click', async () => {
-      if(!(await customConfirm('¿Borrar este evento de la agenda? No se puede deshacer.', {peligro:true, textoSi:'Borrar'}))) return;
-      deleteDoc(doc(db,'eventos',e.id)).then(() => { showToast('Evento borrado'); navigate('agenda'); }).catch(err=>showSaveError(err));
+      if(modoPruebaBloquea()) return;
+      if(!(await customConfirm('¿Borrar este evento de la agenda' + (Object.keys(notas).length ? ' junto con las notas cargadas' : '') + '? No se puede deshacer.', {peligro:true, textoSi:'Borrar'}))) return;
+      try{
+        await Promise.all(Object.values(notas).map(x => deleteDoc(doc(db, 'eventoNotas', `${e.id}_${x.studentId}`))));
+        await deleteDoc(doc(db, 'eventos', e.id));
+        showToast('Evento borrado'); navigate('agenda');
+      }catch(err){ showSaveError(err); }
     });
   }
 }
@@ -7986,10 +8073,34 @@ function avisosBannerHtml(avisos){
   return avisos.map(a => `<div class="aviso-banner ${a.stage==='nuevo'?'nuevo':''}">${icon(a.stage==='nuevo'?'calendar':'alert')}<span>${a.texto}</span></div>`).join('');
 }
 
+function extraAgendaAlumno(e){
+  const miId = currentStudentAuth.studentId;
+  if(e.tipo === 'quiz'){
+    const q = (cache.quizzes || {})[e.quizId];
+    if(!q) return '';
+    const st = estadoQuizAlumno(q);
+    if(st.k === 'abierto' || st.k === 'curso') return `<span class="btn-empezar">${st.txt}</span>`;
+    if(st.k === 'hecho') return `<span class="tp-chip ok">${st.txt}</span>`;
+    if(st.k === 'vencido') return `<span class="tp-chip no">No entregado</span>`;
+    if(st.k === 'cerrado') return `<span class="tp-chip">Cerrado</span>`;
+    return '';
+  }
+  const x = (cache.eventoNotas || {})[`${e.id}_${miId}`];
+  if(!x) return '';
+  const partes = [];
+  if(x.estado === 'e') partes.push('<span class="tp-chip ok">Entregado</span>');
+  else if(x.estado === 't') partes.push('<span class="tp-chip tarde">Entregado tarde</span>');
+  else if(x.estado === 'n') partes.push('<span class="tp-chip no">No entregado</span>');
+  if(typeof x.nota === 'number') partes.push(`<span class="tp-chip nota">Nota ${nombreCorto(x.nota)}</span>`);
+  return partes.length ? `<span class="chips-col">${partes.join('')}</span>` : '';
+}
 function renderStudentAgenda(){
   const todosEv = eventosDeCurso(currentStudentAuth.curso).concat(eventosQuizAlumno()).sort((a, b) => (a.fecha || '').localeCompare(b.fecha || ''));
   const eventos = todosEv.filter(e => diasHasta(e.fecha) >= 0);
   const pasados = todosEv.filter(e => diasHasta(e.fecha) < 0).reverse();
+  const fila = (e) => filaAgenda(e, e.tipo === 'quiz', extraAgendaAlumno(e));
+  clearInterval(_tickAgenda);
+  _tickAgenda = setInterval(() => { if(currentRoute === 'studentAgenda') render(); else clearInterval(_tickAgenda); }, 30000);
 
   $app.innerHTML = `
     <div class="appbar" style="padding:0 0 10px;">
@@ -7997,11 +8108,17 @@ function renderStudentAgenda(){
       <h1>Mi agenda</h1>
     </div>
     <p class="section-label">Próximos</p>
-    ${eventos.length ? eventos.map(e=>filaAgenda(e,false)).join('') : `<p class="empty-inline">No hay eventos próximos cargados para tu curso.</p>`}
-    ${pasados.length ? `<p class="section-label" style="margin-top:18px;">Pasados</p>${pasados.map(e=>filaAgenda(e,false)).join('')}` : ''}
+    ${eventos.length ? eventos.map(fila).join('') : `<p class="empty-inline">No hay eventos próximos cargados para tu curso.</p>`}
+    ${pasados.length ? `<p class="section-label" style="margin-top:18px;">Pasados</p>${pasados.map(fila).join('')}` : ''}
   `;
   document.getElementById('backBtn').addEventListener('click', () => goBack('studentHome'));
+  document.querySelectorAll('[data-evento]').forEach(el => el.addEventListener('click', () => {
+    const ev = eventosDeCurso(currentStudentAuth.curso).concat(eventosQuizAlumno()).find(x => x.id === el.dataset.evento);
+    const q = ev && (cache.quizzes || {})[ev.quizId];
+    if(q) accionQuizAlumno(q);
+  }));
 }
+let _tickAgenda = null;
 
 // ======================================================================
 // Quizes con tiempo, banco de preguntas y seguimiento de TPs (v132)
@@ -8051,13 +8168,11 @@ function escucharQuizYTps(esAlumno, miId, cursoAl){
   if(esAlumno){
     onSnapshot(query(collection(db,'quizzes'), where('curso','==', cursoAl), where('estado','==','publicado')), aMapa('quizzes'), sinPerm('quizzes'));
     onSnapshot(query(collection(db,'quizIntentos'), where('studentId','==', miId)), aMapa('quizIntentos'), sinPerm('quizIntentos'));
-    onSnapshot(query(collection(db,'tps'), where('curso','==', cursoAl)), aMapa('tps'), sinPerm('tps'));
-    onSnapshot(query(collection(db,'tpEstados'), where('studentId','==', miId)), aMapa('tpEstados'), sinPerm('tpEstados'));
+    onSnapshot(query(collection(db,'eventoNotas'), where('studentId','==', miId)), aMapa('eventoNotas'), sinPerm('eventoNotas'));
     return;
   }
   escucharColeccion('quizzes', aMapa('quizzes'));
-  escucharColeccion('tps', aMapa('tps'));
-  escucharColeccion('tpEstados', aMapa('tpEstados'));
+  escucharColeccion('eventoNotas', aMapa('eventoNotas'));
   if((userRole === 'teacher' && currentTeacher) || userRole === 'admin'){
     onSnapshot(query(collection(db,'bancoPreguntas'), where('docenteUid','==', uidDocente())), aMapa('bancoPreguntas'), sinPerm('bancoPreguntas'));
   }
@@ -8099,7 +8214,7 @@ function renderQuizzesDocente(){
     <button class="btn-secondary" id="bancoBtn" style="width:100%;margin-bottom:16px;">Mi banco de preguntas (${Object.keys(cache.bancoPreguntas || {}).length})</button>
     ${lista.length ? `<div class="module-list">${filas}</div>` : `<p class="empty-inline">Todavía no armaste ningún quiz.</p>`}
   `;
-  document.getElementById('backBtn').addEventListener('click', () => goBack(homeRoute()));
+  document.getElementById('backBtn').addEventListener('click', () => goBack('agenda'));
   document.getElementById('nuevoQuizBtn').addEventListener('click', () => { window.__quizEd = null; navigate('quizEditar'); });
   document.getElementById('bancoBtn').addEventListener('click', () => navigate('banco'));
   document.querySelectorAll('[data-quiz]').forEach(el => el.addEventListener('click', () => {
@@ -8222,7 +8337,7 @@ function renderQuizEditar(){
     <p id="qzError" class="qz-error"></p>`}
   `;
 
-  document.getElementById('backBtn').addEventListener('click', () => goBack('quizzes'));
+  document.getElementById('backBtn').addEventListener('click', () => goBack('agenda'));
   if(bloq) return;
   const $ = (id) => document.getElementById(id);
   // Los campos actualizan el estado sin redibujar (así no se pierde el cursor).
@@ -8325,9 +8440,26 @@ async function guardarQuiz(publicar){
       docenteUid: uidDocente(), materia: ed.materia, tipo: q.tipo, texto: q.texto,
       opciones: q.tipo === 'mc' ? q.opciones : null, correcta: q.correcta, puntos: q.puntos, createdAt: Date.now()
     })));
+    // El quiz aparece en la agenda del curso (id fijo, así no se duplica al editarlo).
+    const evId = 'quiz_' + id;
+    const evPrevio = (cache.eventos || {})[evId];
+    if(publicar){
+      const fechaEv = localISODate(new Date(abreAt));
+      const horaEv = `${dosDig(new Date(abreAt).getHours())}:${dosDig(new Date(abreAt).getMinutes())}`;
+      const evDatos = {
+        curso: ed.curso, materia: ed.materia, titulo: 'Quiz: ' + ed.titulo.trim(), tipo: 'quiz', fecha: fechaEv,
+        detalle: `Se habilita ${horaEv} · ${minutos} min`, quizId: id,
+        autor: ed.docenteNombre || nombreDocente(), autorUid: ed.docenteUid || uidDocente(),
+        createdAt: (evPrevio && evPrevio.createdAt) || Date.now()
+      };
+      if(evPrevio && evPrevio.fecha !== fechaEv){ evDatos.notificadoSemana = false; evDatos.notificadoDia = false; }
+      await setDoc(doc(db, 'eventos', evId), evDatos, { merge: true });
+    } else if(evPrevio){
+      await deleteDoc(doc(db, 'eventos', evId)).catch(() => {});
+    }
     window.__quizEd = null;
-    showToast(publicar ? (publicadoAntes ? 'Cambios guardados' : 'Quiz publicado') : 'Borrador guardado');
-    navigate('quizzes');
+    showToast(publicar ? (publicadoAntes ? 'Cambios guardados' : 'Quiz publicado y agregado a la agenda') : 'Borrador guardado');
+    goBack('agenda');
   }catch(err){ showSaveError(err); }
 }
 
@@ -8514,169 +8646,8 @@ function renderQuizResultados(){
     if(!(await customConfirm('¿Eliminar este quiz? No se puede deshacer.', { peligro: true, textoSi: 'Eliminar' }))) return;
     try{
       await deleteDoc(doc(db, 'quizzes', id)); await deleteDoc(doc(db, 'quizzesPreguntas', id));
+      if((cache.eventos || {})['quiz_' + id]) await deleteDoc(doc(db, 'eventos', 'quiz_' + id)).catch(() => {});
       showToast('Quiz eliminado'); navigate('quizzes');
-    }catch(err){ showSaveError(err); }
-  });
-}
-
-// ======================================================================
-// DOCENTE: trabajos prácticos (planilla de seguimiento)
-// ======================================================================
-const TP_ESTADOS = { e: 'Entregó', t: 'Tarde', n: 'No entregó' };
-function estadosDeTp(tpId){
-  const out = {};
-  Object.values(cache.tpEstados || {}).forEach(x => { if(x.tpId === tpId) out[x.studentId] = x.estado; });
-  return out;
-}
-function tpsDeCurso(curso){
-  return Object.values(cache.tps || {}).filter(t => t.curso === curso).sort((a, b) => (b.fecha || '').localeCompare(a.fecha || ''));
-}
-
-function renderTps(){
-  const cursos = cursosDocente();
-  if(!cursos.includes(selectedCurso)) selectedCurso = cursos[0];
-  const lista = tpsDeCurso(selectedCurso);
-  const alumnos = getStudents().filter(s => s.curso === selectedCurso).length;
-  $app.innerHTML = `
-    <div class="appbar" style="padding:0 0 10px;">
-      <button class="back-btn" id="backBtn">${icon('back')}</button>
-      <h1>Trabajos prácticos</h1>
-    </div>
-    <div class="course-picker">${cursoBtns(cursos)}</div>
-    <button class="btn-primary" id="nuevoTpBtn" style="width:100%;margin:4px 0 16px;">+ Nuevo trabajo práctico</button>
-    ${lista.length ? `<div class="module-list">${lista.map(t => {
-      const est = estadosDeTp(t.id);
-      const ent = Object.values(est).filter(v => v === 'e' || v === 't').length;
-      return `<div class="module-row" data-tp="${t.id}">
-        <div class="txt"><p class="title">${escapeHtml(t.titulo)}</p>
-        <p class="desc">${escapeHtml(t.materia || '')} · entrega ${fmtDateShort(t.fecha)}</p></div>
-        <span class="badge-soon">${ent} / ${alumnos}</span>
-      </div>`; }).join('')}</div>` : `<p class="empty-inline">No hay trabajos prácticos cargados para este curso.</p>`}
-  `;
-  document.getElementById('backBtn').addEventListener('click', () => goBack(homeRoute()));
-  attachCursoBtns((c) => { selectedCurso = c; render(); });
-  document.getElementById('nuevoTpBtn').addEventListener('click', () => navigate('tpNuevo'));
-  document.querySelectorAll('[data-tp]').forEach(el => el.addEventListener('click', () => { window.__tpSel = el.dataset.tp; navigate('tpDetalle'); }));
-}
-
-function renderTpNuevo(){
-  const materias = materiasDocenteEnCurso(selectedCurso);
-  $app.innerHTML = `
-    <div class="appbar" style="padding:0 0 10px;">
-      <button class="back-btn" id="backBtn">${icon('back')}</button>
-      <h1>Nuevo trabajo práctico</h1>
-    </div>
-    <p class="date-label">${selectedCurso}° A</p>
-    <label class="qz-label">Título</label>
-    <input type="text" class="qz-input" id="tpTitulo" placeholder="Ej: TP 2 - Ecuaciones">
-    <label class="qz-label">Materia</label>
-    <select id="tpMateria">${materias.map(m => `<option value="${escapeHtml(m)}">${escapeHtml(m)}</option>`).join('')}</select>
-    <label class="qz-label" style="margin-top:12px;">Fecha de entrega</label>
-    <input type="date" class="qz-input" id="tpFecha" value="${todayISO()}">
-    <label class="qz-label" style="margin-top:12px;">Detalle (opcional)</label>
-    <textarea class="qz-input" id="tpDetalle" rows="2" placeholder="Ej: en parejas, en hoja aparte"></textarea>
-    <label class="check-susp"><input type="checkbox" id="tpAgenda" checked> <span>Avisar en la agenda del curso <small>(los alumnos lo ven en "Mi agenda" y reciben recordatorios antes de la fecha)</small></span></label>
-    <button class="btn-primary" id="guardarTpBtn" style="width:100%;margin-top:14px;">Guardar</button>
-    <p id="tpError" class="qz-error"></p>
-  `;
-  document.getElementById('backBtn').addEventListener('click', () => goBack('tps'));
-  document.getElementById('guardarTpBtn').addEventListener('click', async () => {
-    if(modoPruebaBloquea()) return;
-    const titulo = document.getElementById('tpTitulo').value.trim();
-    const materia = document.getElementById('tpMateria').value;
-    const fecha = document.getElementById('tpFecha').value;
-    const detalle = document.getElementById('tpDetalle').value.trim();
-    const errEl = document.getElementById('tpError');
-    if(!titulo){ errEl.textContent = 'Escribí un título.'; return; }
-    if(!fecha){ errEl.textContent = 'Elegí la fecha de entrega.'; return; }
-    const id = nuevoIdCorto('t');
-    const tp = { curso: selectedCurso, materia, titulo, fecha, detalle, docenteUid: uidDocente(), docenteNombre: nombreDocente(), createdAt: Date.now() };
-    try{
-      if(document.getElementById('tpAgenda').checked){
-        const ev = await addDoc(collection(db, 'eventos'), {
-          curso: selectedCurso, materia, titulo: `${titulo}`, tipo: 'tp', fecha, detalle,
-          autor: nombreDocente(), autorUid: uidDocente(), createdAt: Date.now()
-        });
-        tp.eventoId = ev.id;
-      }
-      await setDoc(doc(db, 'tps', id), tp);
-      showToast('Trabajo práctico guardado');
-      window.__tpSel = id; navigate('tpDetalle');
-    }catch(err){ showSaveError(err); }
-  });
-}
-
-function renderTpDetalle(){
-  const t = (cache.tps || {})[window.__tpSel];
-  if(!t){ $app.innerHTML = `<p class="empty-inline" style="margin-top:40px;">No encontramos ese trabajo.</p>`; setTimeout(() => navigate('tps'), 0); return; }
-  const alumnos = getStudents().filter(s => s.curso === t.curso).sort((a, b) => a.apellido.localeCompare(b.apellido) || a.nombre.localeCompare(b.nombre));
-  const est = estadosDeTp(t.id);
-  const cuenta = { e: 0, t: 0, n: 0, sin: 0 };
-  alumnos.forEach(s => { const v = est[s.id]; if(v) cuenta[v]++; else cuenta.sin++; });
-  const filas = alumnos.map(s => {
-    const v = est[s.id] || '';
-    return `<div class="tp-fila" data-s="${s.id}">
-      <span class="tp-nombre">${escapeHtml(s.apellido)}, ${escapeHtml(s.nombre)}</span>
-      <span class="tp-btns">
-        ${['e', 't', 'n'].map(k => `<button type="button" class="tp-btn ${k} ${v === k ? 'on' : ''}" data-k="${k}">${k === 'e' ? '✓' : k === 't' ? 'Tarde' : '✗'}</button>`).join('')}
-      </span></div>`;
-  }).join('');
-  $app.innerHTML = `
-    <div class="appbar" style="padding:0 0 10px;">
-      <button class="back-btn" id="backBtn">${icon('back')}</button>
-      <h1>${escapeHtml(t.titulo)}</h1>
-    </div>
-    <p class="date-label">${t.curso}° A · ${escapeHtml(t.materia || '')} · entrega ${fmtDateShort(t.fecha)}</p>
-    ${t.detalle ? `<p class="qz-ayuda" style="margin-top:0;">${escapeHtml(t.detalle)}</p>` : ''}
-    <div class="stat-grid">
-      <div class="stat-card"><p class="label">Entregaron</p><p class="value">${cuenta.e}</p></div>
-      <div class="stat-card"><p class="label">Tarde</p><p class="value">${cuenta.t}</p></div>
-      <div class="stat-card ${cuenta.n ? 'alert' : ''}"><p class="label">No entregaron</p><p class="value">${cuenta.n}</p></div>
-      <div class="stat-card"><p class="label">Sin marcar</p><p class="value">${cuenta.sin}</p></div>
-    </div>
-    <p class="qz-ayuda">Tocá ✓ si entregó en fecha, "Tarde" si entregó después, ✗ si no entregó. Tocá de nuevo para borrar la marca.</p>
-    <button class="btn-secondary" id="tpTodos" style="width:100%;margin-bottom:10px;">Marcar a los que faltan como "entregó"</button>
-    <div class="tp-lista">${filas}</div>
-    <button class="btn-secondary" id="tpFechaBtn" style="width:100%;margin-top:16px;">Cambiar fecha de entrega</button>
-    <button class="btn-secondary" id="tpBorrarBtn" style="width:100%;margin-top:8px;color:var(--stamp);">Eliminar trabajo práctico</button>
-  `;
-  document.getElementById('backBtn').addEventListener('click', () => goBack('tps'));
-  const escribir = (sid, k) => {
-    const ref = doc(db, 'tpEstados', `${t.id}_${sid}`);
-    if(!k) return deleteDoc(ref).catch(err => showSaveError(err));
-    return setDoc(ref, { tpId: t.id, studentId: sid, curso: t.curso, estado: k, updatedAt: Date.now(), autor: nombreDocente() }).catch(err => showSaveError(err));
-  };
-  document.querySelectorAll('.tp-btn').forEach(b => b.addEventListener('click', () => {
-    if(modoPruebaBloquea()) return;
-    const sid = b.closest('.tp-fila').dataset.s;
-    escribir(sid, (est[sid] === b.dataset.k) ? null : b.dataset.k);
-  }));
-  document.getElementById('tpTodos').addEventListener('click', async () => {
-    if(modoPruebaBloquea()) return;
-    const faltan = alumnos.filter(s => !est[s.id]);
-    if(!faltan.length){ showToast('No queda nadie sin marcar'); return; }
-    if(!(await customConfirm(`Se marca "entregó" a los ${faltan.length} alumnos que no tienen marca. ¿Seguir?`, { textoSi: 'Marcar' }))) return;
-    faltan.forEach(s => escribir(s.id, 'e'));
-  });
-  document.getElementById('tpFechaBtn').addEventListener('click', async () => {
-    if(modoPruebaBloquea()) return;
-    const f = await customPrompt('Nueva fecha de entrega:', t.fecha, 'date');
-    if(!f || !/^\d{4}-\d{2}-\d{2}$/.test(f)) return;
-    try{
-      await setDoc(doc(db, 'tps', t.id), { fecha: f }, { merge: true });
-      if(t.eventoId) await setDoc(doc(db, 'eventos', t.eventoId), { fecha: f, notificadoSemana: false, notificadoDia: false }, { merge: true }).catch(() => {});
-      showToast('Fecha actualizada');
-    }catch(err){ showSaveError(err); }
-  });
-  document.getElementById('tpBorrarBtn').addEventListener('click', async () => {
-    if(modoPruebaBloquea()) return;
-    if(!(await customConfirm('¿Eliminar este trabajo práctico y todas sus marcas? No se puede deshacer.', { peligro: true, textoSi: 'Eliminar' }))) return;
-    try{
-      const marcas = Object.values(cache.tpEstados || {}).filter(x => x.tpId === t.id);
-      await Promise.all(marcas.map(x => deleteDoc(doc(db, 'tpEstados', x.id))));
-      if(t.eventoId) await deleteDoc(doc(db, 'eventos', t.eventoId)).catch(() => {});
-      await deleteDoc(doc(db, 'tps', t.id));
-      showToast('Trabajo práctico eliminado'); navigate('tps');
     }catch(err){ showSaveError(err); }
   });
 }
@@ -8705,39 +8676,16 @@ function estadoQuizAlumno(q){
   return { k: 'cerrado', txt: 'Cerrado', i };
 }
 
-let _tickQuizzes = null;
-function renderStudentQuizzes(){
-  clearInterval(_tickQuizzes);
-  _tickQuizzes = setInterval(() => { if(currentRoute === 'studentQuizzes') render(); else clearInterval(_tickQuizzes); }, 30000);
-  const lista = quizzesDelAlumno();
-  const filas = lista.map(q => {
-    const e = estadoQuizAlumno(q);
-    const accion = e.k === 'abierto' || e.k === 'curso';
-    return `<div class="module-row quiz-al ${e.k}" data-q="${q.id}">
-      <div class="txt"><p class="title">${escapeHtml(q.titulo)}</p>
-      <p class="desc">${escapeHtml(q.materia || '')} · ${q.minutos} min · ${q.nPreguntas} preguntas</p></div>
-      <span class="${accion ? 'btn-empezar' : 'badge-soon'}">${e.txt}</span>
-    </div>`;
-  }).join('');
-  $app.innerHTML = `
-    <div class="appbar" style="padding:0 0 10px;">
-      <button class="back-btn" id="backBtn">${icon('back')}</button>
-      <h1>Mis quizes</h1>
-    </div>
-    ${lista.length ? `<div class="module-list">${filas}</div>` : `<p class="empty-inline">Por ahora no hay quizes para tu curso.</p>`}
-  `;
-  document.getElementById('backBtn').addEventListener('click', () => goBack('studentHome'));
-  document.querySelectorAll('[data-q]').forEach(el => el.addEventListener('click', () => {
-    const q = cache.quizzes[el.dataset.q]; if(!q) return;
-    const e = estadoQuizAlumno(q);
-    window.__quizSel = q.id;
-    if(e.k === 'hecho') navigate('quizResultado');
-    else if(e.k === 'abierto') empezarQuiz(q);
-    else if(e.k === 'curso') empezarQuiz(q, true);
-    else if(e.k === 'prog') showToast(`Se abre el ${fmtFechaHora(q.abreAt)}`);
-    else if(e.k === 'vencido') showToast('No se entregó a tiempo');
-    else showToast('Este quiz ya cerró');
-  }));
+// Qué pasa al tocar un quiz en la agenda del alumno.
+function accionQuizAlumno(q){
+  const e = estadoQuizAlumno(q);
+  window.__quizSel = q.id;
+  if(e.k === 'hecho') navigate('quizResultado');
+  else if(e.k === 'abierto') empezarQuiz(q);
+  else if(e.k === 'curso') empezarQuiz(q, true);
+  else if(e.k === 'prog') showToast(`Se abre el ${fmtFechaHora(q.abreAt)}`);
+  else if(e.k === 'vencido') showToast('No se entregó a tiempo');
+  else showToast('Este quiz ya cerró');
 }
 
 async function empezarQuiz(q, reanudar){
@@ -8775,7 +8723,7 @@ function guardarRespLocal(){
 }
 function renderQuizRendir(){
   const r = window.__quizRun;
-  if(!r){ setTimeout(() => navigate('studentQuizzes'), 0); return; }
+  if(!r){ setTimeout(() => navigate('studentAgenda'), 0); return; }
   document.body.classList.add('hoja-notas-abierta');
   const n = r.preguntas.length;
   const respondidas = r.preguntas.filter(p => r.resp[p.id] !== undefined).length;
@@ -8843,7 +8791,7 @@ function renderQuizResultado(){
     $app.innerHTML = `
       <div class="appbar" style="padding:0 0 10px;"><button class="back-btn" id="backBtn">${icon('back')}</button><h1>Resultado</h1></div>
       <p class="empty-inline">Cargando tu resultado…</p>`;
-    document.getElementById('backBtn').addEventListener('click', () => goBack('studentQuizzes'));
+    document.getElementById('backBtn').addEventListener('click', () => goBack('studentAgenda'));
     return;
   }
   const total = q.puntosTotal || 0;
@@ -8862,7 +8810,7 @@ function renderQuizResultado(){
       ${d.ok ? '' : `<p class="qr-res correcta">Correcta: <b>${textoRespuesta(d, d.correcta)}</b></p>`}
     </div>`).join('')}
   `;
-  document.getElementById('backBtn').addEventListener('click', () => goBack('studentQuizzes'));
+  document.getElementById('backBtn').addEventListener('click', () => goBack('studentAgenda'));
 }
 function textoRespuesta(d, v){
   if(v === undefined || v === null) return 'Sin responder';
@@ -8870,32 +8818,12 @@ function textoRespuesta(d, v){
   return escapeHtml((d.opciones || [])[v] || 'Sin responder');
 }
 
-// ---------- TPs del alumno ----------
-function renderStudentTps(){
-  const miId = currentStudentAuth.studentId;
-  const lista = Object.values(cache.tps || {}).filter(t => t.curso === currentStudentAuth.curso).sort((a, b) => (b.fecha || '').localeCompare(a.fecha || ''));
-  const est = {}; Object.values(cache.tpEstados || {}).forEach(x => { if(x.studentId === miId) est[x.tpId] = x.estado; });
-  const txt = { e: ['Entregado', 'ok'], t: ['Entregado tarde', 'tarde'], n: ['No entregado', 'no'] };
-  $app.innerHTML = `
-    <div class="appbar" style="padding:0 0 10px;"><button class="back-btn" id="backBtn">${icon('back')}</button><h1>Mis trabajos prácticos</h1></div>
-    ${lista.length ? lista.map(t => {
-      const e = txt[est[t.id]] || [diasHasta(t.fecha) < 0 ? 'Sin marcar' : 'Pendiente', 'sin'];
-      return `<div class="sancion-item">
-        <div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start;">
-          <div><p class="folio">${escapeHtml(t.materia || '')}</p><p class="motivo">${escapeHtml(t.titulo)}</p>
-          <p class="sancion-meta">Entrega: ${fmtDateShort(t.fecha)}${t.detalle ? ' · ' + escapeHtml(t.detalle) : ''}</p></div>
-          <span class="tp-chip ${e[1]}">${e[0]}</span>
-        </div></div>`; }).join('') : `<p class="empty-inline">Todavía no hay trabajos prácticos cargados.</p>`}
-  `;
-  document.getElementById('backBtn').addEventListener('click', () => goBack('studentHome'));
-}
-
 // Quizes como eventos de la agenda del alumno (no se guardan: se arman a partir de los quizes publicados).
 function eventosQuizAlumno(){
-  return quizzesDelAlumno().map(q => ({
-    id: 'quiz_' + q.id, tipo: 'otro', curso: q.curso, materia: q.materia || '',
+  return quizzesDelAlumno().filter(q => !(cache.eventos || {})['quiz_' + q.id]).map(q => ({
+    id: 'quiz_' + q.id, tipo: 'quiz', quizId: q.id, curso: q.curso, materia: q.materia || '',
     titulo: 'Quiz: ' + escapeHtml(q.titulo), fecha: localISODate(new Date(q.abreAt)),
-    detalle: `Se habilita ${fmtFechaHora(q.abreAt).split(' ').pop()} · ${q.minutos} min`, createdAt: q.updatedAt || 0, esQuiz: true
+    detalle: `Se habilita ${fmtFechaHora(q.abreAt).split(' ').pop()} · ${q.minutos} min`, createdAt: q.updatedAt || 0
   }));
 }
 
