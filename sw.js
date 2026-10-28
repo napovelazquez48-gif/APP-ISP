@@ -1,4 +1,4 @@
-const CACHE_NAME = 'preceptoria-isp-v53';
+const CACHE_NAME = 'preceptoria-isp-v54';
 
 // ---------- Notificaciones push (Firebase Cloud Messaging) ----------
 // Tiene que vivir en este mismo service worker (no en uno aparte) para que
@@ -50,8 +50,6 @@ const CDN_ASSETS = [
   'https://www.gstatic.com/firebasejs/10.13.0/firebase-app.js',
   'https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js',
   'https://www.gstatic.com/firebasejs/10.13.0/firebase-auth.js',
-  'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js',
-  'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js',
   'https://www.gstatic.com/firebasejs/10.13.0/firebase-messaging.js',
   'https://www.gstatic.com/firebasejs/10.13.0/firebase-functions.js',
   'https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js',

@@ -1,6 +1,6 @@
 // ===== Preceptoría ISP — lógica de la app (Etapa 1) =====
 
-const APP_VERSION = 138;
+const APP_VERSION = 139;
 const SEED_STUDENTS = []; // la lista de alumnos vive en Firestore (colección students), no en el código
 
 const CURSOS = ['1','2','3','4','5'];
@@ -296,7 +296,7 @@ let notasAlumnoC1 = {}, notasAlumnoC2 = {};
 function publicarNotasAlumno(){
   cache.notas = Object.assign({}, notasAlumnoC1, notasAlumnoC2);
   cache._lastSync.notas = Date.now();
-  render();
+  renderSoon();
 }
 function iniciarNotasAlumnoC2(){
   if(userRole !== 'student' || !currentStudentAuth || notasC2Iniciadas || todayISO() <= notasLimite()) return;
@@ -352,7 +352,7 @@ function startListeners(){
     cache.attendanceLive = next;
     refrescarAttendance();
     cache._lastSync.attendance = Date.now();
-    render();
+    renderSoon();
   });
 
   // El histórico no se dispara acá: se carga desde el listener de config/general, que
@@ -372,7 +372,7 @@ function startListeners(){
     });
     cache.sanciones = byStudent;
     cache._lastSync.sanciones = Date.now();
-    render();
+    renderSoon();
   });
 
   onSnapshot(collection(db,'substitutions'), snap => {
@@ -384,7 +384,7 @@ function startListeners(){
     });
     cache.substitutions = next;
     cache._lastSync.substitutions = Date.now();
-    render();
+    renderSoon();
   });
 
   onSnapshot(lista('ef'), snap => {
@@ -398,7 +398,7 @@ function startListeners(){
     });
     cache.ef = next;
     cache._lastSync.ef = Date.now();
-    render();
+    renderSoon();
   });
 
   onSnapshot(lista('certificados'), snap => {
@@ -410,21 +410,21 @@ function startListeners(){
     next.sort((a,b)=> a.createdAt - b.createdAt);
     cache.certificados = next;
     cache._lastSync.certificados = Date.now();
-    render();
+    renderSoon();
   });
 
   if(esAlumno){
     onSnapshot(doc(db,'autorizaciones', miId), d => {
       cache.autorizaciones = d.exists() ? { [miId]: d.data() } : {};
       cache._lastSync.autorizaciones = Date.now();
-      render();
+      renderSoon();
     }, sinPermiso('autorizaciones'));
   } else onSnapshot(collection(db,'autorizaciones'), snap => {
     const next = {};
     snap.forEach(d => { next[d.id] = d.data(); });
     cache.autorizaciones = next;
     cache._lastSync.autorizaciones = Date.now();
-    render();
+    renderSoon();
   });
 
   onSnapshot(collection(db,'teachers'), snap => {
@@ -432,7 +432,7 @@ function startListeners(){
     snap.forEach(d => { next[d.id] = Object.assign({ uid: d.id }, d.data()); });
     cache.teachers = next;
     cache._lastSync.teachers = Date.now();
-    render();
+    renderSoon();
   });
 
   if(userRole === 'student' && !esAlumno){ /* sin cuenta de alumno todavía */ }
@@ -443,7 +443,7 @@ function startListeners(){
     snap.forEach(d => { next[d.id] = d.data(); });
     cache.valoraciones = next;
     cache._lastSync.valoraciones = Date.now();
-    render();
+    renderSoon();
   });
 
   // Las notas se suscriben después de saber qué rol tiene la cuenta (iniciarNotasSegunRol).
@@ -453,7 +453,7 @@ function startListeners(){
     snap.forEach(d => { next[d.id] = d.data(); });
     cache.entradasEspeciales = next;
     cache._lastSync.entradasEspeciales = Date.now();
-    render();
+    renderSoon();
   });
 
   if(!esAlumno && userRole !== 'teacher') onSnapshot(collection(db,'viewers'), snap => {
@@ -461,7 +461,7 @@ function startListeners(){
     snap.forEach(d => { next[d.id] = Object.assign({ uid: d.id }, d.data()); });
     cache.viewers = next;
     cache._lastSync.viewers = Date.now();
-    render();
+    renderSoon();
   });
 
   if(!esAlumno && userRole !== 'teacher') onSnapshot(collection(db,'driveMapping'), snap => {
@@ -469,7 +469,7 @@ function startListeners(){
     snap.forEach(d => { next[d.id] = d.data(); });
     cache.driveMapping = next;
     cache._lastSync.driveMapping = Date.now();
-    render();
+    renderSoon();
   });
 
   if(!esAlumno && userRole !== 'teacher') onSnapshot(collection(db,'tramites'), snap => {
@@ -477,7 +477,7 @@ function startListeners(){
     snap.forEach(d => { next[d.id] = Object.assign({ id: d.id }, d.data()); });
     cache.tramites = next;
     cache._lastSync.tramites = Date.now();
-    render();
+    renderSoon();
   });
 
   if(!esAlumno && userRole !== 'teacher') onSnapshot(collection(db,'entregas'), snap => {
@@ -485,7 +485,7 @@ function startListeners(){
     snap.forEach(d => { next[d.id] = d.data(); });
     cache.entregas = next;
     cache._lastSync.entregas = Date.now();
-    render();
+    renderSoon();
   });
 
   onSnapshot(collection(db,'diasSinClase'), snap => {
@@ -493,19 +493,19 @@ function startListeners(){
     snap.forEach(d => { next[d.id] = d.data(); });
     cache.diasSinClase = next;
     cache._lastSync.diasSinClase = Date.now();
-    render();
+    renderSoon();
   });
 
   if(esAlumno){
     // Su propia cuenta y su propia ficha, nada más.
     onSnapshot(doc(db,'students_auth', currentStudentAuth.uid), d => {
       cache.students_auth = d.exists() ? { [d.id]: Object.assign({ uid: d.id }, d.data()) } : {};
-      render();
+      renderSoon();
     }, sinPermiso('students_auth'));
     onSnapshot(doc(db,'students', miId), d => {
       cache.students = d.exists() ? { [d.id]: Object.assign({ id: d.id }, d.data()) } : {};
       cache._lastSync.students = Date.now();
-      render();
+      renderSoon();
     }, sinPermiso('students'));
   } else {
     // Las cuentas de los alumnos (correos, usuarios) no son para los docentes.
@@ -514,7 +514,7 @@ function startListeners(){
       snap.forEach(d => { next[d.id] = Object.assign({ uid: d.id }, d.data()); });
       cache.students_auth = next;
       cache._lastSync.students_auth = Date.now();
-      render();
+      renderSoon();
     });
 
     escucharColeccion('students', snap => {
@@ -522,7 +522,7 @@ function startListeners(){
       snap.forEach(d => { next[d.id] = Object.assign({ id: d.id }, d.data()); });
       cache.students = next;
       cache._lastSync.students = Date.now();
-      render();
+      renderSoon();
     });
   }
 
@@ -533,7 +533,7 @@ function startListeners(){
       const next = {};
       snap.forEach(d => { next[d.id] = Object.assign({ id: d.id }, d.data()); });
       cache.pendientes = next;
-      render();
+      renderSoon();
     });
   }
 
@@ -542,7 +542,7 @@ function startListeners(){
     snap.forEach(d => { next[d.id] = d.data(); });
     cache.schedule = next;
     cache._lastSync.schedule = Date.now();
-    render();
+    renderSoon();
   });
 
   onSnapshot(collection(db,'eventos'), snap => {
@@ -550,7 +550,7 @@ function startListeners(){
     snap.forEach(d => { next[d.id] = Object.assign({ id: d.id }, d.data()); });
     cache.eventos = next;
     cache._lastSync.eventos = Date.now();
-    render();
+    renderSoon();
   });
 
   const configRef = doc(db,'config','general');
@@ -561,7 +561,7 @@ function startListeners(){
       aplicarConfigDinamica(cache.config);
     }
     iniciarNotasAlumnoC2();
-    render();
+    renderSoon();
     // Primera carga del histórico, y recarga solo si la versión que llega es MÁS
     // NUEVA que la cargada (así el eco de nuestra propia escritura, o un snapshot
     // viejo que llega tarde, no dispara una recarga completa al pedo).
@@ -571,7 +571,7 @@ function startListeners(){
         console.error('No se pudo cargar el histórico de asistencia', err);
         histAsistenciaListo = true; // para no dejar el aviso colgado en pantalla
         showToast('No pude cargar el histórico de asistencia. Los totales de bimestres anteriores pueden quedar incompletos.', 'error');
-        render();
+        renderSoon();
       });
     }
   });
@@ -675,6 +675,7 @@ async function reactivarAlumno(id){
 // Cuando un alumno/a se va del colegio: primero se descarga un archivo (Excel) con todo su
 // historial y recién después, con una segunda confirmación, se borran sus datos de la app.
 async function archivarYBorrarAlumno(id){
+  const XLSX = await cargarXLSX();
   if(modoPruebaBloquea()) return;
   const al = cache.students[id];
   if(!al || al.activo !== false) return;
@@ -731,7 +732,7 @@ async function archivarYBorrarAlumno(id){
     refrescarAttendance();
     marcarHistoricoCambiado();
     showToast(`Datos de ${nombre} borrados`);
-    render();
+    renderSoon();
   }catch(err){ showSaveError(err); }
 }
 
@@ -1751,7 +1752,7 @@ function navigate(route, params, transicion){
   }
   currentRoute = route;
   if(params && params.curso) selectedCurso = params.curso;
-  render();
+  renderSoon();
   window.scrollTo(0,0);
 }
 
@@ -1761,7 +1762,7 @@ function goBack(fallback){
   navFotos.pop();
   currentRoute = prev || fallback || 'home';
   lastFocusedInput = null;
-  render();
+  renderSoon();
   window.scrollTo(0,0);
 }
 
@@ -4423,7 +4424,7 @@ async function marcarTodoComoYaSincronizado(){
     if(estadoEl) estadoEl.textContent = `Listo: ${hechos} registros marcados como ya sincronizados.`;
     showToast('Todo marcado como ya sincronizado');
     await recargarHistoricoAsistencia(); // se tocaron fechas viejas, fuera del listener en vivo
-    render();
+    renderSoon();
   }catch(err){
     console.error(err);
     if(estadoEl) estadoEl.textContent = `Se cortó en el registro ${hechos}/${total} por un error: ${err.message||err}. Tocá el botón de nuevo para seguir con el resto.`;
@@ -4478,7 +4479,7 @@ async function emparejarPlanillasDrive(){
     return;
   }
   driveTrabajando = false;
-  render();
+  renderSoon();
 }
 
 function guardarMapeoDrive(){
@@ -4508,7 +4509,7 @@ async function sincronizarAhoraDrive(){
   if(!asistencia.length && !ef.length){ if(estado) estado.textContent = 'No hay nada pendiente para pasar a Drive.'; return; }
   if(!(await customConfirm(`Se van a agregar ${filas} fila${filas!==1?'s':''} en las planillas de Drive. Puede tardar un par de minutos; podés seguir usando la app mientras tanto. ¿Sincronizar?`, { textoSi: 'Sincronizar' }))) return;
   driveTrabajando = true;
-  render();
+  renderSoon();
   try{
     const r = await llamarDrive({ accion: 'sincronizar', asistencia, ef });
     // Lo de fechas viejas no lo ve el listener en vivo: se actualiza la copia local.
@@ -4518,11 +4519,11 @@ async function sincronizarAhoraDrive(){
       msg += ` ${r.errores.length} con problema: ` + r.errores.slice(0,3).map(e => `${e.archivo || e.studentId} (${explicarErrorDrive(e.mensaje)})`).join('; ');
     }
     driveTrabajando = false;
-    render();
+    renderSoon();
     await customAlert(msg);
   }catch(err){
     driveTrabajando = false;
-    render();
+    renderSoon();
     await customAlert('No se pudo sincronizar: ' + explicarErrorDrive(err.message) + ' Lo que no se llegó a pasar queda pendiente para la próxima vez.');
   }
 }
@@ -4744,7 +4745,7 @@ function renderStudentHome(){
     document.getElementById('instalarGuiaBtn').addEventListener('click', () => navigate('instalarApp'));
     document.getElementById('instalarOcultarBtn').addEventListener('click', () => {
       try{ localStorage.setItem('isp_instalar_oculto','1'); }catch(e){}
-      render();
+      renderSoon();
     });
   }
   document.querySelectorAll('.module-row').forEach(r => r.addEventListener('click', () => {
@@ -5346,9 +5347,9 @@ function dibujarBoletinEnDoc(doc, studentId, copia){
   doc.text(`Copia para el ${copia}`, pageW-8, 265, { align:'center', angle: 90 });
 }
 
-function generarBoletinOficialPDF(studentId){
+async function generarBoletinOficialPDF(studentId){
   const student = getStudents().find(s => s.id === studentId);
-  const { jsPDF } = window.jspdf;
+  const { jsPDF } = await cargarJsPDF();
   const doc = new jsPDF({ unit: 'mm', format: 'a4' });
   dibujarBoletinEnDoc(doc, studentId, 'Alumno');
   doc.addPage();
@@ -5356,10 +5357,10 @@ function generarBoletinOficialPDF(studentId){
   doc.save(`Boletin_${student.apellido}_${student.nombre}_${student.curso}A.pdf`);
 }
 
-function generarBoletinesCurso(curso){
+async function generarBoletinesCurso(curso){
   const students = getStudents().filter(s => s.curso === curso).sort((a,b)=> a.apellido.localeCompare(b.apellido));
   if(!students.length){ customAlert('Este curso no tiene alumnos cargados.'); return; }
-  const { jsPDF } = window.jspdf;
+  const { jsPDF } = await cargarJsPDF();
   const doc = new jsPDF({ unit: 'mm', format: 'a4' });
   students.forEach((s, i) => {
     if(i > 0) doc.addPage();
@@ -5370,9 +5371,9 @@ function generarBoletinesCurso(curso){
   doc.save(`Boletines_${curso}A_${todayISO()}.pdf`);
 }
 
-function generarBoletinesTodos(){
+async function generarBoletinesTodos(){
   const students = getStudents().sort((a,b)=> Number(a.curso)-Number(b.curso) || a.apellido.localeCompare(b.apellido));
-  const { jsPDF } = window.jspdf;
+  const { jsPDF } = await cargarJsPDF();
   const doc = new jsPDF({ unit: 'mm', format: 'a4' });
   students.forEach((s, i) => {
     if(i > 0) doc.addPage();
@@ -5383,7 +5384,8 @@ function generarBoletinesTodos(){
   doc.save(`Boletines_ISP_${todayISO()}.pdf`);
 }
 
-function exportarNotasCurso(curso){
+async function exportarNotasCurso(curso){
+  const XLSX = await cargarXLSX();
   const students = getStudents().filter(s => s.curso === curso).sort((a,b)=> a.apellido.localeCompare(b.apellido));
   const materiasCurso = materiasDeCurso(curso);
   const filas = students.map(s => {
@@ -5593,7 +5595,8 @@ function renderVerNotas(){
 // ---------- Vista rápida por curso ----------
 let selectedMateriaRiesgo = null;
 
-function exportarVistaGeneral(){
+async function exportarVistaGeneral(){
+  const XLSX = await cargarXLSX();
   const porCurso = CURSOS.map(c => Object.assign({ curso: c }, computeVistaCurso(c)));
   const filas = porCurso.map(c => ({ Curso: c.curso+'°A', Alumnos: c.total, 'En alerta': c.enAlerta, 'Riesgo SCP': c.conSCP }));
   const ws = XLSX.utils.json_to_sheet(filas);
@@ -5713,7 +5716,8 @@ function computeVistaCurso(curso){
   return { total: students.length, enAlerta: alertaList.length, conSCP: scpList.length, alertaList, scpList, cercaList, anualList, porMateria };
 }
 
-function descargarRespaldoCompleto(){
+async function descargarRespaldoCompleto(){
+  const XLSX = await cargarXLSX();
   const wb = XLSX.utils.book_new();
   const students = getStudents();
   const nombreDe = (id) => { const s = students.find(x=>x.id===id); return s ? `${s.apellido}, ${s.nombre}` : id; };
@@ -5756,7 +5760,8 @@ function descargarRespaldoCompleto(){
 }
 
 // ---------- Respaldos por separado (Configuración) ----------
-function descargarSancionesExcel(){
+async function descargarSancionesExcel(){
+  const XLSX = await cargarXLSX();
   const students = getStudents();
   const nombreDe = (id) => { const s = students.find(x=>x.id===id); return s ? `${s.apellido}, ${s.nombre}` : id; };
   const cursoDe = (id) => { const s = students.find(x=>x.id===id); return s ? `${s.curso}°A` : ''; };
@@ -5768,7 +5773,8 @@ function descargarSancionesExcel(){
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(filas), 'Sanciones');
   XLSX.writeFile(wb, `Sanciones_ISP_${todayISO()}.xlsx`);
 }
-function descargarCertificadosExcel(){
+async function descargarCertificadosExcel(){
+  const XLSX = await cargarXLSX();
   const students = getStudents();
   const nombreDe = (id) => { const s = students.find(x=>x.id===id); return s ? `${s.apellido}, ${s.nombre}` : id; };
   const cursoDe = (id) => { const s = students.find(x=>x.id===id); return s ? `${s.curso}°A` : ''; };
@@ -5777,7 +5783,8 @@ function descargarCertificadosExcel(){
   XLSX.utils.book_append_sheet(wb, XLSX.utils.json_to_sheet(filas), 'Certificados');
   XLSX.writeFile(wb, `Certificados_ISP_${todayISO()}.xlsx`);
 }
-function descargarTramitesExcel(){
+async function descargarTramitesExcel(){
+  const XLSX = await cargarXLSX();
   const filas = [];
   Object.values(getTramites()).forEach(t => {
     getStudents().filter(s => t.cursos.includes(s.curso)).forEach(s => {
@@ -5792,7 +5799,8 @@ function descargarTramitesExcel(){
   XLSX.writeFile(wb, `Tramites_ISP_${todayISO()}.xlsx`);
 }
 
-function exportarAsistenciaCurso(curso){
+async function exportarAsistenciaCurso(curso){
+  const XLSX = await cargarXLSX();
   const bim = bimestreActual();
   const students = getStudents().filter(s => s.curso === curso).sort((a,b)=> a.apellido.localeCompare(b.apellido));
   const att = getAttendance();
@@ -5881,7 +5889,8 @@ function codigoOficialDelDia(fecha, studentId){
 // la de papel, los feriados y días sin clase directamente no aparecen como columna
 // (en vez del truco de escribir el nombre del feriado en letras verticales): quedan
 // listados aparte, al pie, para que se entienda por qué no están.
-function exportarPlanillaOficialCurso(curso, mesISO){
+async function exportarPlanillaOficialCurso(curso, mesISO){
+  const XLSX = await cargarXLSX();
   const students = getStudents().filter(s => s.curso === curso).sort((a,b)=> a.apellido.localeCompare(b.apellido));
   const dias = diasHabilesDelMes(curso, mesISO);
   const [anio, mesN] = mesISO.split('-').map(Number);
@@ -5948,7 +5957,8 @@ function exportarPlanillaOficialCurso(curso, mesISO){
 }
 
 // Resumen simple por mes (uno por alumno, sin el detalle día por día).
-function exportarResumenMensualCurso(curso, mesISO){
+async function exportarResumenMensualCurso(curso, mesISO){
+  const XLSX = await cargarXLSX();
   const students = getStudents().filter(s => s.curso === curso).sort((a,b)=> a.apellido.localeCompare(b.apellido));
   const dias = diasHabilesDelMes(curso, mesISO);
   const [anio, mesN] = mesISO.split('-').map(Number);
@@ -6208,11 +6218,11 @@ function alumnosOrdenadosDeCurso(curso){
 }
 
 // mesISO = un mes, o null para todo el año (de marzo hasta el mes en curso, una hoja por mes).
-function exportarRegistroPDF(curso, mesISO){
+async function exportarRegistroPDF(curso, mesISO){
   const alumnos = alumnosOrdenadosDeCurso(curso);
   if(!alumnos.length){ customAlert('Este curso no tiene alumnos cargados.'); return; }
   const meses = mesISO ? [mesISO] : mesesConDatos().map(m => m.value);
-  const { jsPDF } = window.jspdf;
+  const { jsPDF } = await cargarJsPDF();
   const doc = new jsPDF({ unit: 'mm', format: 'a4', orientation: 'landscape' });
   meses.forEach((m, i) => {
     if(i > 0) doc.addPage('a4', 'landscape');
@@ -6222,10 +6232,10 @@ function exportarRegistroPDF(curso, mesISO){
 }
 
 // Listado de todos los alumnos: Año, apellido y nombre y 4 columnas en blanco para completar a mano.
-function exportarListadoAlumnosPDF(curso){
+async function exportarListadoAlumnosPDF(curso){
   const alumnos = getStudents().filter(a => !curso || a.curso === curso).sort((a, b) => Number(a.curso) - Number(b.curso) || a.apellido.localeCompare(b.apellido) || a.nombre.localeCompare(b.nombre));
   if(!alumnos.length){ customAlert('No hay alumnos cargados.'); return; }
-  const { jsPDF } = window.jspdf;
+  const { jsPDF } = await cargarJsPDF();
   const doc = new jsPDF({ unit: 'mm', format: 'a4' });
   const tituloListado = curso ? `Listado de alumnos — ${curso}° año` : 'Listado de alumnos';
   const mL = 12, ancho = 186, hFila = 7.2, yIni = 34, yMax = 284;
@@ -6570,7 +6580,8 @@ function renderVistaCursoSCP(){
 // Planilla del PIA: una pestaña por curso, una fila por alumno con las materias en las
 // que queda SCP (debajo del 85% anual). Antes de diciembre es una proyección: las clases
 // que faltan dar se cuentan como presentes.
-function exportarPlanillaPIA(){
+async function exportarPlanillaPIA(){
+  const XLSX = await cargarXLSX();
   const anio = { from: BIMESTRES[0].from, to: BIMESTRES[BIMESTRES.length-1].to };
   const wb = XLSX.utils.book_new();
   let totalAlumnos = 0;
@@ -6660,7 +6671,7 @@ function entrarModoPrueba(rol, id){
   userRole = rol;
   navHistory = []; navFotos = [];
   currentRoute = homeRoute();
-  render();
+  renderSoon();
   window.scrollTo(0, 0);
 }
 
@@ -6671,7 +6682,7 @@ function salirModoPrueba(){
   currentTeacher = null; currentStudentAuth = null; currentViewer = null;
   navHistory = []; navFotos = [];
   currentRoute = 'config';
-  render();
+  renderSoon();
   window.scrollTo(0, 0);
 }
 
@@ -7027,7 +7038,7 @@ async function importarEntregasMasivo(tramiteId, data){
   });
   await Promise.all(ops);
   showToast(`${ops.length} registros importados`);
-  render();
+  renderSoon();
 }
 
 function renderTramiteImprimir(){
@@ -7156,7 +7167,7 @@ async function importarNotasMasivo(data){
   }
   if(estadoEl) estadoEl.textContent = `Listo: ${notas.length} notas cargadas.`;
   showToast('Notas importadas');
-  render();
+  renderSoon();
 }
 
 async function guardarConfigAvanzada(){
@@ -7725,7 +7736,7 @@ function renderConfig(){
   document.getElementById('cambiarUsuarioBtn').addEventListener('click', () => {
     localStorage.removeItem('isp_usuario');
     currentRoute = 'quien';
-    render();
+    renderSoon();
   });
   document.getElementById('cerrarSesionBtn').addEventListener('click', cerrarSesionAdmin);
   attachPillBtns('tema', (v) => { setTema(v); render(); });
@@ -8216,7 +8227,7 @@ function escucharQuizYTps(esAlumno, miId, cursoAl){
     cache[clave] = next;
     cache._lastSync[clave] = Date.now();
     if(extra) extra();
-    render();
+    renderSoon();
   };
   const sinPerm = (n) => (e) => console.warn('No se pudo leer', n, e && e.code);
   if(esAlumno){
@@ -8418,7 +8429,7 @@ function renderQuizEditar(){
     const p = ed.preguntas[+el.dataset.quitaropt], k = +el.dataset.k;
     p.opciones.splice(k, 1);
     if(p.correcta === k) p.correcta = 0; else if(p.correcta > k) p.correcta--;
-    render();
+    renderSoon();
   }));
   document.querySelectorAll('[data-subir]').forEach(el => el.addEventListener('click', () => { const i = +el.dataset.subir; [ed.preguntas[i - 1], ed.preguntas[i]] = [ed.preguntas[i], ed.preguntas[i - 1]]; render(); }));
   document.querySelectorAll('[data-bajar]').forEach(el => el.addEventListener('click', () => { const i = +el.dataset.bajar; [ed.preguntas[i + 1], ed.preguntas[i]] = [ed.preguntas[i], ed.preguntas[i + 1]]; render(); }));
@@ -8427,7 +8438,7 @@ function renderQuizEditar(){
     if(ed.preguntas[i].texto.trim() && !(await customConfirm('¿Borrar esta pregunta?', { peligro: true, textoSi: 'Borrar' }))) return;
     ed.preguntas.splice(i, 1);
     if(!ed.preguntas.length) ed.preguntas.push(preguntaVacia('mc'));
-    render();
+    renderSoon();
   }));
   $('addMc').addEventListener('click', () => { ed.preguntas.push(preguntaVacia('mc')); render(); setTimeout(() => window.scrollTo(0, document.body.scrollHeight), 50); });
   $('addVf').addEventListener('click', () => { ed.preguntas.push(preguntaVacia('vf')); render(); setTimeout(() => window.scrollTo(0, document.body.scrollHeight), 50); });
@@ -8625,7 +8636,7 @@ async function cargarIntentosQuiz(id, forzar){
     console.warn('No se pudieron leer los resultados', err && err.code);
     window.__quizInt[id] = { error: true };
   }
-  render();
+  renderSoon();
 }
 
 function renderQuizResultados(){
@@ -8905,6 +8916,34 @@ function barraFaltasHtml(faltasAnio){
     : `Te quedan ${String(quedan).replace('.', ',')} faltas para el tope de ${UMBRAL_ANUAL}.`;
   return `<div class="faltas-barra ${cls}"><div class="fb-fondo"><div class="fb-llena" style="width:${pct}%"></div></div><p>${msg}</p></div>`;
 }
+
+// Varios cambios de Firestore seguidos (al sincronizar, al cargar) disparan una sola redibujada.
+let _renderPendiente = null;
+function renderSoon(){
+  if(_renderPendiente) return;
+  _renderPendiente = setTimeout(() => { _renderPendiente = null; render(); }, 120);
+}
+
+// Librerías de Excel y PDF: se bajan recién cuando se usan por primera vez.
+const LIB_XLSX = 'https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js';
+const LIB_JSPDF = 'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js';
+const _libsCargadas = {};
+function cargarLibreria(url, global){
+  if(window[global]) return Promise.resolve(window[global]);
+  if(!_libsCargadas[url]){
+    showToast('Preparando la descarga…');
+    _libsCargadas[url] = new Promise((ok, err) => {
+      const sc = document.createElement('script');
+      sc.src = url;
+      sc.onload = () => window[global] ? ok(window[global]) : err(new Error('La librería no se inicializó'));
+      sc.onerror = () => { _libsCargadas[url] = null; sc.remove(); showToast('No se pudo descargar la librería. Revisá la conexión e intentá de nuevo.'); err(new Error('lib')); };
+      document.head.appendChild(sc);
+    });
+  }
+  return _libsCargadas[url];
+}
+const cargarXLSX = () => cargarLibreria(LIB_XLSX, 'XLSX');
+const cargarJsPDF = () => cargarLibreria(LIB_JSPDF, 'jspdf');
 
 // ---------- Init ----------
 updateOnlineBanner();
