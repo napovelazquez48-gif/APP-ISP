@@ -1,6 +1,6 @@
 // ===== Preceptoría ISP — lógica de la app (Etapa 1) =====
 
-const APP_VERSION = 139;
+const APP_VERSION = 140;
 const SEED_STUDENTS = []; // la lista de alumnos vive en Firestore (colección students), no en el código
 
 const CURSOS = ['1','2','3','4','5'];
@@ -4511,9 +4511,20 @@ async function sincronizarAhoraDrive(){
   driveTrabajando = true;
   renderSoon();
   try{
-    const r = await llamarDrive({ accion: 'sincronizar', asistencia, ef });
-    // Lo de fechas viejas no lo ve el listener en vivo: se actualiza la copia local.
-    (r.sincronizados.asistencia || []).forEach(id => tocarHistorico(id, { driveSynced: true }));
+    // El servidor trabaja por tandas de alumnos: se repite hasta que no quede nadie.
+    const total = { alumnos: 0, filas: 0, errores: [] };
+    for(let tanda = 0; tanda < 30; tanda++){
+      const r = await llamarDrive({ accion: 'sincronizar', asistencia, ef });
+      // Lo de fechas viejas no lo ve el listener en vivo: se actualiza la copia local.
+      (r.sincronizados.asistencia || []).forEach(id => tocarHistorico(id, { driveSynced: true }));
+      total.alumnos += r.alumnos || 0;
+      total.filas += r.filas || 0;
+      total.errores.push(...(r.errores || []));
+      if(estado) estado.textContent = `Sincronizando… ${total.alumnos} alumno${total.alumnos!==1?'s':''} listo${total.alumnos!==1?'s':''}.`;
+      // Si una tanda no avanzó (todos con error), no insistimos: queda pendiente para otra vez.
+      if(!(r.pendientes > 0) || !(r.alumnos > 0)) break;
+    }
+    const r = total;
     let msg = `Listo: ${r.filas} fila${r.filas!==1?'s':''} en las planillas de ${r.alumnos} alumno${r.alumnos!==1?'s':''}.`;
     if(r.errores && r.errores.length){
       msg += ` ${r.errores.length} con problema: ` + r.errores.slice(0,3).map(e => `${e.archivo || e.studentId} (${explicarErrorDrive(e.mensaje)})`).join('; ');
