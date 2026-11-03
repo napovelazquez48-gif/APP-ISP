@@ -1,6 +1,6 @@
 // ===== Preceptoría ISP — lógica de la app (Etapa 1) =====
 
-const APP_VERSION = 141;
+const APP_VERSION = 142;
 const SEED_STUDENTS = []; // la lista de alumnos vive en Firestore (colección students), no en el código
 
 const CURSOS = ['1','2','3','4','5'];
@@ -1204,9 +1204,18 @@ function animateCounts(){
   });
 }
 
+// Curso actual del alumno/a: se guarda en cada registro (asistencia, EF, autorizaciones,
+// certificados) para que un docente pueda leer solo los de sus cursos.
+function cursoDe(studentId){
+  const al = cache.students && cache.students[studentId];
+  return (al && al.curso) ? String(al.curso) : null;
+}
+
 function writeAttendance(key, data){
   const [fechaK, studentIdK] = key.split('|');
   const payload = Object.assign({ autor: getUsuario(), studentId: studentIdK, fecha: fechaK }, data);
+  const cursoAl = cursoDe(studentIdK);
+  if(cursoAl) payload.curso = cursoAl;
   // Al corregir la hora de llegada (o cualquier otro cambio que no hable del retiro),
   // el retiro que ya estaba cargado se conserva. Si pasa a ausente, se descarta solo.
   const prev = cache.attendance[key];
@@ -1363,7 +1372,7 @@ async function toggleEF(studentId, fecha){
   const current = cache.ef[key] ? cache.ef[key].tipo : null;
   const ref = doc(db,'ef', docId(`${fecha}_${studentId}`));
   if(current === null){
-    setDoc(ref, { date: fecha, studentId, tipo: 'falta', autor: getUsuario() }).catch(err=>showSaveError(err));
+    setDoc(ref, { date: fecha, studentId, tipo: 'falta', autor: getUsuario(), curso: cursoDe(studentId) }).catch(err=>showSaveError(err));
   } else if(current === 'falta'){
     const b = bimestreDe(fecha) || bimestreActual();
     const used = countSAFenBimestre(studentId, b);
@@ -1371,7 +1380,7 @@ async function toggleEF(studentId, fecha){
       deleteDoc(ref).catch(()=>{});
       return;
     }
-    setDoc(ref, { date: fecha, studentId, tipo: 'saf', autor: getUsuario() }).catch(err=>showSaveError(err));
+    setDoc(ref, { date: fecha, studentId, tipo: 'saf', autor: getUsuario(), curso: cursoDe(studentId) }).catch(err=>showSaveError(err));
   } else {
     deleteDoc(ref).catch(err=>showSaveError(err));
   }
@@ -1392,7 +1401,7 @@ async function agregarAutorizacion(studentId){
   if(modoPruebaBloquea()) return;
   const datos = await pedirDatosAutorizacion(null);
   if(!datos) return;
-  setDoc(doc(db,'autorizaciones',studentId), Object.assign(datos, { activa:true, desde: todayISO(), autor: getUsuario() }))
+  setDoc(doc(db,'autorizaciones',studentId), Object.assign(datos, { activa:true, desde: todayISO(), autor: getUsuario(), curso: cursoDe(studentId) }))
     .catch(err=>showSaveError(err));
 }
 async function editarAutorizacion(studentId){
@@ -1401,7 +1410,7 @@ async function editarAutorizacion(studentId){
   if(!auth) return agregarAutorizacion(studentId);
   const datos = await pedirDatosAutorizacion(auth);
   if(!datos) return;
-  setDoc(doc(db,'autorizaciones',studentId), Object.assign({}, auth, datos, { modificada: todayISO(), autor: getUsuario() }))
+  setDoc(doc(db,'autorizaciones',studentId), Object.assign({}, auth, datos, { modificada: todayISO(), autor: getUsuario(), curso: cursoDe(studentId) }))
     .catch(err=>showSaveError(err));
 }
 async function cerrarAutorizacion(studentId){
@@ -1409,7 +1418,7 @@ async function cerrarAutorizacion(studentId){
   const auth = getAutorizaciones()[studentId];
   if(!auth) return;
   if(await customConfirm(`¿Cerrar la autorización (hasta ${auth.horaTope})? Desde mañana las llegadas tarde vuelven a contar normal.`, { textoSi: 'Cerrar', peligro: true })){
-    setDoc(doc(db,'autorizaciones',studentId), Object.assign({}, auth, { activa:false, hasta: todayISO() }))
+    setDoc(doc(db,'autorizaciones',studentId), Object.assign({}, auth, { activa:false, hasta: todayISO() }, { curso: cursoDe(studentId) }))
       .catch(err=>showSaveError(err));
   }
 }
@@ -2901,7 +2910,7 @@ async function guardarJustificativo(){
     // no se pisa, para no borrar algo que el preceptor cargó a mano.
   });
 
-  addDoc(collection(db,'certificados'), { studentId: selectedStudentId, from, to, createdAt: Date.now(), autor: getUsuario() })
+  addDoc(collection(db,'certificados'), { studentId: selectedStudentId, from, to, createdAt: Date.now(), autor: getUsuario(), curso: cursoDe(selectedStudentId) })
     .then(ref => {
       if(pendingFileDataUrl){
         certImagesLocal[ref.id] = pendingFileDataUrl;
@@ -7746,7 +7755,10 @@ function renderConfig(){
       try{
         const r = (await httpsCallable(fbFunctions, 'prepararDatosAlumnos', { timeout: 540000 })()).data || {};
         const a = r.attendance || {}, f = r.ef || {};
-        await customAlert(`Listo.\n\nAsistencia: ${a.revisados||0} registros revisados, ${a.completados||0} completados, ${a.sinPoderCompletar||0} sin poder completar.\nEd. Física: ${f.revisados||0} revisados, ${f.completados||0} completados, ${f.sinPoderCompletar||0} sin poder completar.`);
+        // Después, se completa el curso en los registros (asistencia, EF, autorizaciones, certificados).
+        const c = (await httpsCallable(fbFunctions, 'migrarCursosRegistros', { timeout: 540000 })()).data || {};
+        const resumenCurso = Object.entries(c).map(([k, v]) => `${k}: ${v.completados||0} completados, ${v.sinCurso||0} sin curso`).join('\n');
+        await customAlert(`Listo.\n\nAsistencia: ${a.revisados||0} registros revisados, ${a.completados||0} completados, ${a.sinPoderCompletar||0} sin poder completar.\nEd. Física: ${f.revisados||0} revisados, ${f.completados||0} completados, ${f.sinPoderCompletar||0} sin poder completar.\n\nCurso por registro:\n${resumenCurso}`);
       }catch(err){
         await customAlert('No se pudo completar: ' + ((err && err.message) || 'error desconocido') + '\n\n¿Ya subiste las funciones nuevas?');
       }
