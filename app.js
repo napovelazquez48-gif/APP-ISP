@@ -1,6 +1,6 @@
 // ===== Preceptoría ISP — lógica de la app (Etapa 1) =====
 
-const APP_VERSION = 143;
+const APP_VERSION = 144;
 const SEED_STUDENTS = []; // la lista de alumnos vive en Firestore (colección students), no en el código
 
 const CURSOS = ['1','2','3','4','5'];
@@ -240,7 +240,7 @@ async function traerHistoricoAsistencia(rev){
   // que venga repetido lo pisa igual la versión en vivo, que es la más fresca.
   // Un docente baja solo lo de sus cursos (una consulta por curso, como exigen las reglas).
   const esDocente = userRole === 'teacher';
-  const alcance = esDocente ? 'docente:' + cursosDocente().join(',') : 'todo';
+  const alcance = esDocente ? 'docente:' + cursosDocenteTexto().join(',') : 'todo';
   const marca = DB.get('isp_hist_asistencia', null);
   // La copia local sirve si se armó con la misma versión del histórico y para el mismo alcance.
   const vigente = marca && marca.rev === rev && marca.alcance === alcance && !esDocente;
@@ -255,7 +255,7 @@ async function traerHistoricoAsistencia(rev){
   });
 
   if(esDocente){
-    const cursos = cursosDocente();
+    const cursos = cursosDocenteTexto();
     const snaps = await Promise.all(cursos.map(c => getDocs(query(collection(db,'attendance'), where('curso','==', c)))));
     snaps.forEach(tomar);
     histRevCargada = rev;
@@ -296,7 +296,7 @@ async function traerHistoricoAsistencia(rev){
 // en vez de bajar la colección completa se suscribe a una consulta por cada curso suyo y
 // junta los resultados. Para el resto de las cuentas es la colección entera, como siempre.
 // Cursos del docente como texto (para las consultas por curso).
-function cursosDocente(){
+function cursosDocenteTexto(){
   return ((currentTeacher && currentTeacher.cursos) || []).map(String);
 }
 
