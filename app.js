@@ -1,6 +1,6 @@
 // ===== Preceptoría ISP — lógica de la app (Etapa 1) =====
 
-const APP_VERSION = 142;
+const APP_VERSION = 143;
 const SEED_STUDENTS = []; // la lista de alumnos vive en Firestore (colección students), no en el código
 
 const CURSOS = ['1','2','3','4','5'];
@@ -238,11 +238,35 @@ async function traerHistoricoAsistencia(rev){
   // una consulta por rango los dejaría afuera, borrando de la app meses de historia.
   // Trayendo la colección entera no se puede perder ninguno; lo del bimestre actual
   // que venga repetido lo pisa igual la versión en vivo, que es la más fresca.
-  const q = query(collection(db,'attendance'));
+  // Un docente baja solo lo de sus cursos (una consulta por curso, como exigen las reglas).
+  const esDocente = userRole === 'teacher';
+  const alcance = esDocente ? 'docente:' + cursosDocente().join(',') : 'todo';
   const marca = DB.get('isp_hist_asistencia', null);
-  // La copia local sirve si se armó con la misma versión del histórico que la de ahora.
-  const vigente = marca && marca.rev === rev;
+  // La copia local sirve si se armó con la misma versión del histórico y para el mismo alcance.
+  const vigente = marca && marca.rev === rev && marca.alcance === alcance && !esDocente;
 
+  const hist = {};
+  const tomar = (snap) => snap.forEach(d => {
+    const r = d.data();
+    // Lo que el listener en vivo ya cubre no se guarda acá: si no, al borrar una
+    // marca del bimestre actual volvería a aparecer desde esta copia vieja.
+    if(r.fecha && r.fecha >= INICIO_VIVO) return;
+    hist[d.id] = r;
+  });
+
+  if(esDocente){
+    const cursos = cursosDocente();
+    const snaps = await Promise.all(cursos.map(c => getDocs(query(collection(db,'attendance'), where('curso','==', c)))));
+    snaps.forEach(tomar);
+    histRevCargada = rev;
+    cache.attendanceHist = hist;
+    refrescarAttendance();
+    histAsistenciaListo = true;
+    render();
+    return;
+  }
+
+  const q = query(collection(db,'attendance'));
   let snap = null;
   if(vigente){
     try{
@@ -254,18 +278,11 @@ async function traerHistoricoAsistencia(rev){
   }
   if(!snap){
     snap = await getDocs(q);
-    DB.set('isp_hist_asistencia', { rev, cantidad: snap.size });
+    DB.set('isp_hist_asistencia', { rev, cantidad: snap.size, alcance });
   }
   histRevCargada = rev;
 
-  const hist = {};
-  snap.forEach(d => {
-    const r = d.data();
-    // Lo que el listener en vivo ya cubre no se guarda acá: si no, al borrar una
-    // marca del bimestre actual volvería a aparecer desde esta copia vieja.
-    if(r.fecha && r.fecha >= INICIO_VIVO) return;
-    hist[d.id] = r;
-  });
+  tomar(snap);
   cache.attendanceHist = hist;
   refrescarAttendance();
   histAsistenciaListo = true;
@@ -278,21 +295,17 @@ async function traerHistoricoAsistencia(rev){
 // Un docente solo puede leer lo de sus cursos (las reglas de Firestore se lo exigen), así que
 // en vez de bajar la colección completa se suscribe a una consulta por cada curso suyo y
 // junta los resultados. Para el resto de las cuentas es la colección entera, como siempre.
+// Cursos del docente como texto (para las consultas por curso).
+function cursosDocente(){
+  return ((currentTeacher && currentTeacher.cursos) || []).map(String);
+}
+
 function escucharColeccion(nombre, alCambiar){
   if(userRole !== 'teacher'){ onSnapshot(collection(db, nombre), alCambiar); return; }
   const cursos = (currentTeacher && currentTeacher.cursos) || [];
   const partes = {};
   const juntar = () => ({ forEach: (fn) => Object.values(partes).forEach(p => p.forEach(fn)) });
   if(!cursos.length){ alCambiar(juntar()); return; }
-  // Un solo listener con "in" (las reglas revisan cada documento, así que es válido).
-  // Solo si son muchos cursos (más de 30, el máximo de Firestore) se usa uno por curso.
-  if(cursos.length <= 30){
-    onSnapshot(query(collection(db, nombre), where('curso', 'in', cursos.map(String))), snap => {
-      const docs = []; snap.forEach(d => docs.push(d));
-      alCambiar({ forEach: (fn) => docs.forEach(fn) });
-    }, err => { console.warn('No se pudo leer', nombre, err && err.code); });
-    return;
-  }
   cursos.forEach(c => {
     onSnapshot(query(collection(db, nombre), where('curso', '==', String(c))), snap => {
       const docs = []; snap.forEach(d => docs.push(d)); partes[c] = docs;
@@ -354,20 +367,30 @@ function startListeners(){
   const lista = (nombre) => esAlumno ? query(collection(db, nombre), where('studentId', '==', miId)) : collection(db, nombre);
   const sinPermiso = (nombre) => (e) => console.warn('No se pudo leer', nombre, e && e.code);
   if(esAlumno) histAsistenciaListo = true; // su asistencia completa viene en este mismo listener
+  // Docentes: solo lo de sus cursos (las reglas lo exigen). El resto de las cuentas, la colección entera.
+  const escucharLista = (nombre, cb) => userRole === 'teacher' ? escucharColeccion(nombre, cb) : onSnapshot(lista(nombre), cb, sinPermiso(nombre));
 
-  onSnapshot(esAlumno ? query(collection(db,'attendance'), where('studentId','==', miId)) : query(collection(db,'attendance'), where('fecha','>=', INICIO_VIVO)), snap => {
+  const aplicarAsistenciaVivo = (snap) => {
     const next = {};
-    snap.forEach(d => { next[d.id] = d.data(); });
+    snap.forEach(d => {
+      const r = d.data();
+      // Como antes: el bimestre actual. Un docente lo filtra acá (no con la consulta) para no
+      // necesitar índices nuevos en Firestore.
+      if(userRole === 'teacher' && !(r.fecha && r.fecha >= INICIO_VIVO)) return;
+      next[d.id] = r;
+    });
     cache.attendanceLive = next;
     refrescarAttendance();
     cache._lastSync.attendance = Date.now();
     renderSoon();
-  });
+  };
+  if(userRole === 'teacher') escucharColeccion('attendance', aplicarAsistenciaVivo);
+  else onSnapshot(esAlumno ? query(collection(db,'attendance'), where('studentId','==', miId)) : query(collection(db,'attendance'), where('fecha','>=', INICIO_VIVO)), aplicarAsistenciaVivo);
 
   // El histórico no se dispara acá: se carga desde el listener de config/general, que
   // es el que trae la versión (histRev) con la que hay que compararlo.
 
-  onSnapshot(lista('sanciones'), snap => {
+  escucharLista('sanciones', snap => {
     const byStudent = {};
     snap.forEach(d => {
       const data = d.data();
@@ -396,7 +419,7 @@ function startListeners(){
     renderSoon();
   });
 
-  onSnapshot(lista('ef'), snap => {
+  escucharLista('ef', snap => {
     const next = {};
     snap.forEach(d => {
       const data = d.data();
@@ -410,7 +433,7 @@ function startListeners(){
     renderSoon();
   });
 
-  onSnapshot(lista('certificados'), snap => {
+  escucharLista('certificados', snap => {
     const next = [];
     snap.forEach(d => {
       const data = d.data();
@@ -428,7 +451,7 @@ function startListeners(){
       cache._lastSync.autorizaciones = Date.now();
       renderSoon();
     }, sinPermiso('autorizaciones'));
-  } else onSnapshot(collection(db,'autorizaciones'), snap => {
+  } else escucharLista('autorizaciones', snap => {
     const next = {};
     snap.forEach(d => { next[d.id] = d.data(); });
     cache.autorizaciones = next;
