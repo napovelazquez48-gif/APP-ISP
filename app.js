@@ -1,6 +1,6 @@
 // ===== Preceptoría ISP — lógica de la app (Etapa 1) =====
 
-const APP_VERSION = 140;
+const APP_VERSION = 141;
 const SEED_STUDENTS = []; // la lista de alumnos vive en Firestore (colección students), no en el código
 
 const CURSOS = ['1','2','3','4','5'];
@@ -284,6 +284,15 @@ function escucharColeccion(nombre, alCambiar){
   const partes = {};
   const juntar = () => ({ forEach: (fn) => Object.values(partes).forEach(p => p.forEach(fn)) });
   if(!cursos.length){ alCambiar(juntar()); return; }
+  // Un solo listener con "in" (las reglas revisan cada documento, así que es válido).
+  // Solo si son muchos cursos (más de 30, el máximo de Firestore) se usa uno por curso.
+  if(cursos.length <= 30){
+    onSnapshot(query(collection(db, nombre), where('curso', 'in', cursos.map(String))), snap => {
+      const docs = []; snap.forEach(d => docs.push(d));
+      alCambiar({ forEach: (fn) => docs.forEach(fn) });
+    }, err => { console.warn('No se pudo leer', nombre, err && err.code); });
+    return;
+  }
   cursos.forEach(c => {
     onSnapshot(query(collection(db, nombre), where('curso', '==', String(c))), snap => {
       const docs = []; snap.forEach(d => docs.push(d)); partes[c] = docs;
