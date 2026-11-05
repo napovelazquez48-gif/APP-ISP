@@ -1,6 +1,6 @@
 // ===== Preceptoría ISP — lógica de la app (Etapa 1) =====
 
-const APP_VERSION = 144;
+const APP_VERSION = 145;
 const SEED_STUDENTS = []; // la lista de alumnos vive en Firestore (colección students), no en el código
 
 const CURSOS = ['1','2','3','4','5'];
@@ -134,6 +134,7 @@ let cache = {
   attendanceLive: {},  // lo que llega en tiempo real (bimestre actual)
   attendanceHist: {},  // lo anterior al bimestre actual, se carga una vez por sesión
   sanciones: {},
+  alertasSIA: {},      // alumnos en alerta a cuya familia ya se le mandó el mail (id: alumno_bimestre)
   substitutions: {},
   ef: {},
   certificados: [],
@@ -406,6 +407,16 @@ function startListeners(){
     cache._lastSync.sanciones = Date.now();
     renderSoon();
   });
+
+  if(userRole === 'admin' || userRole === 'viewer'){
+    onSnapshot(collection(db,'alertasSIA'), snap => {
+      const next = {};
+      snap.forEach(d => { next[d.id] = d.data(); });
+      cache.alertasSIA = next;
+      cache._lastSync.alertasSIA = Date.now();
+      renderSoon();
+    }, sinPermiso('alertasSIA'));
+  }
 
   onSnapshot(collection(db,'substitutions'), snap => {
     const next = {};
@@ -1933,39 +1944,65 @@ async function initMessagingForegroundHandler(){
   }catch(e){ console.error(e); }
 }
 
+// Cada dispositivo (celular, compu) tiene su propio identificador guardado en el aparato. Así una
+// misma cuenta puede recibir los avisos en varios dispositivos a la vez, sin que uno pise al otro.
+function idDispositivo(){
+  try{
+    let id = localStorage.getItem('isp_dispositivo');
+    if(!id){ id = 'd' + Math.random().toString(36).slice(2, 10) + Date.now().toString(36); localStorage.setItem('isp_dispositivo', id); }
+    return id;
+  }catch(e){ return 'dsinalmacenamiento'; }
+}
+function plataformaDispositivo(){
+  if(esIPhone()) return appInstalada() ? 'iPhone (app instalada)' : 'iPhone (Safari)';
+  const ua = navigator.userAgent || '', pl = navigator.platform || '';
+  if(/android/i.test(ua)) return 'Android';
+  if(/mac/i.test(pl)) return 'Mac';
+  if(/win/i.test(pl)) return 'Windows';
+  return 'otro';
+}
+let motivoNotifFallida = ''; // 'permiso' si la persona no aceptó el permiso
+// Devuelve true si este dispositivo quedó registrado para recibir avisos.
 async function activarNotificaciones(mostrarErrores){
-  if(userRole !== 'admin' && userRole !== 'teacher' && userRole !== 'student') return;
-  if(userRole === 'teacher' && !currentTeacher) return;
-  if(userRole === 'student' && !currentStudentAuth) return;
+  motivoNotifFallida = '';
+  if(userRole !== 'admin' && userRole !== 'teacher' && userRole !== 'student') return false;
+  if(userRole === 'teacher' && !currentTeacher) return false;
+  if(userRole === 'student' && !currentStudentAuth) return false;
   if(!('Notification' in window) || !('serviceWorker' in navigator)){
     if(mostrarErrores) await customAlert('Este navegador no soporta notificaciones.');
-    return;
+    return false;
   }
   if(Notification.permission === 'denied'){
     if(mostrarErrores) await customAlert('Tenés las notificaciones bloqueadas para esta app en el navegador. Para activarlas, habilitalas manualmente desde la configuración del sitio.');
-    return;
+    return false;
   }
   try{
     const soportado = await messagingIsSupported();
     if(!soportado){
       if(mostrarErrores) await customAlert('Este navegador no soporta notificaciones push.');
-      return;
+      return false;
     }
     const permiso = await Notification.requestPermission();
-    if(permiso !== 'granted') return;
+    if(permiso !== 'granted'){ motivoNotifFallida = 'permiso'; return false; }
     if(!messagingInstance) messagingInstance = getMessaging(fbApp);
     const reg = await navigator.serviceWorker.ready;
     const token = await getToken(messagingInstance, { vapidKey: WEB_PUSH_VAPID_KEY, serviceWorkerRegistration: reg });
-    if(!token) return;
+    if(!token) return false;
     const uid = userRole === 'student' ? currentStudentAuth.uid : (userRole === 'teacher' ? currentTeacher.uid : auth.currentUser.uid);
     const datosRol = userRole === 'student'
       ? { curso: currentStudentAuth.curso, studentId: currentStudentAuth.studentId }
       : userRole === 'teacher'
         ? { cursos: currentTeacher.cursos||[], materias: currentTeacher.materias||[] }
         : {};
-    await setDoc(doc(db,'fcmTokens', uid), Object.assign({ token, role: userRole, updatedAt: Date.now() }, datosRol));
+    // Un documento por cuenta; dentro, un token por dispositivo (merge: no pisa los de los otros aparatos).
+    const ahora = Date.now();
+    await setDoc(doc(db,'fcmTokens', uid), Object.assign({
+      role: userRole, updatedAt: ahora,
+      dispositivos: { [idDispositivo()]: { token, updatedAt: ahora, plataforma: plataformaDispositivo() } }
+    }, datosRol), { merge: true });
     if(mostrarErrores){ showToast('Notificaciones activadas'); render(); }
-  }catch(err){ if(mostrarErrores) showSaveError(err); else console.error(err); }
+    return true;
+  }catch(err){ if(mostrarErrores) showSaveError(err); else console.error(err); return false; }
 }
 
 // ---------- Instalar la app en el celular (Android / iPhone) ----------
@@ -2251,11 +2288,19 @@ function renderDetalleAlertas(){
     .map(s => Object.assign({}, s, { fechaAlerta: computeFechaAlerta(s.id, bim) }))
     .sort((a,b)=> (Number(a.curso)-Number(b.curso)) || ((weights[b.id]||0)-(weights[a.id]||0)));
 
+  // "SIA enviado": la preceptoría marca que a esa familia ya se le mandó el mail. Esos alumnos
+  // dejan de aparecer en el aviso de las 10:00. Se guarda por alumno y por bimestre.
+  const siaDe = (id) => !!(cache.alertasSIA || {})[`${id}_${bim.n}`];
+  const puedeMarcar = userRole === 'admin';
+  const conSia = alertados.filter(s => siaDe(s.id)).length;
   const rows = alertados.map(s => `
       <div class="sancion-item">
         <p class="folio"><span class="curso-chip c${s.curso}">${s.curso}°</span> ${escapeHtml(s.apellido)}, ${escapeHtml(s.nombre)}</p>
         <p class="motivo">En alerta desde el ${s.fechaAlerta ? fmtDateShort(s.fechaAlerta) : '—'}</p>
         <p class="motivo">${weights[s.id]} faltas del bimestre</p>
+        ${puedeMarcar
+          ? `<button class="${siaDe(s.id) ? 'btn-primary' : 'btn-secondary'}" data-sia="${s.id}" style="margin-top:8px;width:100%;">${siaDe(s.id) ? '✓ SIA enviado' : 'SIA enviado'}</button>`
+          : (siaDe(s.id) ? `<p class="motivo" style="margin-top:6px;"><b>✓ SIA enviado</b></p>` : '')}
       </div>
     `).join('');
 
@@ -2265,9 +2310,33 @@ function renderDetalleAlertas(){
       <h1>Alumnos en alerta</h1>
     </div>
     <p class="date-label">${bim.n}° bimestre · 5 o más faltas · por curso</p>
+    ${alertados.length ? `<p class="date-label" style="margin-top:2px;">${alertados.length - conSia} sin SIA · ${conSia} con SIA enviado${puedeMarcar ? '. Con SIA enviado, el alumno ya no aparece en el aviso de las 10:00.' : ''}</p>` : ''}
     ${alertados.length ? `<div class="sancion-list">${rows}</div>` : `<p class="empty-inline">Nadie llegó a 5 faltas este bimestre.</p>`}
   `;
   document.getElementById('backBtn').addEventListener('click', () => goBack(homeRoute()));
+  document.querySelectorAll('[data-sia]').forEach(btn => {
+    btn.addEventListener('click', () => marcarSIA(btn.dataset.sia, bim.n));
+  });
+}
+
+// Marca (o desmarca) que a la familia de un alumno en alerta ya se le mandó el mail (SIA).
+function marcarSIA(studentId, bimN){
+  if(userRole !== 'admin' || modoPruebaBloquea()) return;
+  const id = `${studentId}_${bimN}`;
+  const ref = doc(db, 'alertasSIA', id);
+  const next = Object.assign({}, cache.alertasSIA || {});
+  if(next[id]){
+    delete next[id];
+    cache.alertasSIA = next;
+    render();
+    deleteDoc(ref).catch(err => showSaveError(err));
+  } else {
+    const datos = { studentId, bimestre: bimN, fecha: todayISO(), autor: getUsuario(), creadoEn: Date.now() };
+    next[id] = datos;
+    cache.alertasSIA = next;
+    render();
+    setDoc(ref, datos).catch(err => showSaveError(err));
+  }
 }
 
 // ---------- Importar histórico ----------
@@ -7691,6 +7760,14 @@ function renderConfig(){
       ${pillBtnRow('letra', [{value:'chica',label:'Chica'},{value:'normal',label:'Normal'},{value:'grande',label:'Grande'}], getLetra())}
     </div>
 
+    ${userRole === 'admin' ? `
+    <p class="section-label" style="margin-top:20px;">Notificaciones</p>
+    <div class="config-card">
+      <p style="font-size:calc(12.5px * var(--fs, 1));color:var(--ink-soft);margin:0 0 10px;">Registra este dispositivo y manda un aviso de prueba a todos los dispositivos de la preceptoría (celular, compu). Tocalo en cada aparato donde quieras recibir los avisos.</p>
+      <button class="btn-secondary" id="probarNotifBtn" style="width:100%;">Probar notificaciones</button>
+    </div>
+    ` : ''}
+
     ${esNapo ? `
     <p class="section-label" style="margin-top:20px;">Horarios de entrada (todo el colegio)</p>
     <div class="config-card">
@@ -7770,6 +7847,30 @@ function renderConfig(){
     </div>
   `;
   document.getElementById('verGuiaInstalarBtn').addEventListener('click', () => mostrarGuiaInstalar());
+  if(document.getElementById('probarNotifBtn')){
+    document.getElementById('probarNotifBtn').addEventListener('click', async (e) => {
+      if(modoPruebaBloquea()) return;
+      const b = e.currentTarget;
+      b.disabled = true; b.textContent = 'Probando…';
+      try{
+        const ok = await activarNotificaciones(true);
+        if(!ok){
+          if(motivoNotifFallida === 'permiso') await customAlert('No se pudo registrar este dispositivo porque las notificaciones no están permitidas. En el iPhone: Ajustes → Notificaciones → la app de ISP → Permitir notificaciones. (La app tiene que estar instalada en la pantalla de inicio.)');
+        } else {
+          const r = (await httpsCallable(fbFunctions, 'probarNotificacion')()).data || {};
+          if(!r.dispositivos){
+            await customAlert('No hay ningún dispositivo registrado todavía.');
+          } else {
+            const lineas = (r.detalle || []).map(d => `• ${d.plataforma}: ${d.ok ? 'enviado' : 'falló (' + d.error + ')'}`).join('\n');
+            await customAlert(`Aviso enviado a ${r.exitos} de ${r.dispositivos} dispositivos:\n${lineas}\n\nSi en unos segundos no llega a alguno de esos aparatos, revisá ahí Ajustes → Notificaciones (y que no esté activo un modo Concentración).`);
+          }
+        }
+      }catch(err){
+        await customAlert('No se pudo enviar la prueba: ' + ((err && err.message) || 'error desconocido') + '\n\n¿Ya subiste las funciones nuevas?');
+      }
+      b.disabled = false; b.textContent = 'Probar notificaciones';
+    });
+  }
   if(document.getElementById('prepararDatosBtn')){
     document.getElementById('prepararDatosBtn').addEventListener('click', async (e) => {
       if(modoPruebaBloquea()) return;
