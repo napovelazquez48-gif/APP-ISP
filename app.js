@@ -1,6 +1,6 @@
 // ===== Preceptoría ISP — lógica de la app (Etapa 1) =====
 
-const APP_VERSION = 148;
+const APP_VERSION = 149;
 const SEED_STUDENTS = []; // la lista de alumnos vive en Firestore (colección students), no en el código
 
 const CURSOS = ['1','2','3','4','5'];
@@ -403,6 +403,41 @@ function escucharColeccion(nombre, alCambiar){
     }, err => { console.warn('No se pudo leer', nombre, c, err && err.code); });
   });
 }
+// Colecciones chicas y compartidas (suplencias, docentes, horarios, eventos, días sin clase,
+// entradas especiales). Docentes y alumnos no las necesitan "en vivo": se muestran desde la copia
+// guardada en el dispositivo (gratis) y solo se piden al servidor si pasaron más de 3 horas.
+// Administración y cuentas de lectura siguen en vivo, como siempre.
+const TTL_COMPARTIDAS = 3 * 3600 * 1000;
+const refrescosCompartidos = [];
+function escucharCompartida(nombre, cb, errCb){
+  const ref = collection(db, nombre);
+  if(userRole === 'admin' || userRole === 'viewer'){ onSnapshot(ref, cb, errCb); return; }
+  const clave = 'isp_ttl_' + nombre;
+  const traer = async () => {
+    try{
+      const snap = await getDocs(ref);
+      DB.set(clave, { t: Date.now(), n: snap.size });
+      cb(snap);
+    }catch(e){ if(errCb) errCb(e); else console.warn('No se pudo leer', nombre, e && e.code); }
+  };
+  const vencida = () => { const m = DB.get(clave, null); return !m || (Date.now() - m.t) > TTL_COMPARTIDAS; };
+  (async () => {
+    const m = DB.get(clave, null);
+    let usoCopia = false;
+    if(m && !vencida()){
+      try{
+        const local = await getDocsFromCache(ref);
+        if(local.size >= Math.floor((m.n || 0) * 0.5)){ cb(local); usoCopia = true; }
+      }catch(e){}
+    }
+    if(!usoCopia) await traer();
+  })();
+  refrescosCompartidos.push(() => { if(vencida()) traer(); });
+}
+document.addEventListener('visibilitychange', () => {
+  if(document.visibilityState === 'visible') refrescosCompartidos.forEach(f => f());
+});
+
 let notasIniciadas = false, notasC2Iniciadas = false;
 let notasAlumnoC1 = {}, notasAlumnoC2 = {};
 function publicarNotasAlumno(){
@@ -507,7 +542,7 @@ function startListeners(){
     }, sinPermiso('alertasSIA'));
   }
 
-  onSnapshot(collection(db,'substitutions'), snap => {
+  escucharCompartida('substitutions', snap => {
     const next = {};
     snap.forEach(d => {
       const data = d.data();
@@ -559,7 +594,7 @@ function startListeners(){
     renderSoon();
   });
 
-  onSnapshot(collection(db,'teachers'), snap => {
+  escucharCompartida('teachers', snap => {
     const next = {};
     snap.forEach(d => { next[d.id] = Object.assign({ uid: d.id }, d.data()); });
     cache.teachers = next;
@@ -580,7 +615,7 @@ function startListeners(){
 
   // Las notas se suscriben después de saber qué rol tiene la cuenta (iniciarNotasSegunRol).
 
-  if(!esAlumno) onSnapshot(collection(db,'entradasEspeciales'), snap => {
+  if(!esAlumno) escucharCompartida('entradasEspeciales', snap => {
     const next = {};
     snap.forEach(d => { next[d.id] = d.data(); });
     cache.entradasEspeciales = next;
@@ -620,7 +655,7 @@ function startListeners(){
     renderSoon();
   });
 
-  onSnapshot(collection(db,'diasSinClase'), snap => {
+  escucharCompartida('diasSinClase', snap => {
     const next = {};
     snap.forEach(d => { next[d.id] = d.data(); });
     cache.diasSinClase = next;
@@ -669,7 +704,7 @@ function startListeners(){
     });
   }
 
-  onSnapshot(collection(db,'schedule'), snap => {
+  escucharCompartida('schedule', snap => {
     const next = {};
     snap.forEach(d => { next[d.id] = d.data(); });
     cache.schedule = next;
@@ -677,7 +712,7 @@ function startListeners(){
     renderSoon();
   });
 
-  onSnapshot(collection(db,'eventos'), snap => {
+  escucharCompartida('eventos', snap => {
     const next = {};
     snap.forEach(d => { next[d.id] = Object.assign({ id: d.id }, d.data()); });
     cache.eventos = next;
