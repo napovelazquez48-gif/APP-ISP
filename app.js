@@ -1,6 +1,6 @@
 // ===== Preceptoría ISP — lógica de la app (Etapa 1) =====
 
-const APP_VERSION = 146;
+const APP_VERSION = 148;
 const SEED_STUDENTS = []; // la lista de alumnos vive en Firestore (colección students), no en el código
 
 const CURSOS = ['1','2','3','4','5'];
@@ -51,9 +51,9 @@ function onSnapshot(ref, ...resto){
   if(i >= 0){ const cb = resto[i]; resto[i] = (snap) => { contarSnapshot(snap); return cb(snap); }; }
   return _onSnapshot(ref, ...resto);
 }
-async function getDocs(q){
+async function getDocs(q, etiqueta){
   const snap = await _getDocs(q);
-  try{ if(snap.docs.length && !snap.metadata.fromCache) sumarLectura(snap.docs[0].ref.parent.path, snap.docs.length); }catch(e){}
+  try{ if(snap.docs.length && !snap.metadata.fromCache) sumarLectura(etiqueta || snap.docs[0].ref.parent.path, snap.docs.length); }catch(e){}
   return snap;
 }
 async function getDoc(r){
@@ -277,10 +277,12 @@ async function traerHistoricoAsistencia(rev){
   // que venga repetido lo pisa igual la versión en vivo, que es la más fresca.
   // Un docente baja solo lo de sus cursos (una consulta por curso, como exigen las reglas).
   const esDocente = userRole === 'teacher';
-  const alcance = esDocente ? 'docente:' + cursosDocenteTexto().join(',') : 'todo';
+  const cursosDoc = esDocente ? cursosDocenteTexto() : [];
+  const alcance = esDocente ? 'docente:' + cursosDoc.join(',') : 'todo';
   const marca = DB.get('isp_hist_asistencia', null);
   // La copia local sirve si se armó con la misma versión del histórico y para el mismo alcance.
-  const vigente = marca && marca.rev === rev && marca.alcance === alcance && !esDocente;
+  // (Los docentes también la usan: antes bajaban el histórico de sus cursos en cada apertura de la app.)
+  const vigente = !!marca && marca.rev === rev && marca.alcance === alcance;
 
   const hist = {};
   const tomar = (snap) => snap.forEach(d => {
@@ -292,8 +294,21 @@ async function traerHistoricoAsistencia(rev){
   });
 
   if(esDocente){
-    const cursos = cursosDocenteTexto();
-    const snaps = await Promise.all(cursos.map(c => getDocs(query(collection(db,'attendance'), where('curso','==', c)))));
+    const qs = cursosDoc.map(c => query(collection(db,'attendance'), where('curso','==', c)));
+    let snaps = null;
+    if(vigente){
+      try{
+        const locales = await Promise.all(qs.map(q => getDocsFromCache(q)));
+        const total = locales.reduce((t, sn) => t + sn.size, 0);
+        // Tiene que traer aproximadamente lo mismo que la última vez que se pidió al servidor;
+        // si el navegador limpió la copia a medias, se rehace.
+        if(total >= Math.floor((marca.cantidad || 0) * 0.9)) snaps = locales;
+      }catch(e){ /* sin copia local utilizable: se pide al servidor abajo */ }
+    }
+    if(!snaps){
+      snaps = await Promise.all(qs.map(q => getDocs(q, 'attendance (histórico completo)')));
+      DB.set('isp_hist_asistencia', { rev, cantidad: snaps.reduce((t, sn) => t + sn.size, 0), alcance });
+    }
     snaps.forEach(tomar);
     histRevCargada = rev;
     cache.attendanceHist = hist;
@@ -314,7 +329,7 @@ async function traerHistoricoAsistencia(rev){
     }catch(e){ /* sin copia local utilizable: se pide al servidor abajo */ }
   }
   if(!snap){
-    snap = await getDocs(q);
+    snap = await getDocs(q, 'attendance (histórico completo)');
     DB.set('isp_hist_asistencia', { rev, cantidad: snap.size, alcance });
   }
   histRevCargada = rev;
@@ -335,6 +350,44 @@ async function traerHistoricoAsistencia(rev){
 // Cursos del docente como texto (para las consultas por curso).
 function cursosDocenteTexto(){
   return ((currentTeacher && currentTeacher.cursos) || []).map(String);
+}
+
+// ---------- Listas de carga perezosa ----------
+// Notas, valoraciones y cuentas de alumnos son listas grandes que casi nunca se miran en el
+// día a día. No se bajan al abrir la app: se empiezan a bajar la primera vez que alguna
+// pantalla las necesita (cache.notas, etc. se comportan igual que antes, solo que arrancan
+// tarde). Cada apertura de la app cuesta así muchas menos lecturas de Firestore.
+const perezosoArranque = {}, perezosoIniciado = {}, perezosoListo = {}, perezosoDatos = {};
+function definirPerezoso(nombre, arrancar){
+  perezosoArranque[nombre] = arrancar;
+  perezosoIniciado[nombre] = false;
+  perezosoListo[nombre] = false;
+  perezosoDatos[nombre] = cache[nombre] || {};
+  Object.defineProperty(cache, nombre, {
+    enumerable: true, configurable: true,
+    get(){ asegurarDatos(nombre); return perezosoDatos[nombre]; },
+    set(v){ perezosoDatos[nombre] = v; perezosoListo[nombre] = true; }
+  });
+}
+function asegurarDatos(nombre){
+  if(perezosoIniciado[nombre] || !perezosoArranque[nombre]) return;
+  perezosoIniciado[nombre] = true;
+  try{ perezosoArranque[nombre](); }
+  catch(e){ perezosoIniciado[nombre] = false; console.error('No se pudo iniciar', nombre, e); }
+}
+// Para las acciones que escriben, borran o exportan: esperan a tener la lista completa antes de seguir.
+async function esperarDatos(nombres){
+  const lista = (nombres || []).filter(n => perezosoArranque[n]);
+  lista.forEach(asegurarDatos);
+  const t0 = Date.now();
+  while(!lista.every(n => perezosoListo[n])){
+    if(Date.now() - t0 > 20000){
+      await customAlert('No se pudieron cargar todos los datos (¿sin conexión?). Probá de nuevo en unos segundos.');
+      return false;
+    }
+    await new Promise(r => setTimeout(r, 150));
+  }
+  return true;
 }
 
 function escucharColeccion(nombre, alCambiar){
@@ -380,13 +433,13 @@ function iniciarNotasSegunRol(){
     iniciarNotasAlumnoC2();
     return;
   }
-  escucharColeccion('notas', snap => {
+  definirPerezoso('notas', () => escucharColeccion('notas', snap => {
     const next = {};
     snap.forEach(d => { next[d.id] = d.data(); });
     cache.notas = next;
     cache._lastSync.notas = Date.now();
     render();
-  });
+  }));
 }
 
 let listenersIniciados = false;
@@ -517,13 +570,13 @@ function startListeners(){
   if(userRole === 'student' && !esAlumno){ /* sin cuenta de alumno todavía */ }
   else escucharQuizYTps(esAlumno, miId, esAlumno ? currentStudentAuth.curso : null);
 
-  if(!esAlumno) escucharColeccion('valoraciones', snap => {
+  if(!esAlumno) definirPerezoso('valoraciones', () => escucharColeccion('valoraciones', snap => {
     const next = {};
     snap.forEach(d => { next[d.id] = d.data(); });
     cache.valoraciones = next;
     cache._lastSync.valoraciones = Date.now();
     renderSoon();
-  });
+  }));
 
   // Las notas se suscriben después de saber qué rol tiene la cuenta (iniciarNotasSegunRol).
 
@@ -588,13 +641,13 @@ function startListeners(){
     }, sinPermiso('students'));
   } else {
     // Las cuentas de los alumnos (correos, usuarios) no son para los docentes.
-    if(userRole !== 'teacher') onSnapshot(collection(db,'students_auth'), snap => {
+    if(userRole !== 'teacher') definirPerezoso('students_auth', () => onSnapshot(collection(db,'students_auth'), snap => {
       const next = {};
       snap.forEach(d => { next[d.id] = Object.assign({ uid: d.id }, d.data()); });
       cache.students_auth = next;
       cache._lastSync.students_auth = Date.now();
       renderSoon();
-    });
+    }));
 
     escucharColeccion('students', snap => {
       const next = {};
@@ -756,6 +809,7 @@ async function reactivarAlumno(id){
 async function archivarYBorrarAlumno(id){
   const XLSX = await cargarXLSX();
   if(modoPruebaBloquea()) return;
+  if(!(await esperarDatos(['notas','valoraciones','students_auth']))) return;
   const al = cache.students[id];
   if(!al || al.activo !== false) return;
   const nombre = `${al.apellido}, ${al.nombre}`;
@@ -5505,6 +5559,7 @@ function dibujarBoletinEnDoc(doc, studentId, copia){
 }
 
 async function generarBoletinOficialPDF(studentId){
+  if(!(await esperarDatos(['notas']))) return;
   const student = getStudents().find(s => s.id === studentId);
   const { jsPDF } = await cargarJsPDF();
   const doc = new jsPDF({ unit: 'mm', format: 'a4' });
@@ -5515,6 +5570,7 @@ async function generarBoletinOficialPDF(studentId){
 }
 
 async function generarBoletinesCurso(curso){
+  if(!(await esperarDatos(['notas']))) return;
   const students = getStudents().filter(s => s.curso === curso).sort((a,b)=> a.apellido.localeCompare(b.apellido));
   if(!students.length){ customAlert('Este curso no tiene alumnos cargados.'); return; }
   const { jsPDF } = await cargarJsPDF();
@@ -5529,6 +5585,7 @@ async function generarBoletinesCurso(curso){
 }
 
 async function generarBoletinesTodos(){
+  if(!(await esperarDatos(['notas']))) return;
   const students = getStudents().sort((a,b)=> Number(a.curso)-Number(b.curso) || a.apellido.localeCompare(b.apellido));
   const { jsPDF } = await cargarJsPDF();
   const doc = new jsPDF({ unit: 'mm', format: 'a4' });
@@ -5542,6 +5599,7 @@ async function generarBoletinesTodos(){
 }
 
 async function exportarNotasCurso(curso){
+  if(!(await esperarDatos(['notas']))) return;
   const XLSX = await cargarXLSX();
   const students = getStudents().filter(s => s.curso === curso).sort((a,b)=> a.apellido.localeCompare(b.apellido));
   const materiasCurso = materiasDeCurso(curso);
@@ -5874,6 +5932,7 @@ function computeVistaCurso(curso){
 }
 
 async function descargarRespaldoCompleto(){
+  if(!(await esperarDatos(['notas','valoraciones','students_auth']))) return;
   const XLSX = await cargarXLSX();
   const wb = XLSX.utils.book_new();
   const students = getStudents();
@@ -7293,6 +7352,7 @@ function renderTramiteDetalle(){
 }
 
 async function importarNotasMasivo(data){
+  if(!(await esperarDatos(['notas']))) return;
   const notas = data.notas || [];
   if(!notas.length){ await customAlert('El archivo no tiene notas para importar.'); return; }
   const confirmado = await customConfirm(`Esto borra TODAS las notas actuales cargadas en la app y las reemplaza por las ${notas.length} de este archivo. ¿Confirmás?`, { peligro: true, textoSi: 'Borrar y reemplazar' });
@@ -7778,7 +7838,7 @@ function lecturasHtml(){
   const cuerpo = filas.length
     ? filas.map(([k, v]) => `<div style="display:flex;justify-content:space-between;font-size:calc(12.5px * var(--fs, 1));padding:2px 0;"><span>${escapeHtml(k)}</span><b>${num(v)}</b></div>`).join('')
     : `<p style="font-size:calc(12.5px * var(--fs, 1));color:var(--ink-soft);margin:0;">Todavía no se bajó nada del servidor en esta sesión.</p>`;
-  return `<p style="font-size:calc(12.5px * var(--fs, 1));color:var(--ink-soft);margin:0 0 8px;">Documentos que esta sesión bajó del servidor (cada uno cuenta como una lectura; el límite gratis es 50.000 por día para todo el colegio). Para medir el caso peor, abrí la app en una ventana de incógnito.</p>
+  return `<p style="font-size:calc(12.5px * var(--fs, 1));color:var(--ink-soft);margin:0 0 8px;">Documentos que esta sesión bajó del servidor (cada uno cuenta como una lectura; el límite gratis es 50.000 por día para todo el colegio). En una ventana de incógnito o un dispositivo nuevo se baja además el histórico completo de asistencia (una sola vez: después queda guardado).</p>
     <p style="margin:0 0 6px;"><b>Total: ${num(total)}</b></p>${cuerpo}`;
 }
 
