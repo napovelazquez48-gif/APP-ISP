@@ -997,3 +997,56 @@ input[type="datetime-local"].qz-input::-webkit-date-and-time-value{text-align:le
 .tp-chip.nota{background:var(--sage);color:#fff;font-weight:600;}
 .agenda-date.quiz{background:var(--gold-bg);}
 .agenda-date.quiz .dom{color:var(--gold);}
+
+/* ======================================================================
+   Versión para compu (pantallas anchas): menú lateral a la izquierda y
+   contenido más ancho, en vez de la columna angosta de celular.
+   En el celular no cambia nada.
+   ====================================================================== */
+.student-grid{display:block;}
+@media (min-width:1000px){
+  body{background:var(--paper-2);}
+  #app{
+    max-width:none;margin:0;box-shadow:none;background:transparent;
+    padding-left:232px;padding-bottom:32px;
+  }
+  main{
+    width:100%;max-width:1100px;margin:0 auto;padding:8px 32px 32px;
+    background-color:var(--paper);min-height:calc(100vh - 40px);
+    box-shadow:0 0 0 1px var(--border);
+  }
+  /* El menú de abajo pasa a ser un menú lateral */
+  .tabbar{
+    top:calc(env(safe-area-inset-top) + 40px);bottom:0;left:0;right:auto;
+    width:232px;max-width:none;margin:0;
+    flex-direction:column;justify-content:flex-start;gap:4px;
+    padding:18px 12px;border-top:none;border-right:0.5px solid var(--border);
+    box-shadow:none;background:var(--card);
+  }
+  .tab{
+    flex:none;flex-direction:row;justify-content:flex-start;align-items:center;gap:12px;
+    padding:11px 14px;border-radius:10px;font-size:calc(14px * var(--fs, 1));
+  }
+  .tab svg{width:20px;height:20px;}
+  .tab:hover{background:var(--paper);}
+  .tab.active{background:var(--paper-2);}
+  .tab.active::before{display:none;}
+  /* Más columnas donde sobra lugar */
+  .module-grid{grid-template-columns:repeat(3, 1fr);gap:12px;}
+  .stat-grid{grid-template-columns:repeat(2, 1fr);}
+  .student-grid{display:grid;grid-template-columns:1fr 1fr;column-gap:12px;}
+  .module-list{display:grid;grid-template-columns:1fr 1fr;}
+  .module-tile:hover,.student-card:hover{box-shadow:0 2px 8px rgba(31,42,58,0.10);}
+  .module-tile,.tab,button{cursor:pointer;}
+  .appbar{padding-left:0;padding-right:0;}
+  [data-sia]{width:auto !important;min-width:200px;}
+  /* Cosas que en el celular salen de abajo, acá quedan centradas en el contenido */
+  .tabbar{z-index:100;}
+  .hoja-notas{left:232px;max-width:1100px;}
+  .offline-banner{left:232px;max-width:none;margin:0;}
+  .toast{left:calc(50% + 116px);}
+}
+@media (min-width:1500px){
+  main{max-width:1240px;}
+  .module-grid{grid-template-columns:repeat(4, 1fr);}
+}

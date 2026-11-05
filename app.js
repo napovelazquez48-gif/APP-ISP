@@ -1,6 +1,6 @@
 // ===== Preceptoría ISP — lógica de la app (Etapa 1) =====
 
-const APP_VERSION = 145;
+const APP_VERSION = 146;
 const SEED_STUDENTS = []; // la lista de alumnos vive en Firestore (colección students), no en el código
 
 const CURSOS = ['1','2','3','4','5'];
@@ -15,8 +15,8 @@ const HOUR_TIME = {1:'7:45',2:'8:25',3:'9:20',4:'10:00',5:'10:55',6:'11:35',7:'1
 import { initializeApp } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-app.js";
 import {
   initializeFirestore, persistentLocalCache, persistentMultipleTabManager,
-  collection, doc, setDoc as _setDoc, deleteDoc as _deleteDoc, addDoc as _addDoc, onSnapshot, getDoc, writeBatch as _writeBatch,
-  query, where, getDocs, getDocsFromCache
+  collection, doc, setDoc as _setDoc, deleteDoc as _deleteDoc, addDoc as _addDoc, onSnapshot as _onSnapshot, getDoc as _getDoc, writeBatch as _writeBatch,
+  query, where, getDocs as _getDocs, getDocsFromCache
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore.js";
 import {
   getAuth, onAuthStateChanged, signInWithEmailAndPassword,
@@ -25,6 +25,42 @@ import {
 import {
   getMessaging, getToken as _getToken, onMessage, isSupported as messagingIsSupported
 } from "https://www.gstatic.com/firebasejs/10.13.0/firebase-messaging.js";
+
+// ---------- Medidor de lecturas (diagnóstico) ----------
+// Cuenta cuántos documentos se bajaron del servidor en esta sesión, por colección, para
+// ver qué consume la cuota diaria de lecturas de Firestore. Lo que sale de la copia local
+// del dispositivo no cuesta y no se cuenta. Se ve en Configuración (solo administración).
+const lecturasSesion = {};
+function sumarLectura(coleccion, n){
+  if(!coleccion || !n) return;
+  lecturasSesion[coleccion] = (lecturasSesion[coleccion] || 0) + n;
+}
+function contarSnapshot(snap){
+  try{
+    if(!snap || !snap.metadata || snap.metadata.fromCache || snap.metadata.hasPendingWrites) return;
+    if(typeof snap.docChanges === 'function'){
+      const cambios = snap.docChanges();
+      if(cambios.length) sumarLectura(cambios[0].doc.ref.parent.path, cambios.length);
+    } else if(snap.ref && snap.ref.parent && snap.exists && snap.exists()){
+      sumarLectura(snap.ref.parent.path, 1);
+    }
+  }catch(e){}
+}
+function onSnapshot(ref, ...resto){
+  const i = resto.findIndex(x => typeof x === 'function');
+  if(i >= 0){ const cb = resto[i]; resto[i] = (snap) => { contarSnapshot(snap); return cb(snap); }; }
+  return _onSnapshot(ref, ...resto);
+}
+async function getDocs(q){
+  const snap = await _getDocs(q);
+  try{ if(snap.docs.length && !snap.metadata.fromCache) sumarLectura(snap.docs[0].ref.parent.path, snap.docs.length); }catch(e){}
+  return snap;
+}
+async function getDoc(r){
+  const snap = await _getDoc(r);
+  try{ if(!snap.metadata.fromCache) sumarLectura(r.parent.path, 1); }catch(e){}
+  return snap;
+}
 
 // ---------- Modo de prueba (solo Napo) ----------
 // Permite ver la app como la ve un docente, un alumno o una cuenta de solo lectura,
@@ -2652,7 +2688,7 @@ function renderAsistencia(){
       }
       return soloLectura ? '' : `<p style="text-align:right;margin:0 0 14px;"><a href="#" id="efSuspLink" style="font-size:calc(12px * var(--fs, 1));color:var(--ink-soft);text-decoration:underline;">+ Ed. Física suspendida ${selectedFecha === todayISO() ? 'hoy' : 'este día'} (lluvia...)</a></p>`;
     })()}
-    ${students.length ? rows : `<div class="empty-state"><h2>Sin alumnos</h2><p>Este curso no tiene alumnos cargados.</p></div>`}
+    ${students.length ? `<div class="student-grid">${rows}</div>` : `<div class="empty-state"><h2>Sin alumnos</h2><p>Este curso no tiene alumnos cargados.</p></div>`}
     <div style="height:16px"></div>
   `;
 
@@ -7735,6 +7771,17 @@ function renderPendientes(){
   document.querySelectorAll('[data-borrar-pend]').forEach(b => b.addEventListener('click', () => borrarPendiente(b.dataset.borrarPend)));
 }
 
+function lecturasHtml(){
+  const filas = Object.entries(lecturasSesion).sort((a, b) => b[1] - a[1]);
+  const total = filas.reduce((t, f) => t + f[1], 0);
+  const num = (n) => n.toLocaleString('es-AR');
+  const cuerpo = filas.length
+    ? filas.map(([k, v]) => `<div style="display:flex;justify-content:space-between;font-size:calc(12.5px * var(--fs, 1));padding:2px 0;"><span>${escapeHtml(k)}</span><b>${num(v)}</b></div>`).join('')
+    : `<p style="font-size:calc(12.5px * var(--fs, 1));color:var(--ink-soft);margin:0;">Todavía no se bajó nada del servidor en esta sesión.</p>`;
+  return `<p style="font-size:calc(12.5px * var(--fs, 1));color:var(--ink-soft);margin:0 0 8px;">Documentos que esta sesión bajó del servidor (cada uno cuenta como una lectura; el límite gratis es 50.000 por día para todo el colegio). Para medir el caso peor, abrí la app en una ventana de incógnito.</p>
+    <p style="margin:0 0 6px;"><b>Total: ${num(total)}</b></p>${cuerpo}`;
+}
+
 function renderConfig(){
   const cfg = getConfig();
   const esNapo = getUsuario()==='Napo';
@@ -7765,6 +7812,12 @@ function renderConfig(){
     <div class="config-card">
       <p style="font-size:calc(12.5px * var(--fs, 1));color:var(--ink-soft);margin:0 0 10px;">Registra este dispositivo y manda un aviso de prueba a todos los dispositivos de la preceptoría (celular, compu). Tocalo en cada aparato donde quieras recibir los avisos.</p>
       <button class="btn-secondary" id="probarNotifBtn" style="width:100%;">Probar notificaciones</button>
+    </div>
+
+    <p class="section-label" style="margin-top:20px;">Lecturas de la base de datos</p>
+    <div class="config-card">
+      ${lecturasHtml()}
+      <button class="btn-secondary" id="actualizarLecturasBtn" style="width:100%;margin-top:10px;">Actualizar</button>
     </div>
     ` : ''}
 
@@ -7847,6 +7900,9 @@ function renderConfig(){
     </div>
   `;
   document.getElementById('verGuiaInstalarBtn').addEventListener('click', () => mostrarGuiaInstalar());
+  if(document.getElementById('actualizarLecturasBtn')){
+    document.getElementById('actualizarLecturasBtn').addEventListener('click', () => render());
+  }
   if(document.getElementById('probarNotifBtn')){
     document.getElementById('probarNotifBtn').addEventListener('click', async (e) => {
       if(modoPruebaBloquea()) return;
