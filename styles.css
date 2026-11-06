@@ -1046,7 +1046,10 @@ input[type="datetime-local"].qz-input::-webkit-date-and-time-value{text-align:le
   .offline-banner{left:232px;max-width:none;margin:0;}
   .toast{left:calc(50% + 116px);}
 }
-@media (min-width:1500px){
-  main{max-width:1240px;}
+@media (min-width:1300px){
+  main{max-width:1420px;padding:8px 40px 40px;}
   .module-grid{grid-template-columns:repeat(4, 1fr);}
+  .student-grid{grid-template-columns:repeat(3, 1fr);}
+  .stat-grid{grid-template-columns:repeat(4, 1fr);}
+  .hoja-notas{max-width:1420px;}
 }
