@@ -1036,6 +1036,8 @@ input[type="datetime-local"].qz-input::-webkit-date-and-time-value{text-align:le
   .stat-grid{grid-template-columns:repeat(2, 1fr);}
   .student-grid{display:grid;grid-template-columns:1fr 1fr;column-gap:12px;}
   .module-list{display:grid;grid-template-columns:1fr 1fr;}
+  /* Si queda un elemento solo (o impar al final), que ocupe todo el ancho en vez de media caja vacía */
+  .module-list > :last-child:nth-child(odd){grid-column:1 / -1;}
   .module-tile:hover,.student-card:hover{box-shadow:0 2px 8px rgba(31,42,58,0.10);}
   .module-tile,.tab,button{cursor:pointer;}
   .appbar{padding-left:0;padding-right:0;}
