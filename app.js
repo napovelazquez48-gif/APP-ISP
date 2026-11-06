@@ -1,6 +1,6 @@
 // ===== Preceptoría ISP — lógica de la app (Etapa 1) =====
 
-const APP_VERSION = 152;
+const APP_VERSION = 153;
 const SEED_STUDENTS = []; // la lista de alumnos vive en Firestore (colección students), no en el código
 
 const CURSOS = ['1','2','3','4','5'];
@@ -239,8 +239,12 @@ function marcarHistoricoCambiado(){
   // Justificar un certificado de varios días toca muchas fechas viejas seguidas:
   // se espera a que termine la ráfaga y se escribe la versión una sola vez.
   clearTimeout(histRevTimer);
-  histRevTimer = setTimeout(() => {
-    setDoc(doc(db,'config','general'), { histRev: histRevCargada }, { merge: true }).catch(()=>{});
+  histRevTimer = setTimeout(async () => {
+    const rev = histRevCargada;
+    // Primero el archivo compacto y recién después la versión: así, cuando los otros dispositivos
+    // se enteran del cambio, el archivo ya está al día y lo bajan con unas pocas lecturas.
+    await escribirArchivoAsistencia(rev);
+    setDoc(doc(db,'config','general'), { histRev: rev }, { merge: true }).catch(()=>{});
   }, 1500);
 }
 
@@ -255,6 +259,76 @@ async function recargarHistoricoAsistencia(){
   try{ await cargarHistoricoAsistencia(rev); }
   catch(e){ histAsistenciaListo = true; render(); }
 }
+
+// ---------- Archivo compacto del histórico de asistencia ----------
+// El histórico (~13.000 registros) se guarda además en unos pocos documentos grandes
+// ("asistenciaArchivo": meta + p0, p1, ...). Un dispositivo nuevo, o con la copia local
+// borrada, lo baja con ~5 lecturas en vez de ~13.000. Es solo una copia de comodidad: la
+// fuente de verdad sigue siendo la colección 'attendance'. Si el archivo no coincide con la
+// versión actual del histórico (histRev) o con el bimestre en curso, se ignora y se hace la
+// carga completa de siempre; la cuenta de administración lo vuelve a armar sola.
+const ARCHIVO_COL = 'asistenciaArchivo';
+const ARCHIVO_MAX_CHARS = 400000; // por documento (el tope de Firestore es 1 MiB)
+let archivoEscribiendo = false;
+
+async function leerArchivoAsistencia(rev){
+  const snap = await getDocs(collection(db, ARCHIVO_COL), 'asistencia (archivo compacto)');
+  let meta = null; const partes = {};
+  snap.forEach(d => {
+    if(d.id === 'meta') meta = d.data();
+    else if(/^p\d+$/.test(d.id)) partes[d.id] = d.data();
+  });
+  if(!meta || meta.rev !== rev || meta.inicioVivo !== INICIO_VIVO || !(meta.partes > 0 || meta.cantidad === 0)) return null;
+  const hist = {};
+  for(let i = 0; i < meta.partes; i++){
+    const p = partes['p' + i];
+    if(!p || typeof p.datos !== 'string') return null;
+    Object.assign(hist, JSON.parse(p.datos));
+  }
+  if(Object.keys(hist).length !== meta.cantidad) return null;
+  return hist;
+}
+
+async function escribirArchivoAsistencia(rev){
+  if(userRole !== 'admin' || !histAsistenciaListo || !cache.attendanceHist || !INICIO_VIVO || archivoEscribiendo) return;
+  archivoEscribiendo = true;
+  try{
+    const hist = cache.attendanceHist;
+    const ids = Object.keys(hist);
+    const partes = [];
+    let actual = {}, n = 0, tam = 0;
+    ids.forEach(id => {
+      const t = JSON.stringify(hist[id]).length + id.length + 6;
+      if(n && tam + t > ARCHIVO_MAX_CHARS){ partes.push(actual); actual = {}; n = 0; tam = 0; }
+      actual[id] = hist[id]; n++; tam += t;
+    });
+    if(n) partes.push(actual);
+    const lote = writeBatch(db);
+    partes.forEach((p, i) => lote.set(doc(db, ARCHIVO_COL, 'p' + i), { datos: JSON.stringify(p) }));
+    // Partes sobrantes de una versión anterior más grande (borrar uno que no existe no hace nada).
+    for(let i = partes.length; i < partes.length + 12; i++) lote.delete(doc(db, ARCHIVO_COL, 'p' + i));
+    lote.set(doc(db, ARCHIVO_COL, 'meta'), { rev, inicioVivo: INICIO_VIVO, partes: partes.length, cantidad: ids.length, actualizado: Date.now() });
+    await lote.commit();
+  }catch(e){
+    console.warn('No se pudo guardar el archivo compacto de asistencia', e && e.code);
+  }finally{
+    archivoEscribiendo = false;
+  }
+}
+
+// Revisa (1 lectura) que el archivo esté al día y, si no, lo vuelve a armar. Solo administración.
+async function asegurarArchivoAsistencia(rev, forzar){
+  if(userRole !== 'admin') return;
+  try{
+    if(!forzar){
+      const m = await getDoc(doc(db, ARCHIVO_COL, 'meta'));
+      const d = m.exists() ? m.data() : null;
+      if(d && d.rev === rev && d.inicioVivo === INICIO_VIVO) return;
+    }
+    await escribirArchivoAsistencia(rev);
+  }catch(e){ console.warn('Archivo de asistencia', e && e.code); }
+}
+
 
 let histCargando = false;
 async function cargarHistoricoAsistencia(rev){
@@ -328,9 +402,22 @@ async function traerHistoricoAsistencia(rev){
       if(local.size >= Math.floor((marca.cantidad || 0) * 0.9)) snap = local;
     }catch(e){ /* sin copia local utilizable: se pide al servidor abajo */ }
   }
+  // Sin copia local: primero el archivo compacto (unas pocas lecturas); si no está o no coincide,
+  // la colección completa de siempre.
   if(!snap){
+    let archivo = null;
+    try{ archivo = await leerArchivoAsistencia(rev); }catch(e){ archivo = null; }
+    if(archivo){
+      histRevCargada = rev;
+      cache.attendanceHist = archivo;
+      refrescarAttendance();
+      histAsistenciaListo = true;
+      render();
+      return;
+    }
     snap = await getDocs(q, 'attendance (histórico completo)');
     DB.set('isp_hist_asistencia', { rev, cantidad: snap.size, alcance });
+    var vinoDelServidor = true;
   }
   histRevCargada = rev;
 
@@ -339,6 +426,7 @@ async function traerHistoricoAsistencia(rev){
   refrescarAttendance();
   histAsistenciaListo = true;
   render();
+  asegurarArchivoAsistencia(rev, !!vinoDelServidor);
 }
 
 // Notas: preceptoría, docentes y cuentas de lectura bajan la colección completa. Un alumno/a
@@ -898,6 +986,7 @@ async function archivarYBorrarAlumno(id){
     }
     asis.forEach(r => { delete cache.attendanceHist[docId(r.id)]; });
     refrescarAttendance();
+    marcarHistoricoCambiado();
     marcarHistoricoCambiado();
     showToast(`Datos de ${nombre} borrados`);
     renderSoon();

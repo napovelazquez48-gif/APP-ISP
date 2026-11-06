@@ -1,4 +1,4 @@
-const CACHE_NAME = 'preceptoria-isp-v67';
+const CACHE_NAME = 'preceptoria-isp-v68';
 
 // ---------- Notificaciones push (Firebase Cloud Messaging) ----------
 // Tiene que vivir en este mismo service worker (no en uno aparte) para que
@@ -82,7 +82,7 @@ self.addEventListener('fetch', (event) => {
 
   if (isOwnAsset) {
     event.respondWith(
-      fetch(event.request)
+      fetch(event.request, { cache: 'no-cache' })
         .then((response) => {
           const copy = response.clone();
           caches.open(CACHE_NAME).then((cache) => cache.put(event.request, copy));
