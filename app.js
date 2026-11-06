@@ -1,6 +1,6 @@
 // ===== Preceptoría ISP — lógica de la app (Etapa 1) =====
 
-const APP_VERSION = 151;
+const APP_VERSION = 152;
 const SEED_STUDENTS = []; // la lista de alumnos vive en Firestore (colección students), no en el código
 
 const CURSOS = ['1','2','3','4','5'];
@@ -7909,11 +7909,13 @@ function renderConfig(){
       <button class="btn-secondary" id="probarNotifBtn" style="width:100%;">Probar notificaciones</button>
     </div>
 
+    ${esNapo ? `
     <p class="section-label" style="margin-top:20px;">Lecturas de la base de datos</p>
     <div class="config-card">
       ${lecturasHtml()}
       <button class="btn-secondary" id="actualizarLecturasBtn" style="width:100%;margin-top:10px;">Actualizar</button>
     </div>
+    ` : ''}
     ` : ''}
 
     ${esNapo ? `
