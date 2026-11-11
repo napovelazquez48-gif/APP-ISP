@@ -1,6 +1,6 @@
 // ===== Preceptoría ISP — lógica de la app (Etapa 1) =====
 
-const APP_VERSION = 153;
+const APP_VERSION = 154;
 const SEED_STUDENTS = []; // la lista de alumnos vive en Firestore (colección students), no en el código
 
 const CURSOS = ['1','2','3','4','5'];
@@ -2444,6 +2444,7 @@ function renderHome(){
       ${moduleTile('chart','Resumen del alumno','resumen')}
       ${moduleTile('chart','Vista por curso','vistaCurso')}
       ${moduleTile('chart','Vista general','vistaGeneral')}
+      ${moduleTile('users','Listas de curso','listasCurso')}
       ${moduleTile('file','Valoraciones','valoraciones')}
       ${moduleTile('check','Notas','notasMenu')}
       ${getUsuario()==='Napo' ? moduleTile('bell','Pendientes','pendientes', Object.values(cache.pendientes).filter(p=>!p.notificado).length) : ''}
@@ -3741,6 +3742,7 @@ function renderInner(){
   else if(currentRoute === 'tramiteDetalle') renderTramiteDetalle();
   else if(currentRoute === 'tramiteImprimir') renderTramiteImprimir();
   else if(currentRoute === 'vistaGeneral') renderVistaGeneral();
+  else if(currentRoute === 'listasCurso') renderListasCurso();
   else if(currentRoute === 'agenda') renderAgenda();
   else if(currentRoute === 'agendaNuevo') renderAgendaNuevo();
   else if(currentRoute === 'agendaDetalle') renderAgendaDetalle();
@@ -5136,6 +5138,7 @@ function renderViewerHome(){
       ${moduleRow('users','Resumen del alumno','Faltas, apercibimientos, valoraciones y notas', 'resumen')}
       ${moduleRow('chart','Vista por curso','Alertas y riesgo de SCP de un vistazo', 'vistaCurso')}
       ${moduleRow('chart','Vista general del colegio','Los 5 cursos comparados', 'vistaGeneral')}
+      ${moduleRow('users','Listas de curso','Para imprimir, con columnas a completar', 'listasCurso')}
       ${moduleRow('clipboard','Asistencia de hoy','Quiénes están ausentes', 'detalleAsistenciaHoy')}
       ${moduleRow('alert','Alumnos en alerta','5 o más faltas este bimestre', 'detalleAlertas')}
     </div>
@@ -5957,6 +5960,240 @@ function computeAsistenciaPctPorCurso(){
     const pct = totalPosible ? Math.round((1 - totalPeso/totalPosible)*1000)/10 : 100;
     return { label: c+'°', promedio: pct };
   });
+}
+
+// ---------- Listas de curso (para imprimir o llevar a Excel) ----------
+// Se eligen uno, varios o todos los cursos y se agregan columnas en blanco (o con título) para
+// completar a mano: firmas, autorizaciones, plata, observaciones, etc.
+const listasEstado = { cursos: [], columnas: [], titulo: '', numerar: true, alto: 'normal', orientacion: 'auto' };
+const LISTAS_SUGERIDAS = ['Firma', 'Autorización', 'Pagó', 'Presente', 'Observaciones'];
+
+function listasAlumnosDe(curso){
+  return getStudents()
+    .filter(s => String(s.curso) === String(curso))
+    .sort((a, b) => String(a.apellido || '').localeCompare(String(b.apellido || ''), 'es') || String(a.nombre || '').localeCompare(String(b.nombre || ''), 'es'));
+}
+function listasNombre(s){ return [s.apellido, s.nombre].filter(Boolean).join(', '); }
+function listasGrupos(){
+  return CURSOS.filter(c => listasEstado.cursos.includes(c)).map(c => ({ curso: c, alumnos: listasAlumnosDe(c) }));
+}
+
+// Guarda lo escrito en pantalla antes de volver a dibujarla (cada cambio redibuja).
+function guardarFormListas(){
+  const e = listasEstado;
+  const t = document.getElementById('listasTitulo');
+  if(t) e.titulo = t.value;
+  const cols = [...document.querySelectorAll('[data-listas-col]')];
+  if(cols.length) e.columnas = cols.map(i => i.value);
+  const n = document.getElementById('listasNumerar');
+  if(n) e.numerar = n.checked;
+}
+
+function renderListasCurso(){
+  const e = listasEstado;
+  const grupos = listasGrupos();
+  const totalAl = grupos.reduce((t, g) => t + g.alumnos.length, 0);
+  const todos = e.cursos.length === CURSOS.length;
+  const chip = (activo, attrs, texto) => `<button type="button" class="pill-btn ${activo ? 'active' : ''}" ${attrs} style="flex:0 0 auto;min-width:56px;">${texto}</button>`;
+
+  $app.innerHTML = `
+    <div class="appbar no-print" style="padding:0 0 10px;">
+      <button class="back-btn" id="backBtn">${icon('back')}</button>
+      <h1>Listas de curso</h1>
+    </div>
+    <p style="font-size:calc(12.5px * var(--fs, 1));color:var(--ink-soft);margin:0 0 12px;">Armá la lista de uno, varios o todos los cursos, con columnas en blanco para completar a mano. Se descarga en PDF (listo para imprimir) o en Excel.</p>
+
+    <p class="section-label">Cursos</p>
+    <div class="config-card">
+      <div style="display:flex;gap:6px;flex-wrap:wrap;">
+        ${CURSOS.map(c => chip(e.cursos.includes(c), `data-lcurso="${c}"`, `${c}° <span style="opacity:.7;font-size:.85em;">(${listasAlumnosDe(c).length})</span>`)).join('')}
+        ${chip(todos, 'data-ltodos="1"', 'Todos')}
+      </div>
+      <p style="font-size:calc(12px * var(--fs, 1));color:var(--ink-soft);margin:10px 0 0;">${grupos.length ? `${grupos.length} ${grupos.length === 1 ? 'curso' : 'cursos'} · ${totalAl} alumnos. Cada curso sale en su propia hoja, ordenado por apellido.` : 'Tocá uno o más cursos.'}</p>
+    </div>
+
+    <p class="section-label">Título (opcional)</p>
+    <div class="config-card">
+      <input type="text" id="listasTitulo" placeholder="Ej: Autorización salida al museo" value="${escapeHtml(e.titulo)}" maxlength="80">
+    </div>
+
+    <p class="section-label">Columnas para completar</p>
+    <div class="config-card">
+      ${e.columnas.length ? e.columnas.map((c, i) => `
+        <div style="display:flex;gap:8px;align-items:center;margin-bottom:8px;">
+          <span style="color:var(--ink-soft);font-size:calc(12px * var(--fs, 1));min-width:18px;">${i + 1}.</span>
+          <input type="text" data-listas-col="${i}" placeholder="Título de la columna (podés dejarlo vacío)" value="${escapeHtml(c)}" maxlength="30" style="flex:1;">
+          <button type="button" class="btn-secondary" data-listas-quitar="${i}" style="width:44px;flex:0 0 44px;padding:8px 0;margin:0;" aria-label="Quitar columna">✕</button>
+        </div>`).join('') : `<p style="font-size:calc(12.5px * var(--fs, 1));color:var(--ink-soft);margin:0 0 10px;">Sin columnas extra: sale solo la lista de nombres.</p>`}
+      <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:4px;">
+        ${LISTAS_SUGERIDAS.map(n => `<button type="button" class="pill-btn" data-listas-sug="${escapeHtml(n)}" style="flex:0 0 auto;">+ ${n}</button>`).join('')}
+        <button type="button" class="pill-btn" id="listasAgregar" style="flex:0 0 auto;">+ Columna en blanco</button>
+      </div>
+      ${e.columnas.length >= 12 ? '<p style="font-size:12px;color:var(--stamp);margin:8px 0 0;">Máximo 12 columnas.</p>' : ''}
+    </div>
+
+    <p class="section-label">Formato</p>
+    <div class="config-card">
+      <label style="display:flex;gap:8px;align-items:center;font-size:calc(13.5px * var(--fs, 1));margin-bottom:12px;"><input type="checkbox" id="listasNumerar" ${e.numerar ? 'checked' : ''} style="width:auto;flex:0 0 auto;margin:0;"> Numerar los alumnos (N°)</label>
+      <p style="font-size:calc(12.5px * var(--fs, 1));color:var(--ink-soft);margin:0 0 6px;">Alto de cada renglón</p>
+      ${pillBtnRow('listasAlto', [{value:'compacto',label:'Compacto'},{value:'normal',label:'Normal'},{value:'amplio',label:'Amplio (para escribir)'}], e.alto)}
+      <p style="font-size:calc(12.5px * var(--fs, 1));color:var(--ink-soft);margin:14px 0 6px;">Hoja (solo PDF)</p>
+      ${pillBtnRow('listasOri', [{value:'auto',label:'Automática'},{value:'v',label:'Vertical'},{value:'h',label:'Horizontal'}], e.orientacion)}
+    </div>
+
+    <button class="btn-primary" id="listasPdfBtn" style="width:100%;margin-top:6px;" ${grupos.length ? '' : 'disabled'}>${icon('file')} Descargar PDF para imprimir</button>
+    <button class="btn-secondary" id="listasXlsxBtn" style="width:100%;margin-top:8px;" ${grupos.length ? '' : 'disabled'}>${icon('file')} Descargar Excel</button>
+  `;
+
+  document.getElementById('backBtn').addEventListener('click', () => goBack(homeRoute()));
+  const redibujar = () => { guardarFormListas(); renderListasCurso(); };
+  document.querySelectorAll('[data-lcurso]').forEach(b => b.addEventListener('click', () => {
+    guardarFormListas();
+    const c = b.dataset.lcurso;
+    e.cursos = e.cursos.includes(c) ? e.cursos.filter(x => x !== c) : [...e.cursos, c];
+    renderListasCurso();
+  }));
+  document.querySelector('[data-ltodos]').addEventListener('click', () => {
+    guardarFormListas();
+    e.cursos = todos ? [] : CURSOS.slice();
+    renderListasCurso();
+  });
+  document.querySelectorAll('[data-listas-quitar]').forEach(b => b.addEventListener('click', () => {
+    guardarFormListas();
+    e.columnas.splice(Number(b.dataset.listasQuitar), 1);
+    renderListasCurso();
+  }));
+  document.querySelectorAll('[data-listas-sug]').forEach(b => b.addEventListener('click', () => {
+    guardarFormListas();
+    if(e.columnas.length < 12) e.columnas.push(b.dataset.listasSug);
+    renderListasCurso();
+  }));
+  document.getElementById('listasAgregar').addEventListener('click', () => {
+    guardarFormListas();
+    if(e.columnas.length < 12) e.columnas.push('');
+    renderListasCurso();
+  });
+  attachPillBtns('listasAlto', v => { guardarFormListas(); e.alto = v; renderListasCurso(); });
+  attachPillBtns('listasOri', v => { guardarFormListas(); e.orientacion = v; renderListasCurso(); });
+  document.getElementById('listasPdfBtn').addEventListener('click', exportarListasPDF);
+  document.getElementById('listasXlsxBtn').addEventListener('click', exportarListasExcel);
+}
+
+function listasDatosParaExportar(){
+  guardarFormListas();
+  const grupos = listasGrupos();
+  if(!grupos.length){ customAlert('Elegí al menos un curso.'); return null; }
+  if(!grupos.some(g => g.alumnos.length)){ customAlert('Los cursos elegidos no tienen alumnos cargados.'); return null; }
+  return { grupos, columnas: listasEstado.columnas.map(c => String(c || '').trim()), titulo: listasEstado.titulo.trim() };
+}
+function listasNombreArchivo(grupos, ext){
+  return `Listas_${grupos.map(g => g.curso + 'A').join('-')}_${todayISO()}.${ext}`;
+}
+
+async function exportarListasPDF(){
+  const d = listasDatosParaExportar();
+  if(!d) return;
+  const e = listasEstado;
+  const { jsPDF } = await cargarJsPDF();
+  const horizontal = e.orientacion === 'h' || (e.orientacion === 'auto' && d.columnas.length > 4);
+  const pdf = new jsPDF({ unit: 'mm', format: 'a4', orientation: horizontal ? 'landscape' : 'portrait' });
+  const W = pdf.internal.pageSize.getWidth(), H = pdf.internal.pageSize.getHeight();
+  const m = 12;
+  const rowH = e.alto === 'amplio' ? 11 : e.alto === 'compacto' ? 6.5 : 8;
+  const wNum = e.numerar ? 9 : 0;
+  const usable = W - 2 * m;
+  const wNombre = d.columnas.length ? Math.max(55, Math.min(80, usable * 0.32)) : usable - wNum;
+  const wCol = d.columnas.length ? (usable - wNum - wNombre) / d.columnas.length : 0;
+  const fechaHoy = todayISO().split('-').reverse().join('/');
+
+  // Altura del encabezado de la tabla: depende de cuántas líneas ocupe el título más largo.
+  pdf.setFont('helvetica', 'bold'); pdf.setFontSize(8.5);
+  const titulosCol = d.columnas.map(c => pdf.splitTextToSize(c, Math.max(wCol - 2, 4)).slice(0, 3));
+  const lineasMax = Math.max(1, ...titulosCol.map(t => t.length));
+  const headH = 6 + (lineasMax - 1) * 3.6;
+
+  const cabecera = (curso, cantidad, continuacion) => {
+    pdf.setFont('helvetica', 'normal'); pdf.setFontSize(8); pdf.setTextColor(110);
+    pdf.text('Instituto Superior Porteño', m, m + 3);
+    pdf.text(`${fechaHoy} · ${cantidad} alumnos`, W - m, m + 3, { align: 'right' });
+    pdf.setTextColor(0); pdf.setFont('helvetica', 'bold'); pdf.setFontSize(14);
+    pdf.text(`Lista de ${curso}° A${continuacion ? ' (continuación)' : ''}`, m, m + 10);
+    let y = m + 10;
+    if(d.titulo){
+      pdf.setFont('helvetica', 'normal'); pdf.setFontSize(11);
+      const lineas = pdf.splitTextToSize(d.titulo, usable);
+      pdf.text(lineas, m, y + 6);
+      y += 6 + (lineas.length - 1) * 5;
+    }
+    y += 5;
+    // encabezado de la tabla
+    pdf.setFillColor(232, 232, 228); pdf.setDrawColor(120);
+    pdf.rect(m, y, usable, headH, 'FD');
+    pdf.setFont('helvetica', 'bold'); pdf.setFontSize(8.5); pdf.setTextColor(0);
+    let x = m;
+    if(e.numerar){ pdf.text('N°', x + wNum / 2, y + 4.2, { align: 'center' }); x += wNum; }
+    pdf.text('Alumno', x + 2, y + 4.2); x += wNombre;
+    titulosCol.forEach(t => { pdf.text(t, x + wCol / 2, y + 4.2, { align: 'center', lineHeightFactor: 1.15 }); x += wCol; });
+    // líneas verticales del encabezado
+    pdf.setDrawColor(120); pdf.setLineWidth(0.2);
+    let vx = m + wNum; if(e.numerar) pdf.line(vx, y, vx, y + headH);
+    vx += wNombre; if(d.columnas.length) pdf.line(vx, y, vx, y + headH);
+    for(let i = 1; i < d.columnas.length; i++){ vx += wCol; pdf.line(vx, y, vx, y + headH); }
+    return y + headH;
+  };
+
+  let primera = true;
+  d.grupos.forEach(g => {
+    if(!g.alumnos.length) return;
+    if(!primera) pdf.addPage();
+    primera = false;
+    let y = cabecera(g.curso, g.alumnos.length, false);
+    g.alumnos.forEach((al, i) => {
+      if(y + rowH > H - m - 4){
+        pdf.addPage();
+        y = cabecera(g.curso, g.alumnos.length, true);
+      }
+      pdf.setDrawColor(150); pdf.setLineWidth(0.2);
+      pdf.rect(m, y, usable, rowH);
+      let x = m;
+      if(e.numerar){
+        pdf.setFont('helvetica', 'normal'); pdf.setFontSize(9); pdf.setTextColor(90);
+        pdf.text(String(i + 1), x + wNum / 2, y + rowH / 2 + 1.2, { align: 'center' });
+        x += wNum; pdf.line(x, y, x, y + rowH);
+      }
+      // el nombre se achica si es muy largo para que entre en una línea
+      pdf.setFont('helvetica', 'normal'); pdf.setTextColor(0);
+      const nombre = listasNombre(al);
+      let fs = 10; pdf.setFontSize(fs);
+      while(pdf.getTextWidth(nombre) > wNombre - 4 && fs > 6.5){ fs -= 0.5; pdf.setFontSize(fs); }
+      pdf.text(nombre, x + 2, y + rowH / 2 + 1.2);
+      x += wNombre;
+      if(d.columnas.length){ pdf.line(x, y, x, y + rowH); }
+      for(let k = 1; k < d.columnas.length; k++){ x += wCol; pdf.line(x, y, x, y + rowH); }
+      y += rowH;
+    });
+  });
+  pdf.save(listasNombreArchivo(d.grupos, 'pdf'));
+}
+
+async function exportarListasExcel(){
+  const d = listasDatosParaExportar();
+  if(!d) return;
+  const e = listasEstado;
+  const XLSX = await cargarXLSX();
+  const wb = XLSX.utils.book_new();
+  d.grupos.forEach(g => {
+    if(!g.alumnos.length) return;
+    const titulo = `Instituto Superior Porteño - Lista de ${g.curso}° A${d.titulo ? ' - ' + d.titulo : ''}`;
+    const encabezado = [...(e.numerar ? ['N°'] : []), 'Alumno', ...d.columnas];
+    const filas = g.alumnos.map((al, i) => [...(e.numerar ? [i + 1] : []), listasNombre(al), ...d.columnas.map(() => '')]);
+    const ws = XLSX.utils.aoa_to_sheet([[titulo], [], encabezado, ...filas]);
+    ws['!cols'] = [...(e.numerar ? [{ wch: 5 }] : []), { wch: 36 }, ...d.columnas.map(c => ({ wch: Math.max(14, c.length + 2) }))];
+    const alto = e.alto === 'amplio' ? 26 : e.alto === 'compacto' ? 15 : 20;
+    ws['!rows'] = [{ hpt: 20 }, { hpt: 8 }, { hpt: 20 }, ...filas.map(() => ({ hpt: alto }))];
+    XLSX.utils.book_append_sheet(wb, ws, `${g.curso}° A`);
+  });
+  XLSX.writeFile(wb, listasNombreArchivo(d.grupos, 'xlsx'));
 }
 
 function renderVistaGeneral(){
