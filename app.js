@@ -1,6 +1,6 @@
 // ===== Preceptoría ISP — lógica de la app (Etapa 1) =====
 
-const APP_VERSION = 154;
+const APP_VERSION = 155;
 const SEED_STUDENTS = []; // la lista de alumnos vive en Firestore (colección students), no en el código
 
 const CURSOS = ['1','2','3','4','5'];
@@ -2445,6 +2445,7 @@ function renderHome(){
       ${moduleTile('chart','Vista por curso','vistaCurso')}
       ${moduleTile('chart','Vista general','vistaGeneral')}
       ${moduleTile('users','Listas de curso','listasCurso')}
+      ${getUsuario()==='Vicky' ? moduleTile('file','Conexión con Drive','conexionDrive') : ''}
       ${moduleTile('file','Valoraciones','valoraciones')}
       ${moduleTile('check','Notas','notasMenu')}
       ${getUsuario()==='Napo' ? moduleTile('bell','Pendientes','pendientes', Object.values(cache.pendientes).filter(p=>!p.notificado).length) : ''}
@@ -2840,7 +2841,7 @@ function renderAsistencia(){
           </div>`}
         </div>`;
       }
-      return soloLectura ? '' : `<p style="text-align:right;margin:-8px 0 10px;"><a href="#" id="entradaEspecialLink" style="font-size:calc(12px * var(--fs, 1));color:var(--ink-soft);text-decoration:underline;">+ Entrada especial para este curso hoy</a></p>`;
+      return (soloLectura || esSoloLista()) ? '' : `<p style="text-align:right;margin:-8px 0 10px;"><a href="#" id="entradaEspecialLink" style="font-size:calc(12px * var(--fs, 1));color:var(--ink-soft);text-decoration:underline;">+ Entrada especial para este curso hoy</a></p>`;
     })()}
     ${(() => {
       const sinClase = getDiaSinClase(selectedFecha, selectedCurso);
@@ -2853,7 +2854,7 @@ function renderAsistencia(){
           </div>`}
         </div>`;
       }
-      return soloLectura ? '' : `<p style="text-align:right;margin:-8px 0 ${esDiaEF && !efSusp ? '6px' : '14px'};"><a href="#" id="sinClaseLink" style="font-size:calc(12px * var(--fs, 1));color:var(--ink-soft);text-decoration:underline;">+ Día sin clase para este curso (VCF, paro...)</a></p>`;
+      return (soloLectura || esSoloLista()) ? '' : `<p style="text-align:right;margin:-8px 0 ${esDiaEF && !efSusp ? '6px' : '14px'};"><a href="#" id="sinClaseLink" style="font-size:calc(12px * var(--fs, 1));color:var(--ink-soft);text-decoration:underline;">+ Día sin clase para este curso (VCF, paro...)</a></p>`;
     })()}
     ${(() => {
       if(!esDiaEF || getDiaSinClase(selectedFecha, selectedCurso)) return '';
@@ -2872,6 +2873,7 @@ function renderAsistencia(){
   `;
 
   document.getElementById('backBtn').addEventListener('click', () => goBack(soloLectura ? 'teacherHome' : 'home'));
+  if(esSoloLista()) document.getElementById('backBtn').style.display = 'none';
   if(document.getElementById('efSuspLink')) document.getElementById('efSuspLink').addEventListener('click', (e) => { e.preventDefault(); suspenderEF(selectedFecha, selectedCurso); });
   if(document.getElementById('quitarEFSuspBtn')) document.getElementById('quitarEFSuspBtn').addEventListener('click', () => quitarSuspensionEF(selectedFecha, selectedCurso));
   attachCursoBtns((c) => { selectedCurso = c; render(); });
@@ -2964,6 +2966,7 @@ function homeRoute(){
   if(userRole === 'teacher') return 'teacherHome';
   if(userRole === 'viewer') return 'viewerHome';
   if(userRole === 'student') return 'studentHome';
+  if(esSoloLista()) return 'asistencia';
   return 'home';
 }
 
@@ -3675,7 +3678,12 @@ function render(){
 }
 
 function renderInner(){
-  const RUTAS_SOLO_NAPO = ['profesores','profesorNuevo','profesorEditar','lectura','conexionDrive','importar','alumnosCuentas','pendientes','pruebaDocente','pruebaAlumno','pruebaLectura'];
+  if(esSoloLista() && currentRoute !== 'asistencia' && currentRoute !== 'quien'){ currentRoute = 'asistencia'; }
+  // La conexión con Drive la usan Napo (desde Config) y Vicky (desde el inicio).
+  if(currentRoute === 'conexionDrive' && !(userRole === 'admin' && (getUsuario() === 'Napo' || getUsuario() === 'Vicky'))){
+    currentRoute = userRole === 'admin' ? 'home' : homeRoute();
+  }
+  const RUTAS_SOLO_NAPO = ['profesores','profesorNuevo','profesorEditar','lectura','importar','alumnosCuentas','pendientes','pruebaDocente','pruebaAlumno','pruebaLectura'];
   if(RUTAS_SOLO_NAPO.includes(currentRoute) && (userRole!=='admin' || getUsuario()!=='Napo')){
     currentRoute = userRole==='admin' ? 'home' : homeRoute();
   }
@@ -7336,6 +7344,19 @@ function renderTabbar(){
     document.getElementById('tabProfes').addEventListener('click', () => navigate('studentProfesores', null, 'tab'));
     return;
   }
+  if(esSoloLista()){
+    tb.innerHTML = `
+      <button class="tab active" id="tabAsist">${icon('clipboard')}<span>Asistencia</span></button>
+      <button class="tab" id="tabSalir">${icon('back')}<span>Salir</span></button>
+    `;
+    document.getElementById('tabAsist').addEventListener('click', () => navigate('asistencia', null, 'tab'));
+    document.getElementById('tabSalir').addEventListener('click', () => {
+      localStorage.removeItem('isp_usuario');
+      currentRoute = 'quien';
+      renderSoon();
+    });
+    return;
+  }
   tb.innerHTML = `
     <button class="tab ${currentRoute==='home'?'active':''}" id="tabHome">${icon('home')}<span>Inicio</span></button>
     <button class="tab ${currentRoute==='asistencia'?'active':''}" id="tabAsist">${icon('clipboard')}<span>Asistencia</span></button>
@@ -8434,6 +8455,10 @@ function renderConfig(){
 }
 
 function getUsuario(){ return localStorage.getItem('isp_usuario') || ''; }
+// Usuario que solo puede tomar lista: entra directo a la asistencia y no ve nada más.
+// (Es una restricción de pantallas dentro de la cuenta compartida de administración.)
+const USUARIO_SOLO_LISTA = 'Juan Manuel Coria';
+function esSoloLista(){ return userRole === 'admin' && getUsuario() === USUARIO_SOLO_LISTA; }
 // Se pone en true recién cuando onAuthStateChanged determinó con qué rol entrar
 // (admin/profesor/lectura/alumno). Antes de eso, render() no dibuja nada para
 // evitar que se vea por un instante la pantalla equivocada (por ej. la del
@@ -8489,6 +8514,7 @@ function renderQuien(){
       <div style="display:flex;flex-direction:column;gap:12px;max-width:220px;margin:0 auto;">
         <button class="btn-primary" data-user="Napo">Napo</button>
         <button class="btn-primary" data-user="Vicky" style="background:var(--stamp);">Vicky</button>
+        <button class="btn-primary" data-user="Juan Manuel Coria" style="background:var(--sage, #5C7F6B);">Juan Manuel Coria</button>
       </div>
     </div>
   `;
