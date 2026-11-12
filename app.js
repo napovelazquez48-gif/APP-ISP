@@ -1,6 +1,6 @@
 // ===== Preceptoría ISP — lógica de la app (Etapa 1) =====
 
-const APP_VERSION = 155;
+const APP_VERSION = 156;
 const SEED_STUDENTS = []; // la lista de alumnos vive en Firestore (colección students), no en el código
 
 const CURSOS = ['1','2','3','4','5'];
@@ -190,6 +190,7 @@ let cache = {
   pendientes: {},
   entradasEspeciales: {},
   _lastSync: {},
+  tomaLista: {},
   eventos: {},
   config: { entrada:'07:45', toleranciaMin:15, corteFaltaCompleta:'09:00' }
 };
@@ -565,6 +566,48 @@ function iniciarNotasSegunRol(){
   }));
 }
 
+
+// Cuenta que solo toma lista: baja únicamente lo que necesita la pantalla de asistencia
+// (alumnos, asistencia y Ed. Física, justificativos, autorizaciones, días sin clase y entradas
+// especiales). Las reglas de Firestore tampoco le dejan leer nada más.
+function iniciarListenersTomaLista(){
+  const aviso = (n) => (e) => console.warn('No se pudo leer', n, e && e.code);
+  const volcar = (clave, mapear) => (snap) => { cache[clave] = mapear(snap); cache._lastSync[clave] = Date.now(); renderSoon(); };
+  const mapa = (conId) => (snap) => { const next = {}; snap.forEach(d => { next[d.id] = conId ? Object.assign({ id: d.id }, d.data()) : d.data(); }); return next; };
+
+  onSnapshot(query(collection(db,'attendance'), where('fecha','>=', INICIO_VIVO)), (snap) => {
+    const next = {}; snap.forEach(d => { next[d.id] = d.data(); });
+    cache.attendanceLive = next; refrescarAttendance(); cache._lastSync.attendance = Date.now(); renderSoon();
+  }, aviso('attendance'));
+  onSnapshot(collection(db,'ef'), (snap) => {
+    const next = {};
+    snap.forEach(d => { const data = d.data(); next[`${data.date}|${data.studentId}`] = { tipo: data.tipo || 'falta', driveSynced: data.driveSynced === true }; });
+    cache.ef = next; cache._lastSync.ef = Date.now(); renderSoon();
+  }, aviso('ef'));
+  onSnapshot(collection(db,'certificados'), (snap) => {
+    const next = [];
+    snap.forEach(d => { const x = d.data(); next.push({ id: d.id, studentId: x.studentId, from: x.from, to: x.to, createdAt: x.createdAt||0, fileDataUrl: null }); });
+    next.sort((a,b)=> a.createdAt - b.createdAt);
+    cache.certificados = next; cache._lastSync.certificados = Date.now(); renderSoon();
+  }, aviso('certificados'));
+  onSnapshot(collection(db,'autorizaciones'), volcar('autorizaciones', mapa(false)), aviso('autorizaciones'));
+  onSnapshot(collection(db,'diasSinClase'), volcar('diasSinClase', mapa(false)), aviso('diasSinClase'));
+  onSnapshot(collection(db,'entradasEspeciales'), volcar('entradasEspeciales', mapa(false)), aviso('entradasEspeciales'));
+  onSnapshot(collection(db,'students'), volcar('students', mapa(true)), aviso('students'));
+
+  onSnapshot(doc(db,'config','general'), d => {
+    if(d.exists()){ cache.config = d.data(); cache._lastSync.config = Date.now(); aplicarConfigDinamica(cache.config); }
+    renderSoon();
+    const rev = (d.exists() && d.data().histRev) || 0;
+    if(!histAsistenciaListo || rev > (histRevCargada || 0)){
+      cargarHistoricoAsistencia(rev).catch(err => {
+        console.error('No se pudo cargar el histórico de asistencia', err);
+        histAsistenciaListo = true; renderSoon();
+      });
+    }
+  }, aviso('config'));
+}
+
 let listenersIniciados = false;
 function startListeners(){
   // Se llama desde las dos ramas de onAuthStateChanged; si se enganchara dos veces
@@ -577,6 +620,7 @@ function startListeners(){
   // las cuentas siguen bajando las colecciones completas, como siempre.
   const esAlumno = userRole === 'student' && !!currentStudentAuth;
   const miId = esAlumno ? currentStudentAuth.studentId : null;
+  if(userRole === 'tomaLista'){ iniciarListenersTomaLista(); return; }
   const lista = (nombre) => esAlumno ? query(collection(db, nombre), where('studentId', '==', miId)) : collection(db, nombre);
   const sinPermiso = (nombre) => (e) => console.warn('No se pudo leer', nombre, e && e.code);
   if(esAlumno) histAsistenciaListo = true; // su asistencia completa viene en este mismo listener
@@ -710,6 +754,13 @@ function startListeners(){
     cache._lastSync.entradasEspeciales = Date.now();
     renderSoon();
   });
+
+  if(userRole === 'admin') onSnapshot(collection(db,'tomaLista'), snap => {
+    const next = {};
+    snap.forEach(d => { next[d.id] = Object.assign({ uid: d.id }, d.data()); });
+    cache.tomaLista = next;
+    renderSoon();
+  }, sinPermiso('tomaLista'));
 
   if(!esAlumno && userRole !== 'teacher') onSnapshot(collection(db,'viewers'), snap => {
     const next = {};
@@ -3678,12 +3729,12 @@ function render(){
 }
 
 function renderInner(){
-  if(esSoloLista() && currentRoute !== 'asistencia' && currentRoute !== 'quien'){ currentRoute = 'asistencia'; }
+  if(esSoloLista() && currentRoute !== 'asistencia'){ currentRoute = 'asistencia'; }
   // La conexión con Drive la usan Napo (desde Config) y Vicky (desde el inicio).
   if(currentRoute === 'conexionDrive' && !(userRole === 'admin' && (getUsuario() === 'Napo' || getUsuario() === 'Vicky'))){
     currentRoute = userRole === 'admin' ? 'home' : homeRoute();
   }
-  const RUTAS_SOLO_NAPO = ['profesores','profesorNuevo','profesorEditar','lectura','importar','alumnosCuentas','pendientes','pruebaDocente','pruebaAlumno','pruebaLectura'];
+  const RUTAS_SOLO_NAPO = ['profesores','profesorNuevo','profesorEditar','lectura','tomaListaCuentas','importar','alumnosCuentas','pendientes','pruebaDocente','pruebaAlumno','pruebaLectura'];
   if(RUTAS_SOLO_NAPO.includes(currentRoute) && (userRole!=='admin' || getUsuario()!=='Napo')){
     currentRoute = userRole==='admin' ? 'home' : homeRoute();
   }
@@ -3719,6 +3770,7 @@ function renderInner(){
   else if(currentRoute === 'teacherHome') renderTeacherHome();
   else if(currentRoute === 'viewerHome') renderViewerHome();
   else if(currentRoute === 'lectura') renderLectura();
+  else if(currentRoute === 'tomaListaCuentas') renderTomaListaCuentas();
   else if(currentRoute === 'alumnosCuentas') renderAlumnosCuentas();
   else if(currentRoute === 'studentHome') renderStudentHome();
   else if(currentRoute === 'studentProfesores') renderStudentProfesores();
@@ -5376,6 +5428,76 @@ function renderLectura(){
   document.getElementById('crearViewerBtn').addEventListener('click', crearViewer);
   document.querySelectorAll('[data-toggle]').forEach(b => b.addEventListener('click', () => toggleActivoViewer(b.dataset.toggle, b.dataset.activo === 'true')));
   document.querySelectorAll('[data-borrar]').forEach(b => b.addEventListener('click', () => borrarViewer(b.dataset.borrar, b.dataset.nombre)));
+}
+
+
+// ---------- Cuentas que solo toman lista (administración) ----------
+async function crearTomaLista(){
+  const nombre = document.getElementById('nuevoTLNombre').value.trim();
+  const email = document.getElementById('nuevoTLEmail').value.trim();
+  const pass = document.getElementById('nuevoTLPass').value;
+  const errEl = document.getElementById('nuevoTLError');
+  errEl.textContent = '';
+  if(!nombre || !email || !pass){ errEl.textContent = 'Completá nombre, mail y contraseña.'; return; }
+  if(pass.length < 6){ errEl.textContent = 'La contraseña debe tener al menos 6 caracteres.'; return; }
+  const btn = document.getElementById('crearTLBtn');
+  btn.textContent = 'Creando…';
+  btn.disabled = true;
+  try{
+    const cred = await createUserWithEmailAndPassword(authSecundaria, email, pass);
+    await setDoc(doc(db,'tomaLista',cred.user.uid), { nombre, email, activo: true, creadoPor: getUsuario() });
+    await signOut(authSecundaria);
+    showToast('Cuenta creada');
+    navigate('tomaListaCuentas');
+  }catch(err){
+    console.error(err);
+    errEl.textContent = err.code === 'auth/email-already-in-use' ? 'Ese mail ya tiene una cuenta (si es de un docente o de lectura, usá otro).' : 'No se pudo crear la cuenta. ' + (err.code || '');
+    btn.textContent = 'Crear cuenta';
+    btn.disabled = false;
+  }
+}
+function toggleActivoTomaLista(uid, activo){
+  setDoc(doc(db,'tomaLista',uid), { activo: !activo }, { merge: true }).catch(err=>showSaveError(err));
+}
+async function borrarTomaLista(uid, nombre){
+  if(!(await customConfirm(`¿Borrar el acceso de ${nombre}? No se puede deshacer.`, {peligro:true, textoSi:'Borrar'}))) return;
+  deleteDoc(doc(db,'tomaLista',uid)).then(() => showToast('Acceso borrado')).catch(err=>showSaveError(err));
+}
+function renderTomaListaCuentas(){
+  const cuentas = Object.values(cache.tomaLista).sort((a,b)=> (a.nombre||'').localeCompare(b.nombre||''));
+  const rows = cuentas.map(v => `
+    <div class="sancion-item">
+      <div style="display:flex;align-items:flex-start;justify-content:space-between;gap:8px;">
+        <div>
+          <p class="folio"><span class="status-dot ${v.activo===false?'off':'on'}"></span>${escapeHtml(v.nombre)} ${v.activo===false ? '· inactivo' : ''}</p>
+          <p class="motivo">${escapeHtml(v.email)}</p>
+        </div>
+        <div style="display:flex;flex-direction:column;gap:6px;flex-shrink:0;">
+          <button class="btn-chip" data-toggle="${v.uid}" data-activo="${v.activo!==false}">${v.activo===false ? 'Reactivar' : 'Dar de baja'}</button>
+          <button class="btn-chip danger" data-borrar="${v.uid}" data-nombre="${escapeHtml(v.nombre)}">Borrar</button>
+        </div>
+      </div>
+    </div>
+  `).join('');
+  $app.innerHTML = `
+    <div class="appbar" style="padding:0 0 10px;">
+      <button class="back-btn" id="backBtn">${icon('back')}</button>
+      <h1>Cuentas para tomar lista</h1>
+    </div>
+    <p style="font-size:calc(12.5px * var(--fs, 1));color:var(--ink-soft);margin:0 0 12px;">Estas cuentas entran con su propio mail y contraseña y solo ven la pantalla de asistencia: pueden tomar lista de cualquier curso y nada más.</p>
+    <p class="section-label">Cuentas existentes</p>
+    ${cuentas.length ? `<div class="sancion-list" style="margin-bottom:18px;">${rows}</div>` : `<p style="font-size:calc(13px * var(--fs, 1));color:var(--ink-soft);margin-bottom:18px;">Todavía no hay cuentas.</p>`}
+    <p class="section-label">Nueva cuenta</p>
+    <div class="field-row"><label>Nombre</label><input id="nuevoTLNombre" type="text" value="Juan Manuel Coria"></div>
+    <div class="field-row"><label>Mail</label><input id="nuevoTLEmail" type="email" value="colegioporteno@gmail.com"></div>
+    <div class="field-row"><label>Contraseña</label><input id="nuevoTLPass" type="text" placeholder="mínimo 6 caracteres"></div>
+    <p id="nuevoTLError" style="font-size:calc(12px * var(--fs, 1));color:var(--stamp);min-height:16px;margin:0 0 8px;"></p>
+    <button class="btn-primary" id="crearTLBtn">Crear cuenta</button>
+  `;
+  document.getElementById('backBtn').addEventListener('click', () => goBack('config'));
+  document.getElementById('crearTLBtn').addEventListener('click', crearTomaLista);
+  document.querySelectorAll('[data-toggle]').forEach(b => b.addEventListener('click', () => toggleActivoTomaLista(b.dataset.toggle, b.dataset.activo === 'true')));
+  document.querySelectorAll('[data-borrar]').forEach(b => b.addEventListener('click', () => borrarTomaLista(b.dataset.borrar, b.dataset.nombre)));
 }
 
 // ---------- Valoraciones pedagógicas bimestrales ----------
@@ -7347,13 +7469,13 @@ function renderTabbar(){
   if(esSoloLista()){
     tb.innerHTML = `
       <button class="tab active" id="tabAsist">${icon('clipboard')}<span>Asistencia</span></button>
+      <button class="tab" id="tabPass">${icon('gear')}<span>Contraseña</span></button>
       <button class="tab" id="tabSalir">${icon('back')}<span>Salir</span></button>
     `;
     document.getElementById('tabAsist').addEventListener('click', () => navigate('asistencia', null, 'tab'));
-    document.getElementById('tabSalir').addEventListener('click', () => {
-      localStorage.removeItem('isp_usuario');
-      currentRoute = 'quien';
-      renderSoon();
+    document.getElementById('tabPass').addEventListener('click', () => cambiarPasswordProfesor());
+    document.getElementById('tabSalir').addEventListener('click', async () => {
+      if(await customConfirm('¿Cerrar sesión?')) signOut(auth);
     });
     return;
   }
@@ -8283,6 +8405,7 @@ function renderConfig(){
       ${moduleRow('users','Cuentas de alumnos','Accesos de los alumnos a la app', 'alumnosCuentas')}
       ${moduleRow('users','Profesores','Cuentas y materias de cada profesor', 'profesores')}
       ${moduleRow('users','Cuentas de solo lectura','Directivos y otros accesos de consulta', 'lectura')}
+      ${moduleRow('clipboard','Cuentas para tomar lista','Acceso que solo puede tomar asistencia', 'tomaListaCuentas')}
     </div>
 
     <p class="section-label" style="margin-top:20px;">Colegio</p>
@@ -8454,11 +8577,10 @@ function renderConfig(){
   }
 }
 
-function getUsuario(){ return localStorage.getItem('isp_usuario') || ''; }
-// Usuario que solo puede tomar lista: entra directo a la asistencia y no ve nada más.
-// (Es una restricción de pantallas dentro de la cuenta compartida de administración.)
-const USUARIO_SOLO_LISTA = 'Juan Manuel Coria';
-function esSoloLista(){ return userRole === 'admin' && getUsuario() === USUARIO_SOLO_LISTA; }
+function getUsuario(){ if(userRole === 'tomaLista' && currentTomaLista) return currentTomaLista.nombre || 'Toma de lista'; return localStorage.getItem('isp_usuario') || ''; }
+// Cuenta propia (mail y contraseña) que solo puede tomar lista: ver más abajo el rol 'tomaLista'.
+let currentTomaLista = null;
+function esSoloLista(){ return userRole === 'tomaLista'; }
 // Se pone en true recién cuando onAuthStateChanged determinó con qué rol entrar
 // (admin/profesor/lectura/alumno). Antes de eso, render() no dibuja nada para
 // evitar que se vea por un instante la pantalla equivocada (por ej. la del
@@ -8514,7 +8636,6 @@ function renderQuien(){
       <div style="display:flex;flex-direction:column;gap:12px;max-width:220px;margin:0 auto;">
         <button class="btn-primary" data-user="Napo">Napo</button>
         <button class="btn-primary" data-user="Vicky" style="background:var(--stamp);">Vicky</button>
-        <button class="btn-primary" data-user="Juan Manuel Coria" style="background:var(--sage, #5C7F6B);">Juan Manuel Coria</button>
       </div>
     </div>
   `;
@@ -9651,9 +9772,16 @@ onAuthStateChanged(auth, async (user) => {
             initMessagingForegroundHandler();
             if('Notification' in window && Notification.permission === 'granted') activarNotificaciones(false);
           } else {
-            userRole = null;
-            currentTeacher = null;
-            currentRoute = 'profesorSinAcceso';
+            const ldoc = await getDoc(doc(db,'tomaLista',user.uid));
+            if(ldoc.exists() && ldoc.data().activo !== false){
+              userRole = 'tomaLista';
+              currentTomaLista = Object.assign({ uid: user.uid }, ldoc.data());
+              currentRoute = 'asistencia';
+            } else {
+              userRole = null;
+              currentTeacher = null;
+              currentRoute = 'profesorSinAcceso';
+            }
           }
         }
       }
@@ -9670,6 +9798,7 @@ onAuthStateChanged(auth, async (user) => {
   } else {
     userRole = null;
     currentTeacher = null;
+    currentTomaLista = null;
     notasIniciadas = false; notasC2Iniciadas = false; notasAlumnoC1 = {}; notasAlumnoC2 = {};
     authResolved = true;
     currentRoute = 'profesorLogin';
