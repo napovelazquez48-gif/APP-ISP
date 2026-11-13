@@ -1,6 +1,6 @@
 // ===== Preceptoría ISP — lógica de la app (Etapa 1) =====
 
-const APP_VERSION = 156;
+const APP_VERSION = 157;
 const SEED_STUDENTS = []; // la lista de alumnos vive en Firestore (colección students), no en el código
 
 const CURSOS = ['1','2','3','4','5'];
@@ -158,7 +158,7 @@ function setTema(t){
 aplicarTema();
 
 // ---------- Tamaño de letra (por dispositivo) ----------
-const ESCALAS_LETRA = { chica: 0.92, normal: 1, grande: 1.12 };
+const ESCALAS_LETRA = { chica: 0.92, normal: 1, grande: 1.12, muygrande: 1.3 };
 function getLetra(){ const t = DB.get('isp_letra', 'normal'); return ESCALAS_LETRA[t] ? t : 'normal'; }
 function aplicarLetra(){ document.documentElement.style.setProperty('--fs', String(ESCALAS_LETRA[getLetra()])); }
 function setLetra(t){ DB.set('isp_letra', t); aplicarLetra(); }
@@ -3729,7 +3729,7 @@ function render(){
 }
 
 function renderInner(){
-  if(esSoloLista() && currentRoute !== 'asistencia'){ currentRoute = 'asistencia'; }
+  if(esSoloLista() && currentRoute !== 'asistencia' && currentRoute !== 'configLista'){ currentRoute = 'asistencia'; }
   // La conexión con Drive la usan Napo (desde Config) y Vicky (desde el inicio).
   if(currentRoute === 'conexionDrive' && !(userRole === 'admin' && (getUsuario() === 'Napo' || getUsuario() === 'Vicky'))){
     currentRoute = userRole === 'admin' ? 'home' : homeRoute();
@@ -3789,6 +3789,7 @@ function renderInner(){
   else if(currentRoute === 'notasMenu') renderNotasMenu();
   else if(currentRoute === 'verNotas') renderVerNotas();
   else if(currentRoute === 'config') renderConfig();
+  else if(currentRoute === 'configLista') renderConfigLista();
   else if(currentRoute === 'alumnos') renderAlumnos();
   else if(currentRoute === 'horarioEditar') renderHorarioEditar();
   else if(currentRoute === 'entradasEspeciales') renderEntradasEspeciales();
@@ -5430,6 +5431,39 @@ function renderLectura(){
   document.querySelectorAll('[data-borrar]').forEach(b => b.addEventListener('click', () => borrarViewer(b.dataset.borrar, b.dataset.nombre)));
 }
 
+
+// Configuración de la cuenta que solo toma lista: apariencia (tema y tamaño de letra) y su cuenta.
+function renderConfigLista(){
+  const c = currentTomaLista || {};
+  $app.innerHTML = `
+    <div class="appbar" style="padding:0 0 10px;">
+      <h1>Configuración</h1>
+    </div>
+    <p class="section-label">Apariencia</p>
+    <div class="config-card">
+      <p style="font-size:calc(12.5px * var(--fs, 1));color:var(--ink-soft);margin:0 0 6px;">Tamaño de letra</p>
+      ${pillBtnRow('letra', [{value:'chica',label:'Chica'},{value:'normal',label:'Normal'},{value:'grande',label:'Grande'},{value:'muygrande',label:'Muy grande'}], getLetra())}
+      <p style="font-size:calc(12.5px * var(--fs, 1));color:var(--ink-soft);margin:14px 0 6px;">Colores</p>
+      ${pillBtnRow('tema', [{value:'auto',label:'Automático'},{value:'claro',label:'Claro'},{value:'oscuro',label:'Oscuro'}], getTema())}
+      <p style="font-size:calc(11.5px * var(--fs, 1));color:var(--ink-soft);margin:8px 0 0;">Se guarda en este dispositivo.</p>
+    </div>
+    <p class="section-label" style="margin-top:20px;">Cuenta</p>
+    <div class="config-card">
+      <p style="margin:0 0 2px;font-weight:600;">${escapeHtml(c.nombre || '')}</p>
+      <p style="font-size:calc(12.5px * var(--fs, 1));color:var(--ink-soft);margin:0 0 12px;">${escapeHtml(c.email || '')}</p>
+      <div style="display:flex;gap:8px;">
+        <button class="btn-secondary" id="cambiarPassListaBtn" style="flex:1;">Cambiar contraseña</button>
+        <button class="btn-secondary" id="cerrarSesionListaBtn" style="flex:1;color:var(--stamp);">Cerrar sesión</button>
+      </div>
+    </div>
+  `;
+  attachPillBtns('letra', (v) => { setLetra(v); render(); });
+  attachPillBtns('tema', (v) => { setTema(v); render(); });
+  document.getElementById('cambiarPassListaBtn').addEventListener('click', () => cambiarPasswordProfesor());
+  document.getElementById('cerrarSesionListaBtn').addEventListener('click', async () => {
+    if(await customConfirm('¿Cerrar sesión?')) signOut(auth);
+  });
+}
 
 // ---------- Cuentas que solo toman lista (administración) ----------
 async function crearTomaLista(){
@@ -7468,15 +7502,11 @@ function renderTabbar(){
   }
   if(esSoloLista()){
     tb.innerHTML = `
-      <button class="tab active" id="tabAsist">${icon('clipboard')}<span>Asistencia</span></button>
-      <button class="tab" id="tabPass">${icon('gear')}<span>Contraseña</span></button>
-      <button class="tab" id="tabSalir">${icon('back')}<span>Salir</span></button>
+      <button class="tab ${currentRoute==='asistencia'?'active':''}" id="tabAsist">${icon('clipboard')}<span>Asistencia</span></button>
+      <button class="tab ${currentRoute==='configLista'?'active':''}" id="tabCfgLista">${icon('gear')}<span>Config</span></button>
     `;
     document.getElementById('tabAsist').addEventListener('click', () => navigate('asistencia', null, 'tab'));
-    document.getElementById('tabPass').addEventListener('click', () => cambiarPasswordProfesor());
-    document.getElementById('tabSalir').addEventListener('click', async () => {
-      if(await customConfirm('¿Cerrar sesión?')) signOut(auth);
-    });
+    document.getElementById('tabCfgLista').addEventListener('click', () => navigate('configLista', null, 'tab'));
     return;
   }
   tb.innerHTML = `
@@ -8368,7 +8398,7 @@ function renderConfig(){
       ${pillBtnRow('tema', [{value:'auto',label:'Automático'},{value:'claro',label:'Claro'},{value:'oscuro',label:'Oscuro'}], getTema())}
       <p style="font-size:calc(11.5px * var(--fs, 1));color:var(--ink-soft);margin:8px 0 0;">"Automático" sigue lo que tenga configurado el celular. Se guarda en este dispositivo.</p>
       <p style="font-size:calc(12.5px * var(--fs, 1));color:var(--ink-soft);margin:14px 0 6px;">Tamaño de letra</p>
-      ${pillBtnRow('letra', [{value:'chica',label:'Chica'},{value:'normal',label:'Normal'},{value:'grande',label:'Grande'}], getLetra())}
+      ${pillBtnRow('letra', [{value:'chica',label:'Chica'},{value:'normal',label:'Normal'},{value:'grande',label:'Grande'},{value:'muygrande',label:'Muy grande'}], getLetra())}
     </div>
 
     ${userRole === 'admin' ? `
