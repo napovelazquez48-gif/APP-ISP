@@ -1,6 +1,6 @@
 // ===== Preceptoría ISP — lógica de la app (Etapa 1) =====
 
-const APP_VERSION = 159;
+const APP_VERSION = 160;
 const SEED_STUDENTS = []; // la lista de alumnos vive en Firestore (colección students), no en el código
 
 const CURSOS = ['1','2','3','4','5'];
@@ -5016,11 +5016,14 @@ function renderConexionDrive(){
       <button class="btn-secondary" id="duplicadosBtn" style="width:100%;" ${driveTrabajando ? 'disabled' : ''}>Buscar filas repetidas en todas las planillas</button>
       <p id="duplicadosEstado" style="font-size:calc(12.5px * var(--fs, 1));color:var(--ink-soft);margin-top:8px;line-height:1.5;"></p>
       <div id="duplicadosLista" style="font-size:calc(12.5px * var(--fs, 1));line-height:1.55;">${duplicadosHtml}</div>
+      ${duplicadosExactosN ? `<button class="btn-primary" id="borrarDupBtn" style="width:100%;margin-top:10px;" ${driveTrabajando ? 'disabled' : ''}>Borrar ${duplicadosExactosN} fila${duplicadosExactosN!==1?'s':''} idéntica${duplicadosExactosN!==1?'s':''} repetida${duplicadosExactosN!==1?'s':''}</button>
+      <p style="font-size:calc(11.5px * var(--fs, 1));color:var(--ink-soft);margin:6px 0 0;">Borra solo las copias exactas (mismo día, mismo texto y mismo valor) y deja la primera. Lo demás de la lista no se toca.</p>` : ''}
     </div>
     ` : ''}
   `;
   document.getElementById('backBtn').addEventListener('click', () => goBack('config'));
   if(document.getElementById('duplicadosBtn')) document.getElementById('duplicadosBtn').addEventListener('click', buscarDuplicadosDrive);
+  if(document.getElementById('borrarDupBtn')) document.getElementById('borrarDupBtn').addEventListener('click', borrarDuplicadosExactosDrive);
   document.getElementById('probarAccesoBtn').addEventListener('click', () => cargarEstadoDrive(true));
   if(document.getElementById('copiarEmailBtn')){
     document.getElementById('copiarEmailBtn').addEventListener('click', async () => {
@@ -5074,6 +5077,34 @@ async function reenviarJustificadosRecientes(){
 }
 
 let duplicadosHtml = '';
+let duplicadosExactosN = 0;
+let duplicadosExactosAlumnos = [];
+
+// Copias exactas dentro de una fecha con varias filas: mismo texto y mismo valor.
+function sobrantesExactos(grupo){
+  const vistos = new Set(); let n = 0;
+  grupo.filas.forEach(f => { const k = String(f.texto).trim().toLowerCase() + '|' + String(f.valor).trim(); if(vistos.has(k)) n++; else vistos.add(k); });
+  return n;
+}
+
+async function borrarDuplicadosExactosDrive(){
+  if(driveTrabajando || !duplicadosExactosAlumnos.length) return;
+  if(!(await customConfirm(`Se van a borrar ${duplicadosExactosN} fila${duplicadosExactosN!==1?'s':''} repetida${duplicadosExactosN!==1?'s':''} (copias exactas) en las planillas de ${duplicadosExactosAlumnos.length} alumno${duplicadosExactosAlumnos.length!==1?'s':''}. Se deja la primera de cada una. Los demás casos de la lista no se tocan.`, { textoSi: 'Borrar' }))) return;
+  driveTrabajando = true; renderSoon();
+  const estado = () => document.getElementById('duplicadosEstado');
+  try{
+    if(estado()) estado().textContent = 'Borrando… puede tardar un par de minutos.';
+    const r = await llamarDrive({ accion: 'limpiarDuplicados', alumnos: duplicadosExactosAlumnos });
+    const n = (r.borradas || []).reduce((t, b) => t + b.filas.length, 0);
+    const err = (r.errores || []).length;
+    duplicadosHtml = ''; duplicadosExactosN = 0; duplicadosExactosAlumnos = [];
+    if(estado()) estado().textContent = `Listo: se borraron ${n} fila${n!==1?'s':''}${err ? ` y hubo ${err} planilla${err!==1?'s':''} con error` : ''}. Volvé a tocar "Buscar filas repetidas" para confirmar cómo quedó.`;
+  }catch(err){
+    if(estado()) estado().textContent = explicarErrorDrive(err.message);
+  }finally{
+    driveTrabajando = false; renderSoon();
+  }
+}
 async function buscarDuplicadosDrive(){
   if(driveTrabajando) return;
   driveTrabajando = true;
@@ -5102,6 +5133,8 @@ async function buscarDuplicadosDrive(){
     if(otras.length) html += `<details style="margin-top:8px;"><summary style="cursor:pointer;color:var(--ink-soft);">Fechas con varias filas que parecen normales (${otras.reduce((n,h)=>n+h.otras.length,0)})</summary>` + otras.map(h => `<p style="margin:6px 0;"><b>${nombre(h)}</b><br>${h.otras.map(fmt).join('<br>')}</p>`).join('') + '</details>';
     if(errores.length) html += `<p style="margin:8px 0;color:var(--ink-soft);">No pude leer ${errores.length} planilla${errores.length!==1?'s':''}: ${errores.slice(0,5).map(e => escapeHtml(e.archivo || e.studentId)).join(', ')}${errores.length>5?'…':''}</p>`;
     duplicadosHtml = html;
+    duplicadosExactosAlumnos = hallados.filter(h => h.sospechosas.some(g => sobrantesExactos(g) > 0)).map(h => h.studentId);
+    duplicadosExactosN = hallados.reduce((t, h) => t + h.sospechosas.reduce((u, g) => u + sobrantesExactos(g), 0), 0);
     if(estado()) estado().textContent = `Listo: ${total} planillas revisadas.`;
   }catch(err){
     if(estado()) estado().textContent = explicarErrorDrive(err.message);
