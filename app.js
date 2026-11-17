@@ -1,6 +1,6 @@
 // ===== Preceptoría ISP — lógica de la app (Etapa 1) =====
 
-const APP_VERSION = 157;
+const APP_VERSION = 158;
 const SEED_STUDENTS = []; // la lista de alumnos vive en Firestore (colección students), no en el código
 
 const CURSOS = ['1','2','3','4','5'];
@@ -1521,6 +1521,11 @@ function writeAttendance(key, data){
   if(!('retiro' in data) && prev && prev.retiro && data.estado !== 'A' && data.estado !== 'J'){
     payload.retiro = prev.retiro;
   }
+  // Todo cambio hecho desde la app deja el registro como "pendiente de Drive". Antes, varias
+  // acciones (justificar con certificado, quitar un retiro, cargar una exención) copiaban el
+  // registro viejo entero, con su marca "ya sincronizado", y el cambio nunca llegaba a la planilla.
+  // Si no cambió nada respecto de lo ya escrito, el servidor lo detecta y no toca la planilla.
+  payload.driveSynced = false;
   setDoc(doc(db,'attendance',docId(key)), payload).catch(err=>showSaveError(err));
   tocarHistorico(key, payload);
 }
@@ -4984,6 +4989,19 @@ function renderConexionDrive(){
       <button class="btn-primary" id="sincronizarBtn" style="width:100%;" ${driveTrabajando ? 'disabled' : ''}>${driveTrabajando ? 'Sincronizando… puede tardar unos minutos' : 'Sincronizar ahora'}</button>
       <p id="syncEstado" style="font-size:calc(12.5px * var(--fs, 1));color:var(--ink-soft);margin-top:8px;"></p>
       <details style="margin-top:6px;">
+        <summary style="font-size:calc(12px * var(--fs, 1));color:var(--ink-soft);cursor:pointer;">Un día quedó mal en la planilla de un alumno</summary>
+        <p style="font-size:calc(12px * var(--fs, 1));color:var(--ink-soft);margin:8px 0;">Elegí el alumno y los días: se vuelven a mandar en la próxima sincronización y se corrige la fila que ya estaba (por ejemplo, de "Clase" a "Clase (Justificado)").</p>
+        <select id="reenvioAlumno" style="margin-bottom:8px;">
+          ${getStudents().filter(s => cache.driveMapping[s.id]).sort((a,b)=>a.apellido.localeCompare(b.apellido)).map(s => `<option value="${s.id}">${s.curso}° · ${escapeHtml(s.apellido)}, ${escapeHtml(s.nombre)}</option>`).join('')}
+        </select>
+        <div style="display:flex;gap:8px;margin-bottom:8px;">
+          <input type="date" id="reenvioDesde" style="flex:1;min-width:0;">
+          <input type="date" id="reenvioHasta" style="flex:1;min-width:0;">
+        </div>
+        <button class="btn-secondary" id="reenvioBtn" style="width:100%;">Volver a mandar esos días</button>
+        <p id="reenvioEstado" style="font-size:calc(12px * var(--fs, 1));color:var(--ink-soft);margin-top:6px;line-height:1.5;"></p>
+      </details>
+      <details style="margin-top:6px;">
         <summary style="font-size:calc(12px * var(--fs, 1));color:var(--ink-soft);cursor:pointer;">¿Ya lo tenés cargado a mano en las planillas?</summary>
         <p style="font-size:calc(12px * var(--fs, 1));color:var(--ink-soft);margin:8px 0;">Si lo pendiente ya lo pasaste vos a mano, marcalo como sincronizado para que no se duplique.</p>
         <button class="btn-secondary" id="marcarSyncBtn" style="width:100%;">Marcar todo lo actual como ya sincronizado</button>
@@ -5004,6 +5022,33 @@ function renderConexionDrive(){
   if(document.getElementById('probarEscrituraBtn')) document.getElementById('probarEscrituraBtn').addEventListener('click', filaDePruebaDrive);
   if(document.getElementById('sincronizarBtn')) document.getElementById('sincronizarBtn').addEventListener('click', sincronizarAhoraDrive);
   if(document.getElementById('marcarSyncBtn')) document.getElementById('marcarSyncBtn').addEventListener('click', marcarTodoComoYaSincronizado);
+  if(document.getElementById('reenvioBtn')) document.getElementById('reenvioBtn').addEventListener('click', reenviarDiasDrive);
+}
+
+// Marca como "pendientes" los días ya sincronizados de un alumno, para que la próxima
+// sincronización los corrija en la planilla (el servidor reemplaza la fila vieja).
+async function reenviarDiasDrive(){
+  const estado = document.getElementById('reenvioEstado');
+  const sid = document.getElementById('reenvioAlumno').value;
+  const desde = document.getElementById('reenvioDesde').value;
+  const hasta = document.getElementById('reenvioHasta').value;
+  if(!sid || !desde || !hasta || desde > hasta){ if(estado) estado.textContent = 'Elegí un alumno y un rango de fechas válido.'; return; }
+  const claves = Object.entries(cache.attendance)
+    .filter(([key, rec]) => { const [f, s] = key.split('|'); return s === sid && f >= desde && f <= hasta && rec.driveSynced; })
+    .map(([key]) => key);
+  if(!claves.length){ if(estado) estado.textContent = 'Ese alumno no tiene días ya sincronizados en ese rango (puede que ya estén pendientes).'; return; }
+  if(claves.length > 60){ if(estado) estado.textContent = 'Son demasiados días de una vez. Probá con un rango más corto.'; return; }
+  if(!(await customConfirm(`Se van a volver a mandar ${claves.length} día${claves.length!==1?'s':''} de este alumno en la próxima sincronización. Si el día ya está bien en la planilla, no se toca.`, { textoSi: 'Volver a mandar' }))) return;
+  try{
+    const batch = writeBatch(db);
+    claves.forEach(key => batch.set(doc(db,'attendance',docId(key)), { driveSynced: false }, { merge: true }));
+    await batch.commit();
+    claves.forEach(key => tocarHistorico(key, { driveSynced: false }));
+    if(estado) estado.textContent = `Listo: ${claves.length} día${claves.length!==1?'s':''} pendiente${claves.length!==1?'s':''}. Ahora tocá "Sincronizar ahora".`;
+    renderSoon();
+  }catch(err){
+    if(estado) estado.textContent = 'No se pudo guardar: ' + (err && err.message || err);
+  }
 }
 
 function renderProfesorNuevo(){
