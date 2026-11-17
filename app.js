@@ -4991,6 +4991,8 @@ function renderConexionDrive(){
       <details style="margin-top:6px;">
         <summary style="font-size:calc(12px * var(--fs, 1));color:var(--ink-soft);cursor:pointer;">Un día quedó mal en la planilla de un alumno</summary>
         <p style="font-size:calc(12px * var(--fs, 1));color:var(--ink-soft);margin:8px 0;">Elegí el alumno y los días: se vuelven a mandar en la próxima sincronización y se corrige la fila que ya estaba (por ejemplo, de "Clase" a "Clase (Justificado)").</p>
+        <button class="btn-primary" id="reenvioRecientesBtn" style="width:100%;margin-bottom:10px;">Buscar justificados de los últimos 30 días y volver a mandarlos</button>
+        <p style="font-size:calc(12px * var(--fs, 1));color:var(--ink-soft);margin:0 0 8px;">O elegí a mano un alumno y los días:</p>
         <select id="reenvioAlumno" style="margin-bottom:8px;">
           ${getStudents().filter(s => cache.driveMapping[s.id]).sort((a,b)=>a.apellido.localeCompare(b.apellido)).map(s => `<option value="${s.id}">${s.curso}° · ${escapeHtml(s.apellido)}, ${escapeHtml(s.nombre)}</option>`).join('')}
         </select>
@@ -5023,6 +5025,43 @@ function renderConexionDrive(){
   if(document.getElementById('sincronizarBtn')) document.getElementById('sincronizarBtn').addEventListener('click', sincronizarAhoraDrive);
   if(document.getElementById('marcarSyncBtn')) document.getElementById('marcarSyncBtn').addEventListener('click', marcarTodoComoYaSincronizado);
   if(document.getElementById('reenvioBtn')) document.getElementById('reenvioBtn').addEventListener('click', reenviarDiasDrive);
+  if(document.getElementById('reenvioRecientesBtn')) document.getElementById('reenvioRecientesBtn').addEventListener('click', reenviarJustificadosRecientes);
+}
+
+// Busca los certificados cargados en los últimos 30 días y, de sus días, los que quedaron
+// justificados pero marcados como "ya sincronizados" (el error de antes de la versión 158).
+async function reenviarJustificadosRecientes(){
+  const estado = document.getElementById('reenvioEstado');
+  const limite = Date.now() - 30 * 24 * 60 * 60 * 1000;
+  const porAlumno = {};
+  (cache.certificados || []).forEach(c => {
+    if(!c || !c.studentId || !c.from || !c.to || (c.createdAt || 0) < limite) return;
+    if(!cache.driveMapping[c.studentId]) return;
+    dateRange(c.from, c.to).forEach(iso => {
+      const key = `${iso}|${c.studentId}`;
+      const rec = cache.attendance[key];
+      if(rec && rec.estado === 'J' && rec.driveSynced) (porAlumno[c.studentId] = porAlumno[c.studentId] || new Set()).add(key);
+    });
+  });
+  const sids = Object.keys(porAlumno);
+  const claves = sids.flatMap(sid => [...porAlumno[sid]]);
+  if(!claves.length){ if(estado) estado.textContent = 'No encontré justificados de los últimos 30 días ya sincronizados. Si hay alguno viejo, usá la opción de elegir alumno y fechas.'; return; }
+  const alumnos = getStudents();
+  const nombre = sid => { const a = alumnos.find(x => x.id === sid); return a ? `${a.apellido}, ${a.nombre} (${porAlumno[sid].size})` : sid; };
+  const lista = sids.slice(0, 20).map(nombre).join('\n') + (sids.length > 20 ? `\n… y ${sids.length - 20} más` : '');
+  if(!(await customConfirm(`Encontré ${claves.length} día${claves.length!==1?'s':''} justificado${claves.length!==1?'s':''} de ${sids.length} alumno${sids.length!==1?'s':''}:\n\n${lista}\n\nSe vuelven a mandar en la próxima sincronización. Si un día ya está bien en la planilla, no se toca.`, { textoSi: 'Volver a mandar' }))) return;
+  try{
+    for(let i = 0; i < claves.length; i += 450){
+      const batch = writeBatch(db);
+      claves.slice(i, i + 450).forEach(key => batch.set(doc(db,'attendance',docId(key)), { driveSynced: false }, { merge: true }));
+      await batch.commit();
+    }
+    claves.forEach(key => tocarHistorico(key, { driveSynced: false }));
+    if(estado) estado.textContent = `Listo: ${claves.length} día${claves.length!==1?'s':''} pendiente${claves.length!==1?'s':''}. Ahora tocá "Sincronizar ahora".`;
+    renderSoon();
+  }catch(err){
+    if(estado) estado.textContent = 'No se pudo guardar: ' + (err && err.message || err);
+  }
 }
 
 // Marca como "pendientes" los días ya sincronizados de un alumno, para que la próxima
