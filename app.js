@@ -1,6 +1,6 @@
 // ===== Preceptoría ISP — lógica de la app (Etapa 1) =====
 
-const APP_VERSION = 158;
+const APP_VERSION = 159;
 const SEED_STUDENTS = []; // la lista de alumnos vive en Firestore (colección students), no en el código
 
 const CURSOS = ['1','2','3','4','5'];
@@ -5009,9 +5009,18 @@ function renderConexionDrive(){
         <button class="btn-secondary" id="marcarSyncBtn" style="width:100%;">Marcar todo lo actual como ya sincronizado</button>
       </details>
     </div>
+
+    <p class="section-label" style="margin-top:20px;">5 · Revisar filas repetidas</p>
+    <div class="config-card">
+      <p style="font-size:calc(12.5px * var(--fs, 1));color:var(--ink-soft);margin:0 0 10px;">Recorre la planilla de cada alumno y avisa qué fechas tienen más de una fila (por ejemplo "Clase" y "Tarde" el mismo día). Solo mira: no cambia nada. Tarda un par de minutos.</p>
+      <button class="btn-secondary" id="duplicadosBtn" style="width:100%;" ${driveTrabajando ? 'disabled' : ''}>Buscar filas repetidas en todas las planillas</button>
+      <p id="duplicadosEstado" style="font-size:calc(12.5px * var(--fs, 1));color:var(--ink-soft);margin-top:8px;line-height:1.5;"></p>
+      <div id="duplicadosLista" style="font-size:calc(12.5px * var(--fs, 1));line-height:1.55;">${duplicadosHtml}</div>
+    </div>
     ` : ''}
   `;
   document.getElementById('backBtn').addEventListener('click', () => goBack('config'));
+  if(document.getElementById('duplicadosBtn')) document.getElementById('duplicadosBtn').addEventListener('click', buscarDuplicadosDrive);
   document.getElementById('probarAccesoBtn').addEventListener('click', () => cargarEstadoDrive(true));
   if(document.getElementById('copiarEmailBtn')){
     document.getElementById('copiarEmailBtn').addEventListener('click', async () => {
@@ -5061,6 +5070,44 @@ async function reenviarJustificadosRecientes(){
     renderSoon();
   }catch(err){
     if(estado) estado.textContent = 'No se pudo guardar: ' + (err && err.message || err);
+  }
+}
+
+let duplicadosHtml = '';
+async function buscarDuplicadosDrive(){
+  if(driveTrabajando) return;
+  driveTrabajando = true;
+  const estado = () => document.getElementById('duplicadosEstado');
+  const hallados = [], errores = [];
+  let total = 0;
+  try{
+    let desde = 0;
+    for(let vuelta = 0; vuelta < 10; vuelta++){
+      if(estado()) estado().textContent = `Revisando planillas… ${Math.min(desde, total || desde)}${total ? ' de ' + total : ''}`;
+      const r = await llamarDrive({ accion: 'duplicados', desde });
+      total = r.total || total;
+      hallados.push(...(r.hallados || []));
+      errores.push(...(r.errores || []));
+      if(r.siguiente === null || r.siguiente === undefined) break;
+      desde = r.siguiente;
+    }
+    const alumnos = getStudents();
+    const fmt = (g) => `${fmtDateShort(g.fecha)}: ` + g.filas.map(f => `fila ${f.fila} «${escapeHtml(f.texto)}»`).join(' + ');
+    const nombre = h => { const a = alumnos.find(x => x.id === h.studentId); return a ? `${a.curso}° · ${escapeHtml(a.apellido)}, ${escapeHtml(a.nombre)}` : escapeHtml(h.archivo || h.studentId); };
+    const sosp = hallados.filter(h => h.sospechosas.length);
+    const otras = hallados.filter(h => h.otras.length);
+    let html = '';
+    if(!sosp.length) html += '<p style="margin:8px 0;"><b>No encontré filas repetidas sospechosas.</b></p>';
+    else html += `<p style="margin:8px 0;"><b>${sosp.length} alumno${sosp.length!==1?'s':''} con filas repetidas:</b></p>` + sosp.map(h => `<p style="margin:6px 0;"><b>${nombre(h)}</b><br>${h.sospechosas.map(fmt).join('<br>')}</p>`).join('');
+    if(otras.length) html += `<details style="margin-top:8px;"><summary style="cursor:pointer;color:var(--ink-soft);">Fechas con varias filas que parecen normales (${otras.reduce((n,h)=>n+h.otras.length,0)})</summary>` + otras.map(h => `<p style="margin:6px 0;"><b>${nombre(h)}</b><br>${h.otras.map(fmt).join('<br>')}</p>`).join('') + '</details>';
+    if(errores.length) html += `<p style="margin:8px 0;color:var(--ink-soft);">No pude leer ${errores.length} planilla${errores.length!==1?'s':''}: ${errores.slice(0,5).map(e => escapeHtml(e.archivo || e.studentId)).join(', ')}${errores.length>5?'…':''}</p>`;
+    duplicadosHtml = html;
+    if(estado()) estado().textContent = `Listo: ${total} planillas revisadas.`;
+  }catch(err){
+    if(estado()) estado().textContent = explicarErrorDrive(err.message);
+  }finally{
+    driveTrabajando = false;
+    renderSoon();
   }
 }
 
