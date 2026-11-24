@@ -1,6 +1,6 @@
 // ===== Preceptoría ISP — lógica de la app (Etapa 1) =====
 
-const APP_VERSION = 160;
+const APP_VERSION = 161;
 const SEED_STUDENTS = []; // la lista de alumnos vive en Firestore (colección students), no en el código
 
 const CURSOS = ['1','2','3','4','5'];
@@ -2501,6 +2501,7 @@ function renderHome(){
       ${moduleTile('chart','Vista por curso','vistaCurso')}
       ${moduleTile('chart','Vista general','vistaGeneral')}
       ${moduleTile('users','Listas de curso','listasCurso')}
+      ${moduleTile('chart','Reporte de faltas','reporteFaltas')}
       ${getUsuario()==='Vicky' ? moduleTile('file','Conexión con Drive','conexionDrive') : ''}
       ${moduleTile('file','Valoraciones','valoraciones')}
       ${moduleTile('check','Notas','notasMenu')}
@@ -3809,6 +3810,7 @@ function renderInner(){
   else if(currentRoute === 'tramiteImprimir') renderTramiteImprimir();
   else if(currentRoute === 'vistaGeneral') renderVistaGeneral();
   else if(currentRoute === 'listasCurso') renderListasCurso();
+  else if(currentRoute === 'reporteFaltas') renderReporteFaltas();
   else if(currentRoute === 'agenda') renderAgenda();
   else if(currentRoute === 'agendaNuevo') renderAgendaNuevo();
   else if(currentRoute === 'agendaDetalle') renderAgendaDetalle();
@@ -5364,6 +5366,7 @@ function renderViewerHome(){
       ${moduleRow('chart','Vista por curso','Alertas y riesgo de SCP de un vistazo', 'vistaCurso')}
       ${moduleRow('chart','Vista general del colegio','Los 5 cursos comparados', 'vistaGeneral')}
       ${moduleRow('users','Listas de curso','Para imprimir, con columnas a completar', 'listasCurso')}
+      ${moduleRow('chart','Reporte de faltas','Por cuatrimestre, para imprimir', 'reporteFaltas')}
       ${moduleRow('clipboard','Asistencia de hoy','Quiénes están ausentes', 'detalleAsistenciaHoy')}
       ${moduleRow('alert','Alumnos en alerta','5 o más faltas este bimestre', 'detalleAlertas')}
     </div>
@@ -6405,6 +6408,258 @@ function renderListasCurso(){
   attachPillBtns('listasOri', v => { guardarFormListas(); e.orientacion = v; renderListasCurso(); });
   document.getElementById('listasPdfBtn').addEventListener('click', exportarListasPDF);
   document.getElementById('listasXlsxBtn').addEventListener('click', exportarListasExcel);
+}
+
+
+// ---------- Reporte de faltas por cuatrimestre ----------
+// 1° cuatrimestre = 1° + 2° bimestre; 2° cuatrimestre = 3° + 4° bimestre.
+// El total usa computeAbsenceWeights (el mismo criterio que el resto de la app); las columnas
+// de al lado son el detalle de cómo se llegó a ese total.
+const reporteEstado = { cuatri: 2, cursos: null, soloConFaltas: false };
+
+function reporteRango(cuatri){
+  return Number(cuatri) === 1
+    ? { from: BIMESTRES[0].from, to: BIMESTRES[1].to }
+    : { from: BIMESTRES[2].from, to: BIMESTRES[3].to };
+}
+const reporteFechaCorta = (iso) => { const [a, m, d] = iso.split('-'); return `${Number(d)}/${Number(m)}`; };
+const reporteFechaLarga = (iso) => iso.split('-').reverse().join('/');
+const reporteNum = (n) => Number.isInteger(n) ? String(n) : String(n).replace('.', ',');
+const REPORTE_COLS = [
+  { k: 'A',  t: 'Aus.',  largo: 'Ausentes sin justificar' },
+  { k: 'J',  t: 'Just.', largo: 'Ausentes justificadas' },
+  { k: 'T',  t: 'Tarde', largo: 'Llegadas tarde' },
+  { k: 'TJ', t: 'T.J.',  largo: 'Tardes justificadas' },
+  { k: 'R',  t: 'Ret.',  largo: 'Retiros anticipados' },
+  { k: 'EF', t: 'E.F.',  largo: 'Faltas de Ed. Física' },
+];
+const REPORTE_CRITERIO = 'Criterio: ausente y ausente justificada 1; tarde 0,5; retiro anticipado 0,5; falta de Ed. Física 0,5; tarde justificada no suma. VDE y días sin clase no cuentan.';
+
+function reporteDatos(){
+  const e = reporteEstado;
+  if(!e.cursos) e.cursos = CURSOS.slice();
+  const rango = reporteRango(e.cuatri);
+  const hoy = todayISO();
+  const hasta = hoy < rango.to ? hoy : rango.to;
+  const totales = computeAbsenceWeights(rango);
+  const activos = cursosActivos();
+  const cont = {};
+  const get = (sid) => cont[sid] || (cont[sid] = { A: 0, J: 0, T: 0, TJ: 0, R: 0, EF: 0 });
+  Object.entries(getAttendance()).forEach(([key, rec]) => {
+    const [fecha, sid] = key.split('|');
+    if(fecha < rango.from || fecha > rango.to) return;
+    if(rec.exencion || diaNoCuenta(fecha, sid, activos)) return;
+    const c = get(sid);
+    if(rec.estado === 'A') c.A++;
+    else if(rec.estado === 'J') c.J++;
+    else if(rec.estado === 'T') c.T++;
+    else if(rec.estado === 'TJ') c.TJ++;
+    if(pesoRetiro(rec) > 0) c.R++;
+  });
+  Object.entries(getEF()).forEach(([key, val]) => {
+    const [fecha, sid] = key.split('|');
+    if(fecha < rango.from || fecha > rango.to) return;
+    if(efNoCuenta(fecha, sid, activos)) return;
+    if(val && val.tipo === 'falta') get(sid).EF++;
+  });
+  const grupos = CURSOS.filter(c => e.cursos.includes(c)).map(curso => {
+    const filas = listasAlumnosDe(curso).map(al => ({
+      al, c: cont[al.id] || { A: 0, J: 0, T: 0, TJ: 0, R: 0, EF: 0 }, total: totales[al.id] || 0,
+    })).filter(f => !e.soloConFaltas || f.total > 0);
+    const suma = { A: 0, J: 0, T: 0, TJ: 0, R: 0, EF: 0, total: 0 };
+    filas.forEach(f => { REPORTE_COLS.forEach(k => { suma[k.k] += f.c[k.k]; }); suma.total += f.total; });
+    return { curso, filas, suma };
+  });
+  return { rango, hasta, grupos, cuatri: Number(e.cuatri) };
+}
+const reporteTitulo = (d) => `${d.cuatri}° cuatrimestre (${reporteFechaCorta(d.rango.from)} al ${reporteFechaCorta(d.rango.to)})`;
+function reporteNombreArchivo(d, ext){
+  return `Faltas_${d.cuatri}cuatri_${d.grupos.map(g => g.curso + 'A').join('-')}_${todayISO()}.${ext}`;
+}
+
+function renderReporteFaltas(){
+  const e = reporteEstado;
+  const d = reporteDatos();
+  const todos = e.cursos.length === CURSOS.length;
+  const chip = (activo, attrs, texto) => `<button type="button" class="pill-btn ${activo ? 'active' : ''}" ${attrs} style="flex:0 0 auto;min-width:56px;">${texto}</button>`;
+  const totalAl = d.grupos.reduce((t, g) => t + g.filas.length, 0);
+  const conFaltas = d.grupos.reduce((t, g) => t + g.filas.filter(f => f.total > 0).length, 0);
+  const th = 'text-align:right;padding:6px 6px;font-weight:600;white-space:nowrap;';
+  const td = 'text-align:right;padding:5px 6px;';
+  const tablas = d.grupos.map(g => `
+    <p class="section-label" style="margin-top:16px;">${g.curso}° A · ${g.filas.length} alumnos</p>
+    <div class="config-card" style="padding:0;overflow-x:auto;">
+      <table style="width:100%;border-collapse:collapse;font-size:calc(12.5px * var(--fs, 1));">
+        <thead><tr style="border-bottom:1px solid var(--border);color:var(--ink-soft);">
+          <th style="${th}text-align:left;">Alumno</th>${REPORTE_COLS.map(c => `<th style="${th}">${c.t}</th>`).join('')}<th style="${th}">Total</th>
+        </tr></thead>
+        <tbody>
+          ${g.filas.map(f => `<tr style="border-bottom:1px solid var(--border);">
+            <td style="${td}text-align:left;">${escapeHtml(listasNombre(f.al))}</td>
+            ${REPORTE_COLS.map(c => `<td style="${td}${f.c[c.k] ? '' : 'color:var(--ink-soft);opacity:.55;'}">${f.c[c.k]}</td>`).join('')}
+            <td style="${td}font-weight:700;">${reporteNum(f.total)}</td></tr>`).join('') || `<tr><td style="${td}text-align:left;color:var(--ink-soft);" colspan="8">Sin alumnos para mostrar.</td></tr>`}
+          <tr style="font-weight:700;background:var(--paper-2);"><td style="${td}text-align:left;">Total del curso</td>${REPORTE_COLS.map(c => `<td style="${td}">${g.suma[c.k]}</td>`).join('')}<td style="${td}">${reporteNum(g.suma.total)}</td></tr>
+        </tbody>
+      </table>
+    </div>`).join('');
+
+  $app.innerHTML = `
+    <div class="appbar no-print" style="padding:0 0 10px;">
+      <button class="back-btn" id="backBtn">${icon('back')}</button>
+      <h1>Reporte de faltas</h1>
+    </div>
+    <p style="font-size:calc(12.5px * var(--fs, 1));color:var(--ink-soft);margin:0 0 12px;">Las faltas de cada alumno en un cuatrimestre, con el detalle y el total. Se descarga en PDF o en Excel.</p>
+
+    <p class="section-label">Cuatrimestre</p>
+    <div class="config-card">
+      ${pillBtnRow('repCuatri', [{value:1,label:'1° cuatrimestre'},{value:2,label:'2° cuatrimestre'}], e.cuatri)}
+      <p style="font-size:calc(12px * var(--fs, 1));color:var(--ink-soft);margin:10px 0 0;">Del ${reporteFechaLarga(d.rango.from)} al ${reporteFechaLarga(d.rango.to)}${d.hasta < d.rango.to ? ` · cuenta lo cargado hasta el ${reporteFechaLarga(d.hasta)}` : ''}.</p>
+    </div>
+
+    <p class="section-label">Cursos</p>
+    <div class="config-card">
+      <div style="display:flex;gap:6px;flex-wrap:wrap;">
+        ${CURSOS.map(c => chip(e.cursos.includes(c), `data-rcurso="${c}"`, `${c}°`)).join('')}
+        ${chip(todos, 'data-rtodos="1"', 'Todos')}
+      </div>
+      <label style="display:flex;gap:8px;align-items:center;font-size:calc(13.5px * var(--fs, 1));margin-top:12px;"><input type="checkbox" id="repSoloConFaltas" ${e.soloConFaltas ? 'checked' : ''} style="width:auto;flex:0 0 auto;margin:0;"> Mostrar solo los alumnos con faltas</label>
+      <p style="font-size:calc(12px * var(--fs, 1));color:var(--ink-soft);margin:10px 0 0;">${d.grupos.length ? `${totalAl} alumnos · ${conFaltas} con faltas.` : 'Tocá uno o más cursos.'}</p>
+    </div>
+
+    <button class="btn-primary" id="repPdfBtn" style="width:100%;margin-top:6px;" ${d.grupos.length ? '' : 'disabled'}>${icon('file')} Descargar PDF</button>
+    <button class="btn-secondary" id="repXlsxBtn" style="width:100%;margin-top:8px;" ${d.grupos.length ? '' : 'disabled'}>${icon('file')} Descargar Excel</button>
+
+    ${tablas}
+    <p style="font-size:calc(11.5px * var(--fs, 1));color:var(--ink-soft);margin:14px 0 0;line-height:1.5;">${REPORTE_COLS.map(c => `<b>${c.t}</b> ${c.largo.toLowerCase()}`).join(' · ')}.<br>${REPORTE_CRITERIO}</p>
+  `;
+
+  document.getElementById('backBtn').addEventListener('click', () => goBack(homeRoute()));
+  attachPillBtns('repCuatri', v => { e.cuatri = Number(v); renderReporteFaltas(); });
+  document.querySelectorAll('[data-rcurso]').forEach(b => b.addEventListener('click', () => {
+    const c = b.dataset.rcurso;
+    e.cursos = e.cursos.includes(c) ? e.cursos.filter(x => x !== c) : [...e.cursos, c];
+    renderReporteFaltas();
+  }));
+  document.querySelector('[data-rtodos]').addEventListener('click', () => { e.cursos = todos ? [] : CURSOS.slice(); renderReporteFaltas(); });
+  document.getElementById('repSoloConFaltas').addEventListener('change', (ev) => { e.soloConFaltas = ev.target.checked; renderReporteFaltas(); });
+  document.getElementById('repPdfBtn').addEventListener('click', exportarReportePDF);
+  document.getElementById('repXlsxBtn').addEventListener('click', exportarReporteExcel);
+}
+
+function reporteDatosParaExportar(){
+  const d = reporteDatos();
+  if(!d.grupos.length){ customAlert('Elegí al menos un curso.'); return null; }
+  if(!d.grupos.some(g => g.filas.length)){ customAlert('No hay alumnos para mostrar con ese filtro.'); return null; }
+  return d;
+}
+
+async function exportarReportePDF(){
+  const d = reporteDatosParaExportar();
+  if(!d) return;
+  const { jsPDF } = await cargarJsPDF();
+  const pdf = new jsPDF({ unit: 'mm', format: 'a4', orientation: 'portrait' });
+  const W = pdf.internal.pageSize.getWidth(), H = pdf.internal.pageSize.getHeight();
+  const m = 12, usable = W - 2 * m;
+  const wNum = 8, wCol = 15;
+  const wNombre = usable - wNum - (REPORTE_COLS.length + 1) * wCol;
+  const rowH = 6.4, headH = 7;
+  const fechaHoy = reporteFechaLarga(todayISO());
+  const rangoTxt = d.hasta < d.rango.to ? `datos hasta el ${reporteFechaLarga(d.hasta)}` : `al ${reporteFechaLarga(d.rango.to)}`;
+
+  const pie = () => {
+    pdf.setFont('helvetica', 'normal'); pdf.setFontSize(7); pdf.setTextColor(110);
+    pdf.text(pdf.splitTextToSize(`${REPORTE_COLS.map(c => `${c.t} = ${c.largo.toLowerCase()}`).join(' · ')}. ${REPORTE_CRITERIO}`, usable), m, H - m - 5);
+    pdf.setTextColor(0);
+  };
+  const cabecera = (g, continuacion) => {
+    pdf.setFont('helvetica', 'normal'); pdf.setFontSize(8); pdf.setTextColor(110);
+    pdf.text('Instituto Superior Porteño', m, m + 3);
+    pdf.text(fechaHoy, W - m, m + 3, { align: 'right' });
+    pdf.setTextColor(0); pdf.setFont('helvetica', 'bold'); pdf.setFontSize(14);
+    pdf.text(`Reporte de faltas · ${d.cuatri}° cuatrimestre`, m, m + 10);
+    pdf.setFont('helvetica', 'normal'); pdf.setFontSize(10);
+    pdf.text(`${g.curso}° A${continuacion ? ' (continuación)' : ''} · ${reporteFechaCorta(d.rango.from)} al ${reporteFechaCorta(d.rango.to)} · ${rangoTxt} · ${g.filas.length} alumnos`, m, m + 16);
+    const y = m + 21;
+    pdf.setFillColor(232, 232, 228); pdf.setDrawColor(120); pdf.setLineWidth(0.2);
+    pdf.rect(m, y, usable, headH, 'FD');
+    pdf.setFont('helvetica', 'bold'); pdf.setFontSize(8.5);
+    pdf.text('N°', m + wNum / 2, y + 4.7, { align: 'center' });
+    pdf.text('Alumno', m + wNum + 2, y + 4.7);
+    let x = m + wNum + wNombre;
+    REPORTE_COLS.forEach(c => { pdf.text(c.t, x + wCol / 2, y + 4.7, { align: 'center' }); x += wCol; });
+    pdf.text('Total', x + wCol / 2, y + 4.7, { align: 'center' });
+    let vx = m + wNum; pdf.line(vx, y, vx, y + headH);
+    vx += wNombre; pdf.line(vx, y, vx, y + headH);
+    for(let i = 0; i < REPORTE_COLS.length; i++){ vx += wCol; pdf.line(vx, y, vx, y + headH); }
+    pie();
+    return y + headH;
+  };
+  const fila = (y, num, nombre, valores, total, negrita) => {
+    pdf.setDrawColor(150); pdf.setLineWidth(0.2);
+    if(negrita){ pdf.setFillColor(240, 240, 236); pdf.rect(m, y, usable, rowH, 'FD'); } else pdf.rect(m, y, usable, rowH);
+    let x = m;
+    pdf.setFont('helvetica', negrita ? 'bold' : 'normal'); pdf.setTextColor(90); pdf.setFontSize(8.5);
+    if(num !== '') pdf.text(String(num), x + wNum / 2, y + rowH / 2 + 1.2, { align: 'center' });
+    x += wNum; pdf.line(x, y, x, y + rowH);
+    pdf.setTextColor(0);
+    let fs = 9.5; pdf.setFontSize(fs);
+    while(pdf.getTextWidth(nombre) > wNombre - 4 && fs > 6.5){ fs -= 0.5; pdf.setFontSize(fs); }
+    pdf.text(nombre, x + 2, y + rowH / 2 + 1.2);
+    x += wNombre; pdf.line(x, y, x, y + rowH);
+    pdf.setFontSize(9.5);
+    valores.forEach((v, i) => {
+      pdf.setTextColor(v ? 0 : 160);
+      pdf.text(String(v), x + wCol / 2, y + rowH / 2 + 1.2, { align: 'center' });
+      x += wCol; pdf.line(x, y, x, y + rowH);
+    });
+    pdf.setTextColor(0); pdf.setFont('helvetica', 'bold');
+    pdf.text(reporteNum(total), x + wCol / 2, y + rowH / 2 + 1.2, { align: 'center' });
+    pdf.setFont('helvetica', 'normal');
+  };
+
+  let primera = true;
+  d.grupos.forEach(g => {
+    if(!g.filas.length) return;
+    if(!primera) pdf.addPage();
+    primera = false;
+    let y = cabecera(g, false);
+    const limite = H - m - 14;
+    g.filas.forEach((f, i) => {
+      if(y + rowH > limite){ pdf.addPage(); y = cabecera(g, true); }
+      fila(y, i + 1, listasNombre(f.al), REPORTE_COLS.map(c => f.c[c.k]), f.total, false);
+      y += rowH;
+    });
+    if(y + rowH > limite){ pdf.addPage(); y = cabecera(g, true); }
+    fila(y, '', 'Total del curso', REPORTE_COLS.map(c => g.suma[c.k]), g.suma.total, true);
+  });
+  pdf.save(reporteNombreArchivo(d, 'pdf'));
+}
+
+async function exportarReporteExcel(){
+  const d = reporteDatosParaExportar();
+  if(!d) return;
+  const XLSX = await cargarXLSX();
+  const wb = XLSX.utils.book_new();
+  const grupos = d.grupos.filter(g => g.filas.length);
+  const encabezado = ['N°', 'Alumno', ...REPORTE_COLS.map(c => c.largo), 'Total de faltas'];
+  const anchos = [{ wch: 5 }, { wch: 36 }, ...REPORTE_COLS.map(() => ({ wch: 14 })), { wch: 15 }];
+  const rangoTxt = d.hasta < d.rango.to ? `datos hasta el ${reporteFechaLarga(d.hasta)}` : `al ${reporteFechaLarga(d.rango.to)}`;
+  const titulo = (curso) => `Instituto Superior Porteño - Reporte de faltas - ${reporteTitulo(d)}${curso ? ` - ${curso}° A` : ''} - ${rangoTxt}`;
+  if(grupos.length > 1){
+    const filas = [];
+    grupos.forEach(g => g.filas.forEach(f => filas.push([`${g.curso}° A`, listasNombre(f.al), ...REPORTE_COLS.map(c => f.c[c.k]), f.total])));
+    const ws = XLSX.utils.aoa_to_sheet([[titulo('')], [REPORTE_CRITERIO], ['Curso', 'Alumno', ...REPORTE_COLS.map(c => c.largo), 'Total de faltas'], ...filas]);
+    ws['!cols'] = [{ wch: 8 }, { wch: 36 }, ...REPORTE_COLS.map(() => ({ wch: 14 })), { wch: 15 }];
+    XLSX.utils.book_append_sheet(wb, ws, 'Todos');
+  }
+  grupos.forEach(g => {
+    const filas = g.filas.map((f, i) => [i + 1, listasNombre(f.al), ...REPORTE_COLS.map(c => f.c[c.k]), f.total]);
+    const totales = ['', 'Total del curso', ...REPORTE_COLS.map(c => g.suma[c.k]), g.suma.total];
+    const ws = XLSX.utils.aoa_to_sheet([[titulo(g.curso)], [REPORTE_CRITERIO], encabezado, ...filas, totales]);
+    ws['!cols'] = anchos;
+    XLSX.utils.book_append_sheet(wb, ws, `${g.curso}° A`);
+  });
+  XLSX.writeFile(wb, reporteNombreArchivo(d, 'xlsx'));
 }
 
 function listasDatosParaExportar(){
